@@ -4024,6 +4024,7 @@ def _mask_key(k: str) -> str:
     return f"✅ `{k[:6]}...{k[-4:]}`"
 
 def _ai_keys_status_text() -> str:
+    _load_ai_keys()
     return (
         "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
         "🤖 𝘼𝙄 𝙋𝙧𝙤𝙫𝙞𝙙𝙚𝙧 𝙆𝙚𝙮𝙨 𝘾𝙤𝙣𝙛𝙞𝙜\n"
@@ -5535,6 +5536,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await query.answer("🍷︎ Pʀᴇᴍɪᴜᴍ Mᴇᴍʙᴇʀs Oɴʟʏ! Cᴏɴᴛᴀᴄᴛ " + ADMIN_USERNAME, show_alert=True)
         return MENU
 
+    # ── AI Keyword Provider buttons (must run BEFORE menu fallthrough!) ───────
+    if data.startswith("aigen_"):
+        await aigen_callback(update, context)
+        return MENU
+
     # ── Stop buttons ──────────────────────────────────────────────────────────
     if data in ("stop_parser", "stop_sqli", "stop_dump"):
         if user_id in stop_events:
@@ -6487,6 +6493,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not has_access(user_id):
             await query.answer("❌ Access denied", show_alert=True)
             return MENU
+        context.user_data["waiting_for_aigen_topic"] = True
         await query.edit_message_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n"
             "🤖 𝘼𝙄 𝙆𝙚𝙮𝙬𝙤𝙧𝙙𝙨 𝙂𝙚𝙣𝙚𝙧𝙖𝙩𝙤𝙧\n"
@@ -8387,6 +8394,19 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return MENU
 
+    if context.user_data.pop("waiting_for_aigen_topic", False) and update.message and update.message.text:
+        topic = update.message.text.strip()
+        if topic and not topic.startswith("/"):
+            context.user_data["aigen_prompt"] = topic
+            await update.message.reply_text(
+                f"⚔️ *AI Keywords Generator*\n\n"
+                f"📝 Prompt: `{topic[:60]}`\n\n"
+                f"🤖 Select AI Provider:",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=_make_aigen_provider_kb(),
+            )
+            return MENU
+
     await update.message.reply_text("Use /start to open the main menu.", reply_markup=make_main_menu())
     return MENU
 
@@ -8731,111 +8751,166 @@ async def adork_gen_n_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── EXTENDED FEATURES (AI, Emails, LiveFeed, StatusCheck) ───────────────────────
 
 # ── /emails — harvest emails from any uploaded txt ──────────────────────
-# ── Core AI keyword generator ────────────────────────────────────────────
+def _clean_ai_keywords(raw_text: str) -> list:
+    """Strip <think> blocks, markdown fences, numbering & bullets into pure keywords."""
+    cleaned = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL | re.IGNORECASE)
+    out = []
+    for line in cleaned.splitlines():
+        s = line.strip()
+        if not s or s.startswith("```") or s.startswith("#"):
+            continue
+        s = re.sub(r"^(?:\d+[\.)\-:\s]+|[\-\*•]+\s+)", "", s).strip().strip("`\"'")
+        if s and len(s) <= 90 and not s.lower().startswith(("here are", "sure,", "certainly")):
+            out.append(s)
+    return list(dict.fromkeys(out))
+
+def _make_aigen_provider_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔵 Claude Sonnet (Anthropic)", callback_data="aigen_anthropic")],
+        [InlineKeyboardButton("🟢 Gemini 2.5 Flash (Google)", callback_data="aigen_gemini")],
+        [InlineKeyboardButton("🟡 GPT-4o / Mini (OpenRouter)", callback_data="aigen_gpt4o")],
+        [InlineKeyboardButton("🟠 Mistral (OpenRouter)", callback_data="aigen_mistral")],
+        [InlineKeyboardButton("🟣 LLaMA 3.3 — FREE (OpenRouter)", callback_data="aigen_llama")],
+        [InlineKeyboardButton("🔴 DeepSeek R1 / V3 — FREE", callback_data="aigen_deepseek")],
+        [InlineKeyboardButton("⬅️ Mᴀɪɴ Mᴇɴᴜ", callback_data="menu_back")],
+    ])
+
+# ── Core AI keyword generator (2026 Models + Automatic Multi-Model Fallback) ──
 async def _ai_generate_keywords(prompt: str, provider: str) -> tuple[list, str]:
     """
     Returns (keywords_list, error_string).
-    provider: "anthropic" | "gemini" | "gpt4o" | "mistral" | "llama"
+    Automatically reloads ai_keys.json and tries primary + fallback 2026 models.
     """
+    _load_ai_keys()
     _sys = (
-        "You are an expert keyword generator for OSINT and web scraping. "
-        "Output ONLY keywords, one per line. No numbering, no explanation, "
-        "no extra text. Minimum 600 keywords."
+        "You are an expert OSINT and search-dork keyword generator. "
+        "Output ONLY raw search keywords, strictly ONE keyword/phrase per line. "
+        "No numbering, no bullets, no introduction, no explanation. "
+        "Generate at least 600 diverse, high-converting niche keywords."
     )
-    _user = f"Generate 600 highly specific search keywords for: {prompt}"
+    _user = f"Generate 600+ highly specific search keywords and parameter terms for: {prompt}"
 
-    import aiohttp as _ah
-
-    # ── Anthropic ────────────────────────────────────────────────────────
+    # ── Anthropic (Claude 4.5 / 3.5 Fallback Chain) ──────────────────────
     if provider == "anthropic":
         if not _ANTHROPIC_KEY:
-            return [], "ANTHROPIC_API_KEY not set"
-        try:
-            async with _ah.ClientSession() as s:
-                async with s.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": _ANTHROPIC_KEY,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": "claude-sonnet-4-6",
-                        "max_tokens": 8000,
-                        "system": _sys,
-                        "messages": [{"role": "user", "content": _user}],
-                    },
-                    timeout=_ah.ClientTimeout(total=60),
-                ) as r:
-                    d = await r.json()
-            text = d.get("content", [{}])[0].get("text", "")
-            kws  = [l.strip() for l in text.splitlines() if l.strip()]
-            return kws, ""
-        except Exception as e:
-            return [], str(e)[:100]
+            return [], "Anthropic key not set! Use /setkey anthropic YOUR_KEY"
+        last_err = "Empty response"
+        for _m in ("claude-sonnet-4-5", "claude-sonnet-4-20250514", "claude-3-5-sonnet-latest", "claude-3-haiku-20240307"):
+            try:
+                async with aiohttp.ClientSession(connector=_get_connector(), connector_owner=False) as s:
+                    async with s.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": _ANTHROPIC_KEY,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": _m,
+                            "max_tokens": 8000,
+                            "system": _sys,
+                            "messages": [{"role": "user", "content": _user}],
+                        },
+                        timeout=aiohttp.ClientTimeout(total=75),
+                    ) as r:
+                        d = await r.json(content_type=None)
+                if "error" in d:
+                    msg = d["error"].get("message", str(d["error"])) if isinstance(d["error"], dict) else str(d["error"])
+                    last_err = msg[:120]
+                    if "not_found" in msg.lower() or "model" in msg.lower():
+                        continue
+                    return [], last_err
+                text = "".join(c.get("text", "") for c in d.get("content", []) if isinstance(c, dict))
+                kws = _clean_ai_keywords(text)
+                if kws:
+                    return kws, ""
+            except Exception as e:
+                last_err = str(e)[:120]
+        return [], last_err
 
-    # ── Google Gemini ────────────────────────────────────────────────────
+    # ── Google Gemini (2026 Models: 2.5-flash -> 2.0-flash -> flash-latest) ─
     elif provider == "gemini":
         if not _GEMINI_KEY:
-            return [], "GEMINI_API_KEY not set"
-        try:
-            _url = (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"gemini-1.5-flash:generateContent?key={_GEMINI_KEY}"
-            )
-            async with _ah.ClientSession() as s:
-                async with s.post(
-                    _url,
-                    json={
-                        "contents": [{"parts": [{"text": _sys + "\n\n" + _user}]}],
-                        "generationConfig": {"maxOutputTokens": 8192},
-                    },
-                    timeout=_ah.ClientTimeout(total=60),
-                ) as r:
-                    d = await r.json()
-            text = d["candidates"][0]["content"]["parts"][0]["text"]
-            kws  = [l.strip() for l in text.splitlines() if l.strip()]
-            return kws, ""
-        except Exception as e:
-            return [], str(e)[:100]
+            return [], "Gemini key not set! Use /setkey gemini YOUR_KEY"
+        last_err = "Empty response"
+        for _gm in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-1.5-flash-latest"):
+            try:
+                _url = f"https://generativelanguage.googleapis.com/v1beta/models/{_gm}:generateContent?key={_GEMINI_KEY}"
+                async with aiohttp.ClientSession(connector=_get_connector(), connector_owner=False) as s:
+                    async with s.post(
+                        _url,
+                        json={
+                            "contents": [{"parts": [{"text": _sys + "\n\n" + _user}]}],
+                            "generationConfig": {"maxOutputTokens": 8192},
+                        },
+                        timeout=aiohttp.ClientTimeout(total=75),
+                    ) as r:
+                        d = await r.json(content_type=None)
+                if "error" in d:
+                    msg = d["error"].get("message", str(d["error"])) if isinstance(d["error"], dict) else str(d["error"])
+                    last_err = msg[:120]
+                    if r.status == 404 or "not found" in msg.lower() or "not supported" in msg.lower():
+                        continue
+                    return [], last_err
+                cands = d.get("candidates") or []
+                if cands:
+                    parts = cands[0].get("content", {}).get("parts", [])
+                    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+                    kws = _clean_ai_keywords(text)
+                    if kws:
+                        return kws, ""
+            except Exception as e:
+                last_err = str(e)[:120]
+        return [], last_err
 
-    # ── OpenRouter (GPT-4o / Mistral / LLaMA) ───────────────────────────
+    # ── OpenRouter (2026 Free & Pro Fallback Chains) ─────────────────────
     elif provider in ("gpt4o", "mistral", "llama", "deepseek"):
         if not _OPENROUTER_KEY:
-            return [], "OPENROUTER_API_KEY not set"
-        _model_map = {
-            "gpt4o":    "openai/gpt-4o",
-            "mistral":  "mistralai/mistral-7b-instruct",
-            "llama":    "meta-llama/llama-3.1-8b-instruct:free",
-            "deepseek": "deepseek/deepseek-r1:free",
+            return [], "OpenRouter key not set! Use /setkey openrouter YOUR_KEY"
+        _chains = {
+            "gpt4o":    ["openai/gpt-4o-mini", "openai/gpt-4o", "openrouter/free"],
+            "mistral":  ["mistralai/mistral-small-3.1-24b-instruct:free", "mistralai/mistral-7b-instruct:free", "mistralai/mistral-7b-instruct", "openrouter/free"],
+            "llama":    ["meta-llama/llama-3.3-70b-instruct:free", "meta-llama/llama-3.1-8b-instruct:free", "openrouter/free", "meta-llama/llama-3.1-8b-instruct"],
+            "deepseek": ["deepseek/deepseek-r1-0528:free", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-r1:free", "openrouter/free", "deepseek/deepseek-chat"],
         }
-        _model = _model_map[provider]
-        try:
-            async with _ah.ClientSession() as s:
-                async with s.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {_OPENROUTER_KEY}",
-                        "Content-Type":  "application/json",
-                        "HTTP-Referer":  "https://t.me/lucifer_bot",
-                        "X-Title":       "Lucifer Bot",
-                    },
-                    json={
-                        "model": _model,
-                        "max_tokens": 8000,
-                        "messages": [
-                            {"role": "system", "content": _sys},
-                            {"role": "user",   "content": _user},
-                        ],
-                    },
-                    timeout=_ah.ClientTimeout(total=90),
-                ) as r:
-                    d = await r.json()
-            text = d["choices"][0]["message"]["content"]
-            kws  = [l.strip() for l in text.splitlines() if l.strip()]
-            return kws, ""
-        except Exception as e:
-            return [], str(e)[:100]
+        last_err = "No model responded"
+        for _model in _chains[provider]:
+            try:
+                async with aiohttp.ClientSession(connector=_get_connector(), connector_owner=False) as s:
+                    async with s.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {_OPENROUTER_KEY}",
+                            "Content-Type":  "application/json",
+                            "HTTP-Referer":  "https://t.me/lucifer_bot",
+                            "X-Title":       "Lucifer Bot",
+                        },
+                        json={
+                            "model": _model,
+                            "max_tokens": 8000,
+                            "messages": [
+                                {"role": "system", "content": _sys},
+                                {"role": "user",   "content": _user},
+                            ],
+                        },
+                        timeout=aiohttp.ClientTimeout(total=90),
+                    ) as r:
+                        d = await r.json(content_type=None)
+                if "error" in d:
+                    msg = d["error"].get("message", str(d["error"])) if isinstance(d["error"], dict) else str(d["error"])
+                    last_err = msg[:120]
+                    if r.status in (401, 402, 403) and ":free" not in _model:
+                        return [], last_err
+                    continue
+                choices = d.get("choices") or []
+                if choices:
+                    text = choices[0].get("message", {}).get("content", "") or ""
+                    kws = _clean_ai_keywords(text)
+                    if kws:
+                        return kws, ""
+            except Exception as e:
+                last_err = str(e)[:120]
+        return [], last_err
 
     return [], "Unknown provider"
 
@@ -8846,92 +8921,96 @@ async def aigen_cmd(update, ctx):
         return
     prompt = " ".join(ctx.args).strip() if ctx.args else ""
     if not prompt:
+        ctx.user_data["waiting_for_aigen_topic"] = True
         await update.message.reply_text(
             "⚔️ *AI Keywords Generator*\n\n"
-            "Usage: `/aigen email dump keywords`\n"
-            "Or: `/aigen hacking forums dorks`\n\n"
-            "Generates 600+ targeted keywords.",
+            "✍️ Send your *topic* right now in chat (e.g. `email dump keywords`)\n"
+            "OR use: `/aigen email dump keywords`",
             parse_mode=ParseMode.MARKDOWN,
         )
         return
-    # Store prompt in user_data for callback
     ctx.user_data["aigen_prompt"] = prompt
     await update.message.reply_text(
         f"⚔️ *AI Keywords Generator*\n\n"
         f"📝 Prompt: `{prompt[:60]}`\n\n"
         f"🤖 Select AI Provider:",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "🔵 Claude Sonnet (Anthropic)",
-                callback_data="aigen_anthropic")],
-            [InlineKeyboardButton(
-                "🟢 Gemini 1.5 Flash (Google)",
-                callback_data="aigen_gemini")],
-            [InlineKeyboardButton(
-                "🟡 GPT-4o (OpenRouter)",
-                callback_data="aigen_gpt4o")],
-            [InlineKeyboardButton(
-                "🟠 Mistral 7B (OpenRouter)",
-                callback_data="aigen_mistral")],
-            [InlineKeyboardButton(
-                "🟣 LLaMA 3.1 8B — FREE",
-                callback_data="aigen_llama")],
-            [InlineKeyboardButton(
-                "🔴 DeepSeek R1 — FREE",
-                callback_data="aigen_deepseek")],
-        ]),
+        reply_markup=_make_aigen_provider_kb(),
     )
 
-# ── aigen callback — fires when provider button tapped ───────────────────
+# ── aigen callback — fires immediately when ANY provider button tapped ────
 async def aigen_callback(update, ctx):
     query    = update.callback_query
     provider = query.data.replace("aigen_", "")
-    prompt   = ctx.user_data.get("aigen_prompt", "")
     uid      = query.from_user.id
 
     if not has_access(uid):
-        await query.answer("❌ Access denied", show_alert=True)
+        try:
+            await query.answer("❌ Access denied", show_alert=True)
+        except Exception:
+            pass
         return
 
+    prompt = ctx.user_data.get("aigen_prompt", "")
+    if not prompt and query.message and query.message.text:
+        # Recover prompt right from the message text even across bot restarts!
+        for _ln in query.message.text.splitlines():
+            if "Prompt:" in _ln:
+                prompt = _ln.split("Prompt:", 1)[1].strip()
+                ctx.user_data["aigen_prompt"] = prompt
+                break
+
     if not prompt:
-        await query.answer("❌ Prompt missing — use /aigen again", show_alert=True)
+        try:
+            await query.answer("❌ Send /aigen <your topic> first", show_alert=True)
+        except Exception:
+            pass
         return
 
     _labels = {
         "anthropic": "Claude Sonnet",
-        "gemini":    "Gemini 1.5 Flash",
-        "gpt4o":     "GPT-4o",
-        "mistral":   "Mistral 7B",
-        "llama":     "LLaMA 3.1 8B",
-        "deepseek":  "DeepSeek R1",
+        "gemini":    "Gemini Flash",
+        "gpt4o":     "GPT-4o (OpenRouter)",
+        "mistral":   "Mistral (OpenRouter)",
+        "llama":     "LLaMA 3.3 FREE",
+        "deepseek":  "DeepSeek R1 FREE",
     }
     _label = _labels.get(provider, provider)
 
-    await query.edit_message_text(
-        f"⚔️ *AI Keywords Generator*\n\n"
-        f"🤖 Provider: `{_label}`\n"
-        f"📝 Prompt: `{prompt[:60]}`\n\n"
-        f"⏳ Generating 600+ keywords...",
-        parse_mode=ParseMode.MARKDOWN,
-    )
+    try:
+        await query.answer(f"⏳ Generating with {_label}...")
+    except Exception:
+        pass
+
+    try:
+        await query.edit_message_text(
+            f"⚔️ *AI Keywords Generator*\n\n"
+            f"🤖 Provider: `{_label}`\n"
+            f"📝 Prompt: `{prompt[:60]}`\n\n"
+            f"⏳ Generating 600+ keywords — please wait 5–15s...",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    except Exception:
+        pass
 
     kws, err = await _ai_generate_keywords(prompt, provider)
 
     if err or not kws:
+        _safe_err = (err or "Empty response").replace("`", "'")
         await query.edit_message_text(
-            f"❌ *Error:* `{err or 'Empty response'}`\n\n"
-            f"Check API key for this provider.\n"
-            f"Set keys: see /apikeys command",
+            f"❌ *{_label} Error:* `{_safe_err}`\n\n"
+            f"📝 Prompt: `{prompt[:60]}`\n"
+            f"🔑 Check/update keys via `/apikeys` or try another provider below:",
+            reply_markup=_make_aigen_provider_kb(),
             parse_mode=ParseMode.MARKDOWN,
         )
         return
 
-    ts      = datetime.now().strftime("%d%m%y_%H%M")
+    ts      = datetime.now().strftime("%d%m%y_%H%M%S")
     content = "\n".join(kws).encode("utf-8")
     await query.message.reply_document(
         document=io.BytesIO(content),
-        filename=f"lucifer_keywords_{len(kws)}_{ts}.txt",
+        filename=f"lucifer_keywords_{provider}_{len(kws)}_{ts}.txt",
         caption=(
             f"⚔️ *AI Keywords Generated*\n"
             f"├ 🤖 Provider: `{_label}`\n"
@@ -8941,7 +9020,13 @@ async def aigen_callback(update, ctx):
         ),
         parse_mode=ParseMode.MARKDOWN,
     )
-    await query.delete_message()
+    await query.edit_message_text(
+        f"✅ *Generated `{len(kws):,}` keywords via {_label}!*\n\n"
+        f"📝 Prompt: `{prompt[:60]}`\n\n"
+        f"🤖 Tap another provider below to generate more:",
+        reply_markup=_make_aigen_provider_kb(),
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
 # ── /apikeys, /setkey, /delkey — AI keys config ─────────────────────────
 async def apikeys_cmd(update, ctx):
@@ -9274,6 +9359,18 @@ def main():
         allow_reentry=True,
     )
 
+    # Register priority commands BEFORE ConversationHandler so they work in ANY state
+    app.add_handler(CommandHandler("aigen",         aigen_cmd))
+    app.add_handler(CommandHandler("emails",        emails_cmd))
+    app.add_handler(CommandHandler("harvestemails", emails_cmd))
+    app.add_handler(CommandHandler("livefeed",      livefeed_cmd))
+    app.add_handler(CommandHandler("statuscheck",   statuscheck_cmd))
+    app.add_handler(CommandHandler("scfilter",      statuscheck_cmd))
+    app.add_handler(CallbackQueryHandler(
+        aigen_callback,
+        pattern=r"^aigen_(anthropic|gemini|gpt4o|mistral|llama|deepseek)$",
+    ))
+
     app.add_handler(conv)
 
     # ── Pro Dork Generator — standalone ConversationHandlers ──────────────────
@@ -9317,7 +9414,8 @@ def main():
     _load_auth()
     _load_users()
     _load_scanned()
-    logger.info("✅ Lᴏᴀᴅᴇᴅ Pʀᴏxɪᴇs, Bᴀɴs, Aᴜᴛʜs and Usᴇʀs Fʀᴏᴍ Dɪsᴋ")
+    _load_ai_keys()
+    logger.info("✅ Lᴏᴀᴅᴇᴅ Pʀᴏxɪᴇs, Bᴀɴs, Aᴜᴛʜs, Usᴇʀs & AI Kᴇʏs Fʀᴏᴍ Dɪsᴋ")
 
     logger.info("💀 Sᴘɪᴅᴇʏ Bᴏᴛ v1 Sᴛᴀʀᴛᴇᴅ — Uʟᴛɪᴍᴀᴛᴇ Eᴅɪᴛɪᴏɴ")
 
