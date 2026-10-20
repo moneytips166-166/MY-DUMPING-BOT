@@ -611,25 +611,60 @@ def apply_patch():
             applied.append("Added _load_ai_keys() to startup sequence")
 
     # ──────────────────────────────────────────────────────────────────
-    # 7. TURBO PARSER OPTIMIZATIONS (DDGS Circuit Breaker & Worker Queue)
+    # 7. TURBO PARSER OPTIMIZATIONS (12 Cores / 62GB RAM Beast Mode)
     # ──────────────────────────────────────────────────────────────────
-    # Non-blocking DDGS circuit breaker
-    ddgs_cb_old = (
-        'def _ddgs_wait_if_coolingdown():\n'
-        '    """Block current thread until DDGS cooldown expires."""\n'
-        '    global _ddgs_cooldown_until\n'
-        '    remaining = _ddgs_cooldown_until - time.time()\n'
-        '    if remaining > 0:\n'
-        '        time.sleep(remaining + 0.5)'
+    # Raise Linux open file descriptors limit so 4000 sockets never hit Errno 24
+    if 'RLIMIT_NOFILE' not in src:
+        pool_line_old = '_THREAD_POOL=concurrent.futures.ThreadPoolExecutor(max_workers=128)'
+        pool_line_alt = '_THREAD_POOL=concurrent.futures.ThreadPoolExecutor(max_workers=512)'
+        rlimit_snippet = (
+            'try:\n'
+            '    import resource as _res\n'
+            '    _s_lim, _h_lim = _res.getrlimit(_res.RLIMIT_NOFILE)\n'
+            '    if _s_lim < 65536:\n'
+            '        _res.setrlimit(_res.RLIMIT_NOFILE, (min(65536, _h_lim), _h_lim))\n'
+            'except Exception:\n'
+            '    pass\n'
+            '_THREAD_POOL=concurrent.futures.ThreadPoolExecutor(max_workers=512)'
+        )
+        if pool_line_old in src:
+            src = src.replace(pool_line_old, rlimit_snippet, 1)
+            applied.append("Raised Linux RLIMIT_NOFILE to 65536 & scaled ThreadPool to 512 workers")
+        elif pool_line_alt in src:
+            src = src.replace(pool_line_alt, rlimit_snippet, 1)
+            applied.append("Raised Linux RLIMIT_NOFILE to 65536 for 4000-socket stability")
+
+    # Full non-blocking DDGS circuit breaker with _ddgs_is_available()
+    ddgs_block_pattern = re.compile(
+        r'_ddgs_lock\s*=\s*_threading\.Lock\(\).*?def _ddgs_wait_if_coolingdown\(\):.*?(?=\n# ── HEADERS)',
+        re.DOTALL
     )
-    ddgs_cb_new = (
+    ddgs_turbo_block = (
+        '_ddgs_lock             = _threading.Lock()\n'
+        '_ddgs_consecutive_fail = 0\n'
+        '_ddgs_disabled_until   = 0.0\n\n'
+        'def _ddgs_is_available() -> bool:\n'
+        '    if not DDGS_AVAILABLE:\n'
+        '        return False\n'
+        '    return time.time() >= _ddgs_disabled_until\n\n'
+        'def _ddgs_record_empty():\n'
+        '    global _ddgs_consecutive_fail, _ddgs_disabled_until\n'
+        '    with _ddgs_lock:\n'
+        '        _ddgs_consecutive_fail += 1\n'
+        '        if _ddgs_consecutive_fail >= 5:\n'
+        '            _ddgs_disabled_until   = time.time() + 60.0\n'
+        '            _ddgs_consecutive_fail = 0\n\n'
+        'def _ddgs_record_success():\n'
+        '    global _ddgs_consecutive_fail\n'
+        '    with _ddgs_lock:\n'
+        '        _ddgs_consecutive_fail = 0\n\n'
         'def _ddgs_wait_if_coolingdown():\n'
         '    """Non-blocking: never freeze worker threads."""\n'
-        '    pass'
+        '    pass\n'
     )
-    if ddgs_cb_old in src:
-        src = src.replace(ddgs_cb_old, ddgs_cb_new, 1)
-        applied.append("Removed thread-blocking sleep from DDGS cooldown")
+    if '_ddgs_is_available' not in src and ddgs_block_pattern.search(src):
+        src = ddgs_block_pattern.sub(ddgs_turbo_block, src, count=1)
+        applied.append("Installed non-blocking DDGS circuit breaker (_ddgs_is_available)")
 
     # Fast DDGS search (0 sleep)
     if 'time.sleep(1.5 * (attempt + 1))' in src:
@@ -688,10 +723,10 @@ def apply_patch():
         src = src.replace('ttl_dns_cache=300', 'ttl_dns_cache=600')
         applied.append("Scaled TCPConnector to 4000 sockets / 250 per host")
 
-    if 'connection_pool_size=20' in src and 'concurrent_updates=256' in src:
+    if 'connection_pool_size=20' in src and 'concurrent_updates(256)' in src:
         src = src.replace('connection_pool_size=20', 'connection_pool_size=64')
         src = src.replace('connection_pool_size=4', 'connection_pool_size=16')
-        src = src.replace('concurrent_updates=256', 'concurrent_updates=512')
+        src = src.replace('concurrent_updates(256)', 'concurrent_updates(512)')
         applied.append("Scaled Telegram HTTPX pool to 64 connections & 512 concurrent updates")
 
     # Fast fetch_scrape (4s timeout, no sleep on 429)
@@ -701,66 +736,82 @@ def apply_patch():
         src = src.replace('await asyncio.sleep(0.1 * (attempt + 1))\n                        continue', 'return []')
         applied.append("Optimized fetch_scrape with 4s timeout & fast failover")
 
-    # Turbo async queue in search_urls_from_dorks (60 workers for 12 cores)
-    if 'GROUP_SIZE = 90' in src:
-        old_batch_runner = (
-            '    async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:\n'
-            '        BATCH = 35   # 35 dorks per batch\n'
-            '        # Process batches in groups of 90 max\n'
-            '        GROUP_SIZE = 90\n'
-            '        all_starts = list(range(0, total, BATCH))\n\n'
-            '        for group_start in range(0, len(all_starts), GROUP_SIZE):\n'
-            '            group = all_starts[group_start: group_start + GROUP_SIZE]\n'
-            '            batch_coros = [\n'
-            '                _process_batch(i, dorks[i: i + BATCH])\n'
-            '                for i in group\n'
-            '            ]\n'
-            '            await asyncio.gather(*batch_coros, return_exceptions=True)\n'
-            '            # Stop early if limit hit or stop requested\n'
-            '            if (stop_event and stop_event.is_set()) or len(found_url_scores) >= limit:\n'
-            '                break'
-        )
-        new_batch_runner = (
-            '    async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:\n'
-            '        BATCH = 35\n'
-            '        batches = [dorks[i: i + BATCH] for i in range(0, total, BATCH)]\n'
-            '        queue = asyncio.Queue()\n'
-            '        for idx, b in enumerate(batches):\n'
-            '            queue.put_nowait((idx * BATCH, b))\n\n'
-            '        done_total = [0]\n\n'
-            '        async def _worker():\n'
-            '            while not queue.empty():\n'
-            '                if (stop_event and stop_event.is_set()) or len(found_url_scores) >= limit:\n'
-            '                    break\n'
-            '                try:\n'
-            '                    b_start, b_dorks = queue.get_nowait()\n'
-            '                except asyncio.QueueEmpty:\n'
-            '                    break\n'
-            '                try:\n'
-            '                    await _process_batch(b_start, b_dorks)\n'
-            '                    done_total[0] = min(done_total[0] + len(b_dorks), total)\n'
-            '                    await _report(done_total[0])\n'
-            '                except Exception:\n'
-            '                    pass\n'
-            '                finally:\n'
-            '                    queue.task_done()\n\n'
-            '        num_workers = min(60, max(10, len(batches)))\n'
-            '        workers = [asyncio.create_task(_worker()) for _ in range(num_workers)]\n'
-            '        await asyncio.gather(*workers, return_exceptions=True)'
-        )
-        if old_batch_runner in src:
-            src = src.replace(old_batch_runner, new_batch_runner, 1)
-            applied.append("Replaced rigid batch loop with 60-worker continuous async queue")
-
-    if 'scrape_sem = asyncio.Semaphore(250)' in src:
-        src = src.replace('scrape_sem = asyncio.Semaphore(250)', 'scrape_sem = asyncio.Semaphore(1200)')
-        applied.append("Scaled scrape semaphore to 1200 concurrent requests")
-
-    # Lower DDGS timeout in _process_batch from 45.0s to 3.5s
-    if 'timeout=45.0' in src:
-        src = src.replace('timeout=45.0', 'timeout=3.5')
-        src = src.replace('elif isinstance(ddgs_res, (asyncio.TimeoutError, Exception)):\n                    retries += len(batch)', '# DDGS timed out or rate limited — skipped cleanly\n                    pass')
-        applied.append("Reduced DDGS timeout to 3.5s and removed false retries count")
+    # Replace entire batch engine + runner with 60-worker multi-engine Beast Queue
+    batch_engine_pattern = re.compile(
+        r'    connector = _get_connector\(\).*?(?=\n    # ── Sort: best URLs first, fully unique)',
+        re.DOTALL
+    )
+    beast_engine_code = (
+        '    connector = _get_connector()   # shared pool (4000 sockets)\n'
+        '    scrape_sem = asyncio.Semaphore(1200)  # 1200 parallel HTTP scrapes (12 Cores / 62GB RAM)\n'
+        '    alt_engines = SCRAPE_ENGINES[1:] if len(SCRAPE_ENGINES) > 1 else _ENGINE_POOL\n\n'
+        '    async def _process_batch(batch_start: int, batch: list):\n'
+        '        """Beast-mode multi-engine batch: 2x Bing pages + 2x diverse engines + fast DDGS."""\n'
+        '        if (stop_event and stop_event.is_set()) or len(found_url_scores) >= limit:\n'
+        '            return\n\n'
+        '        bing_engine = SCRAPE_ENGINES[0]\n'
+        '        scrape_tasks = []\n'
+        '        for dork in batch:\n'
+        '            for offset in bing_engine["offsets"][:2]:\n'
+        '                scrape_tasks.append(\n'
+        '                    fetch_scrape(session, bing_engine, dork, offset, scrape_sem, proxy_list)\n'
+        '                )\n'
+        '            chosen_alts = random.sample(alt_engines, min(2, len(alt_engines)))\n'
+        '            for alt in chosen_alts:\n'
+        '                scrape_tasks.append(\n'
+        '                    fetch_scrape(session, alt, dork, random.choice(alt["offsets"][:2]), scrape_sem, proxy_list)\n'
+        '                )\n\n'
+        '        gather_args = [asyncio.gather(*scrape_tasks, return_exceptions=True)]\n'
+        '        if _ddgs_is_available():\n'
+        '            gather_args.append(\n'
+        '                asyncio.wait_for(\n'
+        '                    search_ddgs_batch(batch, max_results=50, proxy_list=proxy_list,\n'
+        '                                      num_variants=_num_variants),\n'
+        '                    timeout=3.0,\n'
+        '                )\n'
+        '            )\n\n'
+        '        all_results = await asyncio.gather(*gather_args, return_exceptions=True)\n\n'
+        '        scrape_res = all_results[0]\n'
+        '        if isinstance(scrape_res, list):\n'
+        '            for r in scrape_res:\n'
+        '                if isinstance(r, list):\n'
+        '                    for url in r:\n'
+        '                        _add_url(url)\n\n'
+        '        if len(all_results) > 1:\n'
+        '            ddgs_res = all_results[1]\n'
+        '            if isinstance(ddgs_res, list):\n'
+        '                for url in ddgs_res:\n'
+        '                    _add_url(url)\n\n'
+        '    async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:\n'
+        '        BATCH = 35\n'
+        '        batches = [dorks[i: i + BATCH] for i in range(0, total, BATCH)]\n'
+        '        queue = asyncio.Queue()\n'
+        '        for idx, b in enumerate(batches):\n'
+        '            queue.put_nowait((idx * BATCH, b))\n\n'
+        '        done_total = [0]\n\n'
+        '        async def _worker():\n'
+        '            while not queue.empty():\n'
+        '                if (stop_event and stop_event.is_set()) or len(found_url_scores) >= limit:\n'
+        '                    break\n'
+        '                try:\n'
+        '                    b_start, b_dorks = queue.get_nowait()\n'
+        '                except asyncio.QueueEmpty:\n'
+        '                    break\n'
+        '                try:\n'
+        '                    await _process_batch(b_start, b_dorks)\n'
+        '                    done_total[0] = min(done_total[0] + len(b_dorks), total)\n'
+        '                    await _report(done_total[0])\n'
+        '                except Exception:\n'
+        '                    pass\n'
+        '                finally:\n'
+        '                    queue.task_done()\n\n'
+        '        num_workers = min(60, max(10, len(batches)))\n'
+        '        workers = [asyncio.create_task(_worker()) for _ in range(num_workers)]\n'
+        '        await asyncio.gather(*workers, return_exceptions=True)\n'
+    )
+    if 'alt_engines = SCRAPE_ENGINES[1:]' not in src and batch_engine_pattern.search(src):
+        src = batch_engine_pattern.sub(beast_engine_code, src, count=1)
+        applied.append("Installed 60-worker Beast Mode async queue + 1200-semaphore multi-engine scraper")
 
     # Save changes
     with open(target, "w", encoding="utf-8") as f:

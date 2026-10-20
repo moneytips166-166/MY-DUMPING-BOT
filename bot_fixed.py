@@ -26,6 +26,13 @@ except ImportError:
     _SOCKS_AVAILABLE=False
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",level=logging.INFO)
 logger=logging.getLogger(__name__)
+try:
+    import resource as _res
+    _s_lim, _h_lim = _res.getrlimit(_res.RLIMIT_NOFILE)
+    if _s_lim < 65536:
+        _res.setrlimit(_res.RLIMIT_NOFILE, (min(65536, _h_lim), _h_lim))
+except Exception:
+    pass
 _THREAD_POOL=concurrent.futures.ThreadPoolExecutor(max_workers=512)
 
 # ── Auto Proxy Scraper ────────────────────────────────────────────────────────
@@ -914,24 +921,27 @@ def _get_connector() -> aiohttp.TCPConnector:
 # Tracks consecutive empty/failed DDGS calls across threads.
 # When it hits 10, all threads sleep 45s then reset — avoids spending hours
 # hammering a rate-limited API at 500k dork scale.
-_ddgs_lock            = _threading.Lock()
-_ddgs_consecutive_empty = 0
-_ddgs_cooldown_until  = 0.0   # epoch seconds; sleep until this time if >0
-_DDGS_EMPTY_THRESHOLD = 30    # consecutive empties before cooldown
-_DDGS_COOLDOWN_SECS   = 12    # seconds to cool down
+_ddgs_lock             = _threading.Lock()
+_ddgs_consecutive_fail = 0
+_ddgs_disabled_until   = 0.0
+
+def _ddgs_is_available() -> bool:
+    if not DDGS_AVAILABLE:
+        return False
+    return time.time() >= _ddgs_disabled_until
 
 def _ddgs_record_empty():
-    global _ddgs_consecutive_empty, _ddgs_cooldown_until
+    global _ddgs_consecutive_fail, _ddgs_disabled_until
     with _ddgs_lock:
-        _ddgs_consecutive_empty += 1
-        if _ddgs_consecutive_empty >= _DDGS_EMPTY_THRESHOLD:
-            _ddgs_cooldown_until    = time.time() + _DDGS_COOLDOWN_SECS
-            _ddgs_consecutive_empty = 0
+        _ddgs_consecutive_fail += 1
+        if _ddgs_consecutive_fail >= 5:
+            _ddgs_disabled_until   = time.time() + 60.0
+            _ddgs_consecutive_fail = 0
 
 def _ddgs_record_success():
-    global _ddgs_consecutive_empty
+    global _ddgs_consecutive_fail
     with _ddgs_lock:
-        _ddgs_consecutive_empty = 0
+        _ddgs_consecutive_fail = 0
 
 def _ddgs_wait_if_coolingdown():
     """Non-blocking: never freeze worker threads."""
@@ -1978,69 +1988,52 @@ async def search_urls_from_dorks(
                 pass
 
     # ── HTTP session for scraping — use shared connector ──────────────────────
-    connector = _get_connector()   # shared pool, no new sockets per user
-    scrape_sem = asyncio.Semaphore(1200)  # 250 parallel scrape requests
-    batch_gate = asyncio.Semaphore(40)   # 40 batches running at once
+    connector = _get_connector()   # shared pool (4000 sockets)
+    scrape_sem = asyncio.Semaphore(1200)  # 1200 parallel HTTP scrapes (12 Cores / 62GB RAM)
+    alt_engines = SCRAPE_ENGINES[1:] if len(SCRAPE_ENGINES) > 1 else _ENGINE_POOL
 
     async def _process_batch(batch_start: int, batch: list):
-        """Process one batch: multi-page Bing scraping + secondary engine + DDGS."""
-        nonlocal retries
-        async with batch_gate:
-            if (stop_event and stop_event.is_set()) or len(found_url_scores) >= limit:
-                return
+        """Beast-mode multi-engine batch: 2x Bing pages + 2x diverse engines + fast DDGS."""
+        if (stop_event and stop_event.is_set()) or len(found_url_scores) >= limit:
+            return
 
-            bing_engine = SCRAPE_ENGINES[0]  # Bing is always index 0
-
-            # Build scrape tasks:
-            #   - Bing: first 5 pages (offsets 1,11,21,31,41) × 30 results ➪ up to 150/dork
-            #     CAPTCHA pages are auto-skipped by fetch_scrape, so no wasted results
-            #   - 1 random fallback engine for diversity
-            scrape_tasks = []
-            for dork in batch:
-                for offset in bing_engine["offsets"][:3]:   # 3 pages × 30 = up to 90/dork from Bing
-                    scrape_tasks.append(
-                        fetch_scrape(session, bing_engine, dork, offset, scrape_sem, proxy_list)
-                    )
-                # one extra engine for variety
-                sec = random.choice(_ENGINE_POOL)
+        bing_engine = SCRAPE_ENGINES[0]
+        scrape_tasks = []
+        for dork in batch:
+            for offset in bing_engine["offsets"][:2]:
                 scrape_tasks.append(
-                    fetch_scrape(session, sec, dork, random.choice(sec["offsets"]), scrape_sem, proxy_list)
+                    fetch_scrape(session, bing_engine, dork, offset, scrape_sem, proxy_list)
+                )
+            chosen_alts = random.sample(alt_engines, min(2, len(alt_engines)))
+            for alt in chosen_alts:
+                scrape_tasks.append(
+                    fetch_scrape(session, alt, dork, random.choice(alt["offsets"][:2]), scrape_sem, proxy_list)
                 )
 
-            # Fire scrape + DDGS simultaneously; cap DDGS at 12 s
-            gather_args = [asyncio.gather(*scrape_tasks, return_exceptions=True)]
-            if DDGS_AVAILABLE:
-                gather_args.append(
-                    asyncio.wait_for(
-                        search_ddgs_batch(batch, max_results=100, proxy_list=proxy_list,
-                                          num_variants=_num_variants),
-                        timeout=3.5,
-                    )
+        gather_args = [asyncio.gather(*scrape_tasks, return_exceptions=True)]
+        if _ddgs_is_available():
+            gather_args.append(
+                asyncio.wait_for(
+                    search_ddgs_batch(batch, max_results=50, proxy_list=proxy_list,
+                                      num_variants=_num_variants),
+                    timeout=3.0,
                 )
+            )
 
-            all_results = await asyncio.gather(*gather_args, return_exceptions=True)
+        all_results = await asyncio.gather(*gather_args, return_exceptions=True)
 
-            # Scrape results (index 0)
-            scrape_res = all_results[0]
-            if isinstance(scrape_res, list):
-                for r in scrape_res:
-                    if isinstance(r, list):
-                        for url in r:
-                            _add_url(url)
-                    elif isinstance(r, Exception):
-                        retries += 1
-
-            # DDGS results (index 1 if present)
-            if len(all_results) > 1:
-                ddgs_res = all_results[1]
-                if isinstance(ddgs_res, list):
-                    for url in ddgs_res:
+        scrape_res = all_results[0]
+        if isinstance(scrape_res, list):
+            for r in scrape_res:
+                if isinstance(r, list):
+                    for url in r:
                         _add_url(url)
-                # DDGS timed out or rate limited — skipped cleanly
-                    pass
 
-            done = min(batch_start + len(batch), total)
-            await _report(done)
+        if len(all_results) > 1:
+            ddgs_res = all_results[1]
+            if isinstance(ddgs_res, list):
+                for url in ddgs_res:
+                    _add_url(url)
 
     async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:
         BATCH = 35
@@ -9097,14 +9090,14 @@ def main():
         pass
 
     _request = HTTPXRequest(
-        connection_pool_size=20,
+        connection_pool_size=64,
         connect_timeout=10.0,
         read_timeout=30.0,
         write_timeout=30.0,
         pool_timeout=15.0,
     )
     _updater_request = HTTPXRequest(
-        connection_pool_size=4,
+        connection_pool_size=16,
         connect_timeout=10.0,
         read_timeout=30.0,
         write_timeout=30.0,
@@ -9115,7 +9108,7 @@ def main():
         .token(TOKEN)
         .request(_request)
         .get_updates_request(_updater_request)
-        .concurrent_updates(256)
+        .concurrent_updates(512)
         .build()
     )
 
