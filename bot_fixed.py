@@ -934,11 +934,8 @@ def _ddgs_record_success():
         _ddgs_consecutive_empty = 0
 
 def _ddgs_wait_if_coolingdown():
-    """Block current thread until DDGS cooldown expires."""
-    global _ddgs_cooldown_until
-    remaining = _ddgs_cooldown_until - time.time()
-    if remaining > 0:
-        time.sleep(remaining + 0.5)
+    """Non-blocking: never freeze worker threads."""
+    pass
 
 # ── HEADERS ───────────────────────────────────────────────────────────────────
 HEADERS_LIST = [
@@ -1460,57 +1457,39 @@ def _is_captcha_page(html: str) -> bool:
 
 
 def _ddgs_search_sync(dork: str, max_results: int, proxy_list: list = None) -> list:
-    """
-    Synchronous DDGS search — runs in thread pool.
-    Retries up to 3 times with backoff on rate-limit errors.
-    """
-    if proxy_list is None:
-        proxy_list = []
-    if not DDGS_AVAILABLE:
+    """Fast single-pass DDGS search — no thread-blocking sleeps."""
+    if not _ddgs_is_available():
         return []
     cleaned = clean_dork_for_search(dork)
     if not cleaned:
         return []
 
-    # Wait out any active cooldown before firing
-    _ddgs_wait_if_coolingdown()
-
-    for attempt in range(3):
-        proxy_url = _pick_proxy(proxy_list)
-        try:
-            if proxy_url:
+    proxy_url = _pick_proxy(proxy_list)
+    try:
+        if proxy_url:
+            try:
+                ddgs_obj = DDGS(proxy=proxy_url)
+            except TypeError:
                 try:
-                    ddgs_obj = DDGS(proxy=proxy_url)
-                except TypeError:
-                    try:
-                        ddgs_obj = DDGS(proxies=proxy_url)
-                    except Exception:
-                        ddgs_obj = DDGS()
-            else:
-                ddgs_obj = DDGS()
-            results = ddgs_obj.text(cleaned, max_results=max_results, safesearch="off")
-            urls = []
-            for r in (results or []):
-                href = r.get("href", "")
-                if href and href.startswith("http") and is_valid_url(href):
-                    urls.append(href.rstrip("/"))
-            if urls:
-                _ddgs_record_success()
-                return urls
-            # Empty result — record and short wait
-            _ddgs_record_empty()
-            time.sleep(0.5 * (attempt + 1))
-            _ddgs_wait_if_coolingdown()   # cooldown may have triggered
-        except Exception as ex:
-            msg = str(ex).lower()
-            if "ratelimit" in msg or "202" in msg or "timeout" in msg:
-                _ddgs_record_empty()
-                time.sleep(1.5 * (attempt + 1))
-                _ddgs_wait_if_coolingdown()
-            elif attempt < 2:
-                time.sleep(0.3)
-    _ddgs_record_empty()
-    return []
+                    ddgs_obj = DDGS(proxies=proxy_url)
+                except Exception:
+                    ddgs_obj = DDGS()
+        else:
+            ddgs_obj = DDGS()
+        results = ddgs_obj.text(cleaned, max_results=max_results, safesearch="off")
+        urls = []
+        for r in (results or []):
+            href = r.get("href", "")
+            if href and href.startswith("http") and is_valid_url(href):
+                urls.append(href.rstrip("/"))
+        if urls:
+            _ddgs_record_success()
+            return urls
+        _ddgs_record_empty()
+        return []
+    except Exception:
+        _ddgs_record_empty()
+        return []
 
 
 def _ddgs_expand_dork(dork: str, num_variants: int = 3) -> list:
@@ -1890,7 +1869,7 @@ async def fetch_scrape(
                         async with socks_sess.get(
                             url,
                             headers=headers,
-                            timeout=aiohttp.ClientTimeout(total=8),
+                            timeout=aiohttp.ClientTimeout(total=4, connect=2),
                             allow_redirects=True,
                         ) as resp:
                             if resp.status == 200:
@@ -1901,7 +1880,7 @@ async def fetch_scrape(
 
                 kwargs = dict(
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=8),
+                    timeout=aiohttp.ClientTimeout(total=4, connect=2),
                     ssl=False,
                     allow_redirects=True,
                 )
@@ -1912,11 +1891,9 @@ async def fetch_scrape(
                         html = await resp.text(errors="ignore")
                         if len(html) > 500 and not _is_captcha_page(html):
                             return engine["extractor"](html)
-                        await asyncio.sleep(0.1 * (attempt + 1))
-                        continue
+                        return []
                     elif resp.status in (429, 403, 202):
-                        await asyncio.sleep(0.5 * (attempt + 1))
-                        continue
+                        return []
                     return []
             except asyncio.TimeoutError:
                 pass
@@ -2037,7 +2014,7 @@ async def search_urls_from_dorks(
                     asyncio.wait_for(
                         search_ddgs_batch(batch, max_results=100, proxy_list=proxy_list,
                                           num_variants=_num_variants),
-                        timeout=45.0,
+                        timeout=3.5,
                     )
                 )
 
@@ -2059,28 +2036,41 @@ async def search_urls_from_dorks(
                 if isinstance(ddgs_res, list):
                     for url in ddgs_res:
                         _add_url(url)
-                elif isinstance(ddgs_res, (asyncio.TimeoutError, Exception)):
-                    retries += len(batch)
+                # DDGS timed out or rate limited — skipped cleanly
+                    pass
 
             done = min(batch_start + len(batch), total)
             await _report(done)
 
     async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:
-        BATCH = 35   # 35 dorks per batch
-        # Process batches in groups of 90 max
-        GROUP_SIZE = 90
-        all_starts = list(range(0, total, BATCH))
+        BATCH = 30
+        batches = [dorks[i: i + BATCH] for i in range(0, total, BATCH)]
+        queue = asyncio.Queue()
+        for idx, b in enumerate(batches):
+            queue.put_nowait((idx * BATCH, b))
 
-        for group_start in range(0, len(all_starts), GROUP_SIZE):
-            group = all_starts[group_start: group_start + GROUP_SIZE]
-            batch_coros = [
-                _process_batch(i, dorks[i: i + BATCH])
-                for i in group
-            ]
-            await asyncio.gather(*batch_coros, return_exceptions=True)
-            # Stop early if limit hit or stop requested
-            if (stop_event and stop_event.is_set()) or len(found_url_scores) >= limit:
-                break
+        done_total = [0]
+
+        async def _worker():
+            while not queue.empty():
+                if (stop_event and stop_event.is_set()) or len(found_url_scores) >= limit:
+                    break
+                try:
+                    b_start, b_dorks = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                try:
+                    await _process_batch(b_start, b_dorks)
+                    done_total[0] = min(done_total[0] + len(b_dorks), total)
+                    await _report(done_total[0])
+                except Exception:
+                    pass
+                finally:
+                    queue.task_done()
+
+        num_workers = min(30, max(5, len(batches)))
+        workers = [asyncio.create_task(_worker()) for _ in range(num_workers)]
+        await asyncio.gather(*workers, return_exceptions=True)
 
     # ── Sort: best URLs first, fully unique ──────────────────────────────────
     sorted_items = sorted(found_url_scores.items(), key=lambda x: x[1], reverse=True)
@@ -4004,6 +3994,78 @@ _LIVE_FEED: dict            = {}   # uid → {name, start, dorks_total, dorks_do
 _ANTHROPIC_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
 _GEMINI_KEY      = os.environ.get("GEMINI_API_KEY", "")
 _OPENROUTER_KEY  = os.environ.get("OPENROUTER_API_KEY", "")
+_AI_KEYS_FILE    = _Path(__file__).parent / "ai_keys.json"
+
+def _load_ai_keys():
+    global _ANTHROPIC_KEY, _GEMINI_KEY, _OPENROUTER_KEY
+    if _AI_KEYS_FILE.exists():
+        try:
+            d = json.loads(_AI_KEYS_FILE.read_text(encoding="utf-8"))
+            if d.get("anthropic"):
+                _ANTHROPIC_KEY = d["anthropic"]
+                os.environ["ANTHROPIC_API_KEY"] = d["anthropic"]
+            if d.get("gemini"):
+                _GEMINI_KEY = d["gemini"]
+                os.environ["GEMINI_API_KEY"] = d["gemini"]
+            if d.get("openrouter"):
+                _OPENROUTER_KEY = d["openrouter"]
+                os.environ["OPENROUTER_API_KEY"] = d["openrouter"]
+            logger.info("🔑 AI API Keys loaded from ai_keys.json")
+        except Exception as e:
+            logger.warning("Error loading ai_keys.json: %s", e)
+
+def _save_ai_key(provider: str, key: str):
+    global _ANTHROPIC_KEY, _GEMINI_KEY, _OPENROUTER_KEY
+    d = {}
+    if _AI_KEYS_FILE.exists():
+        try:
+            d = json.loads(_AI_KEYS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            d = {}
+    d[provider] = key
+    _AI_KEYS_FILE.write_text(json.dumps(d, indent=2), encoding="utf-8")
+    if provider == "anthropic":
+        _ANTHROPIC_KEY = key
+        os.environ["ANTHROPIC_API_KEY"] = key
+    elif provider == "gemini":
+        _GEMINI_KEY = key
+        os.environ["GEMINI_API_KEY"] = key
+    elif provider == "openrouter":
+        _OPENROUTER_KEY = key
+        os.environ["OPENROUTER_API_KEY"] = key
+
+def _mask_key(k: str) -> str:
+    if not k:
+        return "❌ `Not Set`"
+    if len(k) <= 8:
+        return "✅ `Configured (****)`"
+    return f"✅ `{k[:6]}...{k[-4:]}`"
+
+def _ai_keys_status_text() -> str:
+    return (
+        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+        "🤖 𝘼𝙄 𝙋𝙧𝙤𝙫𝙞𝙙𝙚𝙧 𝙆𝙚𝙮𝙨 𝘾𝙤𝙣𝙛𝙞𝙜\n"
+        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n"
+        f"🔵 *Anthropic (Claude):*\n   {_mask_key(_ANTHROPIC_KEY)}\n\n"
+        f"🟢 *Google Gemini:*\n   {_mask_key(_GEMINI_KEY)}\n\n"
+        f"🟡 *OpenRouter (LLaMA/DeepSeek/GPT):*\n   {_mask_key(_OPENROUTER_KEY)}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 *How to configure:*\n"
+        "• Tap any button below to set or clear keys\n"
+        "• Or send command directly in chat:\n"
+        "`/setkey gemini YOUR_KEY`\n"
+        "`/setkey anthropic YOUR_KEY`\n"
+        "`/setkey openrouter YOUR_KEY`"
+    )
+
+def make_ai_keys_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔵 Sᴇᴛ Aɴᴛʜʀᴏᴘɪᴄ",  callback_data="setkey_anthropic"),
+         InlineKeyboardButton("🟢 Sᴇᴛ Gᴇᴍɪɴɪ",     callback_data="setkey_gemini")],
+        [InlineKeyboardButton("🟡 Sᴇᴛ OᴘᴇɴRᴏᴜᴛᴇʀ", callback_data="setkey_openrouter"),
+         InlineKeyboardButton("🗑️ Cʟᴇᴀʀ Aʟʟ",      callback_data="delkey_all")],
+        [InlineKeyboardButton("⬅️ Aᴅᴍɪɴ Pᴀɴᴇʟ",     callback_data="admin_panel")],
+    ])
 
 # Email regex — all providers
 _EMAIL_RE = re.compile(
@@ -4366,7 +4428,8 @@ def make_admin_menu():
         [InlineKeyboardButton("🔄 Sᴄʀᴀᴘᴇ & Vᴀʟɪᴅᴀᴛᴇ", callback_data="admin_scrapeproxy")],
         [InlineKeyboardButton("👁️ Lɪᴠᴇ Fᴇᴇᴅ",           callback_data="admin_livefeed"),
          InlineKeyboardButton("🔁 Dᴇᴅᴜᴘ Sᴛᴀᴛs",          callback_data="admin_dedupstats")],
-        [InlineKeyboardButton("🗂️︎ Gᴇᴛ Bᴏᴛ Fɪʟᴇ",    callback_data="admin_getfile")],
+        [InlineKeyboardButton("🤖 AI Kᴇʏs Cᴏɴғɪɢ",     callback_data="admin_aikeys"),
+         InlineKeyboardButton("🗂️︎ Gᴇᴛ Bᴏᴛ Fɪʟᴇ",    callback_data="admin_getfile")],
         [InlineKeyboardButton("⏪︎ Mᴀɪɴ Mᴇɴᴜ",        callback_data="menu_back")],
     ])
 
@@ -5964,6 +6027,66 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"🕷️ Bᴏᴛ: Oɴʟɪɴᴇ ✅",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data="admin_serverinfo"),
                                                 InlineKeyboardButton("⬅️ Aᴅᴍɪɴ Pᴀɴᴇʟ", callback_data="admin_panel")]]),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return MENU
+
+    elif data == "admin_aikeys":
+        if not is_admin(user_id):
+            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
+            return MENU
+        await query.edit_message_text(
+            _ai_keys_status_text(),
+            reply_markup=make_ai_keys_kb(),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return MENU
+
+    elif data in ("setkey_anthropic", "setkey_gemini", "setkey_openrouter"):
+        if not is_admin(user_id):
+            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
+            return MENU
+        prov = data.replace("setkey_", "")
+        context.user_data["waiting_for_ai_key"] = prov
+        _names = {
+            "anthropic": "🔵 Anthropic Claude (starts with sk-ant-...)",
+            "gemini": "🟢 Google Gemini (starts with AIza...)",
+            "openrouter": "🟡 OpenRouter (starts with sk-or-...)",
+        }
+        await query.edit_message_text(
+            f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+            f"✏️ 𝙎𝙚𝙩 {_names.get(prov, prov)}\n"
+            f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n"
+            f"Send / paste your **{prov.title()} API Key** in chat now.\n\n"
+            f"❌ Send `/cancel` to abort.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_aikeys")]]),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return MENU
+
+    elif data == "delkey_all":
+        if not is_admin(user_id):
+            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
+            return MENU
+        _save_ai_key("anthropic", "")
+        _save_ai_key("gemini", "")
+        _save_ai_key("openrouter", "")
+        await query.edit_message_text(
+            "🗑️ *All AI Provider Keys Cleared!*\n\n" + _ai_keys_status_text(),
+            reply_markup=make_ai_keys_kb(),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return MENU
+
+    elif data in ("delkey_anthropic", "delkey_gemini", "delkey_openrouter"):
+        if not is_admin(user_id):
+            await query.answer("❌ UɴᴀUHᴏʀɪᴢᴇᴅ", show_alert=True)
+            return MENU
+        prov = data.replace("delkey_", "")
+        _save_ai_key(prov, "")
+        await query.edit_message_text(
+            f"🗑️ *{prov.title()} Key Cleared!*\n\n" + _ai_keys_status_text(),
+            reply_markup=make_ai_keys_kb(),
             parse_mode=ParseMode.MARKDOWN,
         )
         return MENU
@@ -8181,6 +8304,31 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not has_access(user_id):
         await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
         return MENU
+
+    waiting_prov = context.user_data.get("waiting_for_ai_key")
+    if waiting_prov and is_admin(user_id) and update.message and update.message.text:
+        text = update.message.text.strip()
+        if text.lower() == "/cancel":
+            context.user_data.pop("waiting_for_ai_key", None)
+            await update.message.reply_text("❌ Cancelled AI key setup.", reply_markup=make_admin_menu())
+            return MENU
+
+        _save_ai_key(waiting_prov, text)
+        context.user_data.pop("waiting_for_ai_key", None)
+        _prov_name = {"anthropic": "Anthropic Claude", "gemini": "Google Gemini", "openrouter": "OpenRouter"}.get(waiting_prov, waiting_prov)
+        masked = text[:6] + "..." + text[-4:] if len(text) > 10 else "***"
+        await update.message.reply_text(
+            f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+            f"✅ *{_prov_name} Key Saved!*\n"
+            f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n"
+            f"🔑 Key: `{masked}`\n"
+            f"💾 Saved to `ai_keys.json` & runtime active.\n\n"
+            f"🚀 `/aigen` is now ready to use with {_prov_name}!",
+            reply_markup=make_ai_keys_kb(),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return MENU
+
     await update.message.reply_text("Use /start to open the main menu.", reply_markup=make_main_menu())
     return MENU
 
@@ -8737,28 +8885,74 @@ async def aigen_callback(update, ctx):
     )
     await query.delete_message()
 
-# ── /apikeys — show which keys are set ───────────────────────────────────
+# ── /apikeys, /setkey, /delkey — AI keys config ─────────────────────────
 async def apikeys_cmd(update, ctx):
     uid = update.effective_user.id
     if not is_admin(uid):
         await update.message.reply_text("❌ Admin only.")
         return
-    def _status(k): return "✅ Set" if k else "❌ Missing"
     await update.message.reply_text(
-        "⚔️ *AI Provider API Keys*\n\n"
-        f"🔵 Anthropic: `{_status(_ANTHROPIC_KEY)}`\n"
-        f"🟢 Gemini:    `{_status(_GEMINI_KEY)}`\n"
-        f"🟡 OpenRouter: `{_status(_OPENROUTER_KEY)}`\n\n"
-        "To set keys on VPS:\n"
-        "```\n"
-        "echo \'export ANTHROPIC_API_KEY=sk-ant-...\' >> ~/.bashrc\n"
-        "echo \'export GEMINI_API_KEY=AIza...\' >> ~/.bashrc\n"
-        "echo \'export OPENROUTER_API_KEY=sk-or-...\' >> ~/.bashrc\n"
-        "source ~/.bashrc\n"
-        "```\n"
-        "_Then restart bot_",
+        _ai_keys_status_text(),
+        reply_markup=make_ai_keys_kb(),
         parse_mode=ParseMode.MARKDOWN,
     )
+
+async def setkey_cmd(update, ctx):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.message.reply_text("❌ Admin only.")
+        return
+    args = ctx.args or []
+    if len(args) < 2:
+        await update.message.reply_text(
+            "⚔️ *AI Key Setup*\n\n"
+            "Usage: `/setkey <provider> <api_key>`\n\n"
+            "Providers:\n"
+            "• `gemini` (Google Gemini)\n"
+            "• `anthropic` (Claude)\n"
+            "• `openrouter` (GPT-4o, LLaMA, DeepSeek)\n\n"
+            "Example:\n"
+            "`/setkey gemini AIzaSy...`",
+            reply_markup=make_ai_keys_kb(),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+    prov = args[0].lower().strip()
+    key = args[1].strip()
+    if prov not in ("anthropic", "gemini", "openrouter"):
+        await update.message.reply_text("❌ Invalid provider. Use `gemini`, `anthropic`, or `openrouter`.", parse_mode=ParseMode.MARKDOWN)
+        return
+    _save_ai_key(prov, key)
+    masked = key[:6] + "..." + key[-4:] if len(key) > 10 else "***"
+    await update.message.reply_text(
+        f"✅ *{prov.title()} API Key Saved!*\n\n"
+        f"🔑 Key: `{masked}`\n"
+        f"💾 Saved to `ai_keys.json` & immediately active in bot.",
+        reply_markup=make_ai_keys_kb(),
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+async def delkey_cmd(update, ctx):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.message.reply_text("❌ Admin only.")
+        return
+    args = ctx.args or []
+    if not args:
+        await update.message.reply_text("Usage: `/delkey <anthropic|gemini|openrouter|all>`", parse_mode=ParseMode.MARKDOWN)
+        return
+    prov = args[0].lower().strip()
+    if prov == "all":
+        _save_ai_key("anthropic", "")
+        _save_ai_key("gemini", "")
+        _save_ai_key("openrouter", "")
+        await update.message.reply_text("🗑️ All AI keys cleared.", reply_markup=make_ai_keys_kb())
+        return
+    if prov not in ("anthropic", "gemini", "openrouter"):
+        await update.message.reply_text("❌ Invalid provider. Use: `anthropic`, `gemini`, `openrouter`, or `all`", parse_mode=ParseMode.MARKDOWN)
+        return
+    _save_ai_key(prov, "")
+    await update.message.reply_text(f"🗑️ {prov.title()} key cleared.", reply_markup=make_ai_keys_kb())
 
 async def emails_cmd(update, ctx):
     if not has_access(update.effective_user.id):
@@ -8941,6 +9135,11 @@ def main():
         CommandHandler("unbanuser",  unbanuser_cmd),
         CommandHandler("gproxy",     gproxy_cmd),
         CommandHandler("gproxies",   gproxy_cmd),
+        CommandHandler("apikeys",    apikeys_cmd),
+        CommandHandler("aikeys",     apikeys_cmd),
+        CommandHandler("setkey",     setkey_cmd),
+        CommandHandler("setai",      setkey_cmd),
+        CommandHandler("delkey",     delkey_cmd),
     ]
 
     conv = ConversationHandler(
@@ -9022,6 +9221,10 @@ def main():
     # ── Proxy commands ─────────────────────────────────────────────────────────
     app.add_handler(CommandHandler("aigen",        aigen_cmd))
     app.add_handler(CommandHandler("apikeys",      apikeys_cmd))
+    app.add_handler(CommandHandler("aikeys",       apikeys_cmd))
+    app.add_handler(CommandHandler("setkey",       setkey_cmd))
+    app.add_handler(CommandHandler("setai",        setkey_cmd))
+    app.add_handler(CommandHandler("delkey",       delkey_cmd))
     app.add_handler(CallbackQueryHandler(
         aigen_callback,
         pattern=r"^aigen_(anthropic|gemini|gpt4o|mistral|llama|deepseek)$"
