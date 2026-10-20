@@ -677,6 +677,23 @@ def apply_patch():
             src = ddgs_sync_search_pattern.sub(fast_ddgs_sync, src, count=1)
             applied.append("Optimized _ddgs_search_sync for non-blocking single-pass execution")
 
+    # Hardware scaling for 12 Cores / 62 GB RAM Beast Mode
+    if 'max_workers=128' in src:
+        src = src.replace('max_workers=128', 'max_workers=512')
+        applied.append("Scaled ThreadPoolExecutor to 512 workers (12 Cores / 62GB RAM)")
+
+    if 'limit=1000' in src and 'limit_per_host=40' in src:
+        src = src.replace('limit=1000', 'limit=4000')
+        src = src.replace('limit_per_host=40', 'limit_per_host=250')
+        src = src.replace('ttl_dns_cache=300', 'ttl_dns_cache=600')
+        applied.append("Scaled TCPConnector to 4000 sockets / 250 per host")
+
+    if 'connection_pool_size=20' in src and 'concurrent_updates=256' in src:
+        src = src.replace('connection_pool_size=20', 'connection_pool_size=64')
+        src = src.replace('connection_pool_size=4', 'connection_pool_size=16')
+        src = src.replace('concurrent_updates=256', 'concurrent_updates=512')
+        applied.append("Scaled Telegram HTTPX pool to 64 connections & 512 concurrent updates")
+
     # Fast fetch_scrape (4s timeout, no sleep on 429)
     if 'timeout=aiohttp.ClientTimeout(total=8)' in src:
         src = src.replace('timeout=aiohttp.ClientTimeout(total=8)', 'timeout=aiohttp.ClientTimeout(total=4, connect=2)')
@@ -684,7 +701,7 @@ def apply_patch():
         src = src.replace('await asyncio.sleep(0.1 * (attempt + 1))\n                        continue', 'return []')
         applied.append("Optimized fetch_scrape with 4s timeout & fast failover")
 
-    # Turbo async queue in search_urls_from_dorks
+    # Turbo async queue in search_urls_from_dorks (60 workers for 12 cores)
     if 'GROUP_SIZE = 90' in src:
         old_batch_runner = (
             '    async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:\n'
@@ -705,7 +722,7 @@ def apply_patch():
         )
         new_batch_runner = (
             '    async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:\n'
-            '        BATCH = 30\n'
+            '        BATCH = 35\n'
             '        batches = [dorks[i: i + BATCH] for i in range(0, total, BATCH)]\n'
             '        queue = asyncio.Queue()\n'
             '        for idx, b in enumerate(batches):\n'
@@ -727,13 +744,17 @@ def apply_patch():
             '                    pass\n'
             '                finally:\n'
             '                    queue.task_done()\n\n'
-            '        num_workers = min(30, max(5, len(batches)))\n'
+            '        num_workers = min(60, max(10, len(batches)))\n'
             '        workers = [asyncio.create_task(_worker()) for _ in range(num_workers)]\n'
             '        await asyncio.gather(*workers, return_exceptions=True)'
         )
         if old_batch_runner in src:
             src = src.replace(old_batch_runner, new_batch_runner, 1)
-            applied.append("Replaced rigid batch loop with 30-worker continuous async queue")
+            applied.append("Replaced rigid batch loop with 60-worker continuous async queue")
+
+    if 'scrape_sem = asyncio.Semaphore(250)' in src:
+        src = src.replace('scrape_sem = asyncio.Semaphore(250)', 'scrape_sem = asyncio.Semaphore(1200)')
+        applied.append("Scaled scrape semaphore to 1200 concurrent requests")
 
     # Lower DDGS timeout in _process_batch from 45.0s to 3.5s
     if 'timeout=45.0' in src:

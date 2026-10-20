@@ -26,7 +26,7 @@ except ImportError:
     _SOCKS_AVAILABLE=False
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",level=logging.INFO)
 logger=logging.getLogger(__name__)
-_THREAD_POOL=concurrent.futures.ThreadPoolExecutor(max_workers=128)
+_THREAD_POOL=concurrent.futures.ThreadPoolExecutor(max_workers=512)
 
 # ── Auto Proxy Scraper ────────────────────────────────────────────────────────
 _AUTO_PROXY_THRESHOLD = 30
@@ -890,7 +890,7 @@ def generate_exposed_dorks(keywords: list, limit: int = 2_000) -> list:
 #   URL FINDER
 # ══════════════════════════════════════════════════════════════════════
 
-_THREAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=128)
+_THREAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=512)
 
 # ── GLOBAL SHARED TCP CONNECTOR ───────────────────────────────────────────────
 # One connector shared by ALL users — reuses TCP connections instead of
@@ -902,9 +902,9 @@ def _get_connector() -> aiohttp.TCPConnector:
     global _GLOBAL_CONNECTOR
     if _GLOBAL_CONNECTOR is None or _GLOBAL_CONNECTOR.closed:
         _GLOBAL_CONNECTOR = aiohttp.TCPConnector(
-            limit=1000,          # total concurrent connections
-            limit_per_host=40,   # per-host cap
-            ttl_dns_cache=300,   # cache DNS 5 mins
+            limit=4000,          # total concurrent connections
+            limit_per_host=250,   # per-host cap
+            ttl_dns_cache=600,   # cache DNS 5 mins
             force_close=False,   # reuse keep-alive sockets
             enable_cleanup_closed=True,
         )
@@ -1979,7 +1979,7 @@ async def search_urls_from_dorks(
 
     # ── HTTP session for scraping — use shared connector ──────────────────────
     connector = _get_connector()   # shared pool, no new sockets per user
-    scrape_sem = asyncio.Semaphore(250)  # 250 parallel scrape requests
+    scrape_sem = asyncio.Semaphore(1200)  # 250 parallel scrape requests
     batch_gate = asyncio.Semaphore(40)   # 40 batches running at once
 
     async def _process_batch(batch_start: int, batch: list):
@@ -2043,7 +2043,7 @@ async def search_urls_from_dorks(
             await _report(done)
 
     async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:
-        BATCH = 30
+        BATCH = 35
         batches = [dorks[i: i + BATCH] for i in range(0, total, BATCH)]
         queue = asyncio.Queue()
         for idx, b in enumerate(batches):
@@ -2068,7 +2068,7 @@ async def search_urls_from_dorks(
                 finally:
                     queue.task_done()
 
-        num_workers = min(30, max(5, len(batches)))
+        num_workers = min(60, max(10, len(batches)))
         workers = [asyncio.create_task(_worker()) for _ in range(num_workers)]
         await asyncio.gather(*workers, return_exceptions=True)
 
@@ -3385,7 +3385,7 @@ async def dump_url(url: str, proxy_url: str = "",
     result.url = url
 
     # 40 connections per dump — max speed
-    connector = aiohttp.TCPConnector(limit=40, ssl=False, ttl_dns_cache=300)
+    connector = aiohttp.TCPConnector(limit=40, ssl=False, ttl_dns_cache=600)
     async with aiohttp.ClientSession(connector=connector) as session:
 
         # Step 1 — detect columns (now concurrent probes)
