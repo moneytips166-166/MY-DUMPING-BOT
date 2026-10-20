@@ -415,7 +415,7 @@ def apply_patch():
             '        return MENU\n\n'
             '    elif data in ("delkey_anthropic", "delkey_gemini", "delkey_openrouter"):\n'
             '        if not is_admin(user_id):\n'
-            '            await query.answer("❌ UɴᴀUHᴏʀɪᴢᴇᴅ", show_alert=True)\n'
+            '            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)\n'
             '            return MENU\n'
             '        prov = data.replace("delkey_", "")\n'
             '        _save_ai_key(prov, "")\n'

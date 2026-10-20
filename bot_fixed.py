@@ -6073,7 +6073,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     elif data in ("delkey_anthropic", "delkey_gemini", "delkey_openrouter"):
         if not is_admin(user_id):
-            await query.answer("❌ UɴᴀUHᴏʀɪᴢᴇᴅ", show_alert=True)
+            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
             return MENU
         prov = data.replace("delkey_", "")
         _save_ai_key(prov, "")
