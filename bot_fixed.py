@@ -15173,10 +15173,6 @@ if "--v11-proxy-once" in _v11_sys.argv:
 
 
 
-
-
-
-
 # ==================== V12 BULLETPROOF PERSISTENT ROUTER & SINGLE-INSTANCE ENGINE ====================
 import fcntl as _v12_fcntl
 import hashlib as _v12_hashlib
@@ -15189,7 +15185,7 @@ try:
 except Exception:
     pass
 
-_V12_VERSION_TAG = "V12-IMMORTAL"
+_V12_VERSION_TAG = "V13-IMMORTAL"
 _V12_STATE_FILE = os.path.join("data", "v12_user_states.json")
 _V12_LOCK_FD = None
 _V12_CONV_REF = None
@@ -15286,7 +15282,11 @@ def _v12_purge_competing_services_and_processes() -> list[str]:
             )
             if is_python and has_bot_target:
                 try:
-                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    pgid = os.getpgid(pid)
+                    if pgid != os.getpgrp() and pgid not in (1, my_pid, parent_pid):
+                        os.killpg(pgid, signal.SIGKILL)
+                    else:
+                        os.kill(pid, signal.SIGKILL)
                 except Exception:
                     try:
                         os.kill(pid, signal.SIGKILL)
@@ -15820,7 +15820,7 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return MENU
 
 
-# Stamp live `[V12-IMMORTAL]` version right on top button of Admin Panel so Owner sees it in 1 second!
+# Stamp live `[V13-IMMORTAL]` version right on top button of Admin Panel so Owner sees it in 1 second!
 _v12_prev_make_admin_menu = make_admin_menu
 
 

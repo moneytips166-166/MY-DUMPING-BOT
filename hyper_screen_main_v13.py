@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-hyper_bulletproof_router_v12.py
+hyper_screen_main_v13.py
 ───────────────────────────────────────────────────────────────────────────────
 SPIDEY / LUCIFER BOT — V12 HYPER BULLETPROOF ROUTER & FULL SYSTEM ENGINE
 100% Standalone Cumulative Upgrade (Auto-Chains V7.1 + V8 + V9 + V10 + V11 -> V12)
@@ -1203,7 +1203,7 @@ try:
 except Exception:
     pass
 
-_V12_VERSION_TAG = "V12-IMMORTAL"
+_V12_VERSION_TAG = "V13-IMMORTAL"
 _V12_STATE_FILE = os.path.join("data", "v12_user_states.json")
 _V12_LOCK_FD = None
 _V12_CONV_REF = None
@@ -1300,7 +1300,11 @@ def _v12_purge_competing_services_and_processes() -> list[str]:
             )
             if is_python and has_bot_target:
                 try:
-                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    pgid = os.getpgid(pid)
+                    if pgid != os.getpgrp() and pgid not in (1, my_pid, parent_pid):
+                        os.killpg(pgid, signal.SIGKILL)
+                    else:
+                        os.kill(pid, signal.SIGKILL)
                 except Exception:
                     try:
                         os.kill(pid, signal.SIGKILL)
@@ -1834,7 +1838,7 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return MENU
 
 
-# Stamp live `[V12-IMMORTAL]` version right on top button of Admin Panel so Owner sees it in 1 second!
+# Stamp live `[V13-IMMORTAL]` version right on top button of Admin Panel so Owner sees it in 1 second!
 _v12_prev_make_admin_menu = make_admin_menu
 
 
@@ -2129,11 +2133,150 @@ def apply_v12_upgrade(target_path: str) -> None:
     print("   [3] `drop_pending_updates=False` (Zero dropped messages on reconnect!)")
     print("   [4] All 19 States + All 6 Pro Dork Commands + `.txt`/`.zip` Non-Blocking!")
     print("   [5] Zero Silent Black Holes + Auto License Key Redemption Anywhere!")
-    print("   [6] Live `[V12-IMMORTAL]` Badge + `<80ms` Nuclear `☢️ FORCE KILL ALL`!")
+    print("   [6] Live `[V13-IMMORTAL]` Badge + `<80ms` Nuclear `☢️ FORCE KILL ALL`!")
     print("══════════════════════════════════════════════════════════════════")
 
 
+def stop_all_old_screens_and_orphans() -> None:
+    """Cleanly stop ALL existing `spidey` screen sessions + any stray background python bot processes!"""
+    if shutil.which("screen"):
+        try:
+            out = subprocess.run(["screen", "-ls"], capture_output=True, text=True, timeout=5)
+            for m in re.finditer(r"(\d+\.spidey)\b", out.stdout or ""):
+                sess = m.group(1)
+                subprocess.run(["screen", "-S", sess, "-X", "quit"], capture_output=True, timeout=5)
+                print(f"🧹 Closed old screen session: {sess}")
+        except Exception:
+            pass
+
+    me = os.getpid()
+    ancestors = {1, me, os.getppid()}
+    cur = os.getppid()
+    for _ in range(8):
+        try:
+            st = open(f"/proc/{cur}/stat", "r", errors="ignore").read()
+            rp = st.rfind(")")
+            cur = int(st[rp + 2 :].split()[1])
+            if cur <= 1 or cur in ancestors:
+                break
+            ancestors.add(cur)
+        except Exception:
+            break
+
+    killed = 0
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid in ancestors:
+            continue
+        try:
+            args = [p.decode("utf-8", "ignore") for p in open(f"/proc/{pid}/cmdline", "rb").read().split(b"\x00") if p]
+            if not args:
+                continue
+            cmd = " ".join(args)
+            if "hyper_" in cmd or "patch_" in cmd:
+                continue
+            base0 = os.path.basename(args[0]).lower()
+            if ("python" in base0 and any(os.path.basename(a) in ("main.py", "bot.py", "bot_fixed.py") or "/spidey/" in a for a in args[1:])) or "sqlmap" in cmd.lower():
+                os.kill(pid, signal.SIGKILL)
+                killed += 1
+        except Exception:
+            continue
+    if killed:
+        print(f"🔪 Killed {killed} stray background bot/worker process(es)!")
+        time.sleep(1.0)
+
+
+def detect_target_bot_files() -> list[str]:
+    if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
+        return [os.path.abspath(sys.argv[1])]
+
+    base_dir = "/home/yashdev/spidey" if os.path.isdir("/home/yashdev/spidey") else os.getcwd()
+    targets: list[str] = []
+
+    run_sh = os.path.join(base_dir, "run.sh")
+    if os.path.isfile(run_sh):
+        try:
+            rtxt = open(run_sh, "r", encoding="utf-8", errors="ignore").read()
+            for m in re.finditer(r"python3?\s+([^\s>&;]+\.py)", rtxt):
+                cand = m.group(1).strip("'\"")
+                ap = cand if os.path.isabs(cand) else os.path.abspath(os.path.join(base_dir, cand))
+                if os.path.isfile(ap) and ap not in targets:
+                    targets.append(ap)
+        except Exception:
+            pass
+        chk = subprocess.run(["bash", "-n", run_sh], capture_output=True, text=True)
+        if chk.returncode != 0:
+            ts_sh = datetime.now().strftime("%Y%m%d_%H%M%S")
+            shutil.copy2(run_sh, f"{run_sh}.bak_v13_{ts_sh}")
+            fixed_sh = (
+                "#!/bin/bash\n"
+                f"cd {base_dir}\n"
+                "source venv/bin/activate\n"
+                "while true; do\n"
+                '    echo "[$(date)] Bot starting..." >> bot.log\n'
+                "    PORT=4000 python3 main.py >> bot.log 2>&1\n"
+                '    echo "[$(date)] Bot exited — restarting in 5s..." >> bot.log\n'
+                "    sleep 5\n"
+                "done\n"
+            )
+            with open(run_sh, "w", encoding="utf-8") as wf:
+                wf.write(fixed_sh)
+            os.chmod(run_sh, 0o755)
+            print(f"🔧 Auto-repaired unclosed quote in `{run_sh}` (backup saved: `{run_sh}.bak_v13_{ts_sh}`)!")
+        else:
+            print(f"✅ Verified `run.sh` bash syntax OK: {run_sh}")
+
+    for name in ("main.py", "bot.py"):
+        ap = os.path.abspath(os.path.join(base_dir, name))
+        if os.path.isfile(ap) and ap not in targets:
+            targets.append(ap)
+
+    if targets:
+        return targets
+
+    raise FileNotFoundError(f"Could not find `main.py` or `bot.py` in {base_dir}!")
+
+
+def safe_staged_upgrade(target_path: str) -> None:
+    """
+    Tests full V7.1 -> V13 upgrade on an isolated staged copy FIRST, validates
+    `venv/bin/python3 -m py_compile` + `ast.parse`, saves `.bak_v13_<ts>` backup,
+    and atomically updates `target_path` ONLY when 100% verified!
+    """
+    import ast as _ast
+    import tempfile as _tempfile
+
+    target_dir = os.path.dirname(os.path.abspath(target_path))
+    venv_py = os.path.join(target_dir, "venv", "bin", "python3")
+    checker_py = venv_py if os.path.isfile(venv_py) else sys.executable
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    bak_path = f"{target_path}.bak_v13_{ts}"
+    shutil.copy2(target_path, bak_path)
+    print(f"📦 Untouched Backup Saved: {bak_path}")
+
+    with _tempfile.TemporaryDirectory(dir=target_dir) as stage_dir:
+        staged_file = os.path.join(stage_dir, os.path.basename(target_path))
+        shutil.copy2(target_path, staged_file)
+        apply_v12_upgrade(staged_file)
+
+        with open(staged_file, "r", encoding="utf-8") as sf:
+            _ast.parse(sf.read(), filename=target_path)
+        subprocess.check_call([checker_py, "-m", "py_compile", staged_file])
+        print(f"✅ Staged Compile & AST Check Passed via `{checker_py}`!")
+
+        tmp_live = f"{target_path}.v13_atomic_{os.getpid()}"
+        shutil.copy2(staged_file, tmp_live)
+        os.replace(tmp_live, target_path)
+        print(f"🚀 Atomically Installed V13-IMMORTAL -> {target_path}\n")
+
+
 if __name__ == "__main__":
-    target = detect_target_bot_file()
-    print(f"🎯 Auto-Detected Active Bot File: {target}")
-    apply_v12_upgrade(target)
+    if len(sys.argv) <= 1:
+        stop_all_old_screens_and_orphans()
+    targets = detect_target_bot_files()
+    print(f"🎯 Target Bot File(s) Detected: {targets}")
+    for tgt in targets:
+        safe_staged_upgrade(tgt)
