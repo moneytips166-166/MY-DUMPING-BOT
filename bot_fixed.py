@@ -15176,6 +15176,13 @@ if "--v11-proxy-once" in _v11_sys.argv:
 
 
 
+
+
+
+
+
+
+
 # ==================== V12 BULLETPROOF PERSISTENT ROUTER & SINGLE-INSTANCE ENGINE ====================
 import fcntl as _v12_fcntl
 import hashlib as _v12_hashlib
@@ -15188,7 +15195,7 @@ try:
 except Exception:
     pass
 
-_V12_VERSION_TAG = "V15-ULTIMATE"
+_V12_VERSION_TAG = "V16-PERFECTION"
 _V12_STATE_FILE = os.path.join("data", "v12_user_states.json")
 _V12_LOCK_FD = None
 _V12_CONV_REF = None
@@ -15823,7 +15830,7 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return MENU
 
 
-# Stamp live `[V15-ULTIMATE]` version right on top button of Admin Panel so Owner sees it in 1 second!
+# Stamp live `[V16-PERFECTION]` version right on top button of Admin Panel so Owner sees it in 1 second!
 _v12_prev_make_admin_menu = make_admin_menu
 
 
@@ -15845,7 +15852,7 @@ def make_admin_menu():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 🚀 HYPER V15-ULTIMATE: DYNAMIC VPS HARDWARE CONTROLLER + 1-SEC MULTI-JUDGE PROXY
+# 🚀 HYPER V16-PERFECTION: DYNAMIC VPS HARDWARE CONTROLLER + 1-SEC MULTI-JUDGE PROXY
 #    + 7-ENGINE RUST HTTP/2 DORK PARSER + FULL MULTI-CORE SQLi & ALL-DUMPER
 # ══════════════════════════════════════════════════════════════════════════════
 async def _get(session: aiohttp.ClientSession, url: str, proxy_url: str) -> str:
@@ -17286,7 +17293,7 @@ async def _run_dump_pipeline(
     return MENU
 
 
-# ── V15-ULTIMATE DYNAMIC HARDWARE & ENGINE CONFIGURATION CENTER ──────────────────
+# ── V16-PERFECTION DYNAMIC HARDWARE & ENGINE CONFIGURATION CENTER ──────────────────
 import secrets as _v14_secrets
 import urllib.parse as _v14_up
 
@@ -17307,7 +17314,7 @@ except Exception:
     _V14ProxyConnector = None
     _V14_SOCKS_OK = False
 
-_V12_VERSION_TAG = "V15-ULTIMATE"
+_V12_VERSION_TAG = "V16-PERFECTION"
 _V14_CFG_FILE = os.path.join("data", "v14_engine_config.json")
 _V14_ELITE_PROXY_FILE = os.path.join("data", "v14_elite_proxies.json")
 
@@ -17511,7 +17518,7 @@ def _v14_save_elite_proxies(px_list: list[str]) -> None:
         pass
 
 
-# ── V15-ULTIMATE 1-SECOND MULTI-SOURCE PROXY SCRAPER + 10-CDN EDGE VALIDATOR ─────
+# ── V16-PERFECTION 1-SECOND MULTI-SOURCE PROXY SCRAPER + 10-CDN EDGE VALIDATOR ─────
 _V14_FAST_PROXY_FEEDS = [
     ("http", "https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=http&timeout=7000&country=all"),
     ("http", "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=7000&country=all&ssl=all&anonymity=all"),
@@ -17818,7 +17825,7 @@ async def _v14_scrape_proxies_button_fast(query) -> int:
     return MENU
 
 
-# ── V15-ULTIMATE HIGH-YIELD DORK GENERATOR + ENGINE-NATIVE DORK TRANSLATOR ───────
+# ── V16-PERFECTION HIGH-YIELD DORK GENERATOR + ENGINE-NATIVE DORK TRANSLATOR ───────
 _V14_GOLD_SQLI_PARAMS = [
     "id", "pid", "cid", "cat", "page", "item", "uid", "prod", "product_id",
     "news_id", "view", "num", "nid", "no", "article_id", "category_id",
@@ -17978,7 +17985,7 @@ def _v14_translate_dork_for_engine(raw_dork: str, engine_name: str) -> str:
     return d
 
 
-# ── V15-ULTIMATE 7-ENGINE ASYNC RUST HTTP/2 + REAL SITE PARAM SPIDER ENGINE ──────
+# ── V16-PERFECTION 7-ENGINE ASYNC RUST HTTP/2 + REAL SITE PARAM SPIDER ENGINE ──────
 _V14_HREF_RE     = re.compile(r'''href=["']([^"'<>\s]{8,700})["']''', re.I)
 _V14_GOOGLE_Q_RE = re.compile(r'''/url\?(?:q|url)=([^&"'<>\s]+)''', re.I)
 _V14_YAHOO_RU_RE = re.compile(r'''/RU=([^/"'&<>\s]+)''')
@@ -18904,7 +18911,7 @@ async def run_vuln_alldata_dumper(
     )
 
 
-# ── V15-ULTIMATE INTERACTIVE TELEGRAM UI FOR `⚙️ VPS & ENGINE SETTINGS` ──────────
+# ── V16-PERFECTION INTERACTIVE TELEGRAM UI FOR `⚙️ VPS & ENGINE SETTINGS` ──────────
 def _v14_settings_panel_text() -> str:
     lim = get_v14_runtime_limits()
     hw = lim["hw"]
@@ -18969,7 +18976,7 @@ def make_admin_menu():
     kb = _v14_prev_admin_menu()
     rows = [list(r) for r in kb.inline_keyboard]
     new_rows = [
-        [InlineKeyboardButton("☢️ FORCE KILL ALL TASKS [V15-ULTIMATE]", callback_data="admin_killall")],
+        [InlineKeyboardButton("☢️ FORCE KILL ALL TASKS [V16-PERFECTION]", callback_data="admin_killall")],
         [InlineKeyboardButton(f"⚙️ VPS & Engine Settings ({get_v14_runtime_limits()['short']})", callback_data="v14_settings")],
     ]
     for r in rows:
@@ -19189,7 +19196,7 @@ async def _v12_pre_router_guard(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 💎🧠 HYPER V15-ULTIMATE:
+# 💎🧠 HYPER V16-PERFECTION:
 #   [1] ADVANCED KEYWORDS QUALITY CHECKER (Video UI Style: Premium / Good / Normal / Bad)
 #       + "❓ Not have keywords?" + Instant UHQ/HQ Keyword Maker + 1-Click Check Now
 #       + Selective Download (Premium Only, Good Only, Normal, Bad, Premium+Good, All, Split ZIP)
@@ -19198,6 +19205,68 @@ async def _v12_pre_router_guard(update: Update, context: ContextTypes.DEFAULT_TY
 
 import zipfile as _v15_zipfile
 from html import unescape as _v15_unescape
+
+import signal
+OWNER_ID = next(iter(ADMIN_IDS), 0)
+_run_sqli_scan = _run_sqli
+def _run_url_dump_pipeline(update, context, urls):
+    return _run_dump_pipeline(update, context, [], prefound_urls=urls)
+
+def _v15_md_esc(s: str) -> str:
+    return re.sub(r"([_`*\[\]])", " ", str(s or "")).strip()
+
+
+def _v9_vault_save(uid: int, direction: str, filename: str, raw_bytes: bytes, category: str = "") -> None:
+    try:
+        if "_v9_record_vault_file" in globals():
+            _v9_record_vault_file(
+                uid=int(uid or 0),
+                direction=direction,
+                filename=filename,
+                raw_bytes=raw_bytes,
+                tg_file_id="",
+                caption=category or filename,
+            )
+    except Exception:
+        pass
+
+
+def _v14_extract_urls_from_html(html_text: str) -> list[str]:
+    if not html_text:
+        return []
+    found = []
+    seen_u = set()
+    skip_d = ("google.", "bing.com", "yahoo.com", "duckduckgo.com", "brave.com", "youtube.com", "facebook.com", "w3.org")
+    for raw_u in re.findall(r'https?://[^\s"\'<>\\]+', html_text):
+        u_clean = _v15_unescape(raw_u).rstrip(".,;)>]\"'")
+        low_u = u_clean.lower()
+        if any(sd in low_u for sd in skip_d):
+            continue
+        if u_clean not in seen_u:
+            seen_u.add(u_clean)
+            found.append(u_clean)
+    return found
+
+
+async def _v8_download_and_extract_lines(update_or_msg, context: ContextTypes.DEFAULT_TYPE, max_lines: int = 500_000) -> tuple[list[str], str | None]:
+    """
+    Universal resilient `.txt` / `.zip` / forwarded-file line extractor for ALL bot modules!
+    Accepts either `telegram.Update` or `telegram.Message`.
+    """
+    msg_obj = getattr(update_or_msg, "effective_message", None) or getattr(update_or_msg, "message", None) or update_or_msg
+    doc = getattr(msg_obj, "document", None)
+    if doc is None:
+        return [], "❌ *Koi valid `.txt` ya `.zip` file nahi mili!* File dubara upload karo."
+    try:
+        raw_text = await _v8_download_doc_text(context, doc)
+    except Exception as exc:
+        return [], f"❌ *File download error:* `{_v15_md_esc(exc)}`"
+    if not raw_text:
+        return [], "❌ *File empty hai!*"
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()][:max_lines]
+    if not lines:
+        return [], "❌ *File ke andar koi text lines nahi mili!*"
+    return lines, None
 
 _V15_STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "v15_kw_sessions")
 os.makedirs(_V15_STATE_DIR, exist_ok=True)
@@ -19602,6 +19671,8 @@ def _v15_score_single_keyword(kw: str, live_verified_roots: set[str] | None = No
         return 8, "bad", "Too short / symbols only"
     if re.search(r"\bpage=\d+\b", low):
         return 22, "bad", "Dead page=N poison"
+    if re.search(r"\s\d{2,7}$", low):
+        return 26, "bad", "Numeric pad suffix"
 
     has_dork_op = bool(re.search(r"\b(?:inurl|intitle|intext|allinurl|site|filetype|ext):", low)) or (".php?" in low or ".asp?" in low or ".aspx?" in low)
 
@@ -19815,7 +19886,7 @@ def _v15_build_kwqc_dashboard(res: dict, title_prefix: str = "💎 𝗞𝗘𝗬�
     ]
     for tk, badge in badge_map:
         for item in (samples.get(tk) or [])[:2]:
-            kw_disp = str(item.get("kw", ""))[:40]
+            kw_disp = _v15_md_esc(str(item.get("kw", "")))[:40]
             sc_disp = item.get("score", 0)
             sample_lines.append(f"{badge} `[{sc_disp}/100]` — `{kw_disp}`")
 
@@ -19882,7 +19953,6 @@ def _v15_kw_checker_home_ui() -> tuple[str, InlineKeyboardMarkup]:
         "👇 _Niche button click karo, kuch seed words do — bot UHQ & HQ Keywords bana dega aur turant unki Quality Check bhi kar dega!_"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("❓ Nᴏᴛ ʜᴀᴠᴇ ᴋᴇʏᴡᴏʀᴅs? 👇", callback_data="v15_not_have_kw")],
         [InlineKeyboardButton("⚡ Gᴇɴᴇʀᴀᴛᴇ UHQ / HQ Kᴇʏᴡᴏʀᴅs", callback_data="v15_not_have_kw")],
         [InlineKeyboardButton("🏠 Mᴀɪɴ Mᴇɴᴜ", callback_data="back_to_menu")],
     ])
@@ -20322,7 +20392,7 @@ async def _v15_execute_ai_parser_and_deliver(chat_id: int, uid: int, target_quer
     _v15_save_session(uid, sess_data)
     context.user_data.pop("v15_mode", None)
 
-    top_preview = "\n".join(f"  `• {k}`" for k in qc["all"][:8])
+    top_preview = "\n".join(f"  `• {_v15_md_esc(k)}`" for k in qc["all"][:8])
     report_txt = (
         f"🧠 *𝗔𝗜 𝗧𝗔𝗥𝗚𝗘𝗧 𝗔𝗡𝗔𝗟𝗬𝗦𝗜𝗦 & 𝗛𝗤 𝗞𝗘𝗬𝗪𝗢𝗥𝗗𝗦 𝗥𝗘𝗔𝗗𝗬!* ✅\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -20382,8 +20452,8 @@ def make_main_menu():
     if "menu_kw_checker" not in existing:
         insert_pos = 1 if len(rows) >= 1 else 0
         rows.insert(insert_pos, [
-            InlineKeyboardButton("💎 Kᴇʏᴡᴏʀᴅ Qᴜᴀʟɪᴛʏ Cʜᴇᴄᴋᴇʀ", callback_data="menu_kw_checker"),
-            InlineKeyboardButton("🧠 AI Tᴀʀɢᴇᴛ Kᴇʏᴡᴏʀᴅ Pᴀʀsᴇʀ", callback_data="menu_ai_kw_parser"),
+            InlineKeyboardButton("💎 Kᴡ Qᴜᴀʟɪᴛʏ Cʜᴇᴄᴋ", callback_data="menu_kw_checker"),
+            InlineKeyboardButton("🧠 AI Kᴇʏᴡᴏʀᴅ Pᴀʀsᴇʀ", callback_data="menu_ai_kw_parser"),
         ])
     return InlineKeyboardMarkup(rows)
 
@@ -20718,7 +20788,10 @@ async def _v12_pre_router_guard(update: Update, context: ContextTypes.DEFAULT_TY
         _v15_save_session(uid, sess)
         context.user_data.pop("v15_mode", None)
         dash_txt, dash_kb = _v15_build_kwqc_dashboard(qc)
-        await wait_m.edit_text(dash_txt, reply_markup=dash_kb, parse_mode=ParseMode.MARKDOWN)
+        try:
+            await wait_m.edit_text(dash_txt, reply_markup=dash_kb, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            await wait_m.edit_text(dash_txt.replace("*", "").replace("`", ""), reply_markup=dash_kb)
         raise ApplicationHandlerStop()
 
     if active_mode == "kwqc_wait_seeds_for_uhq":
@@ -20754,7 +20827,7 @@ async def _v12_pre_router_guard(update: Update, context: ContextTypes.DEFAULT_TY
         _v15_save_session(uid, sess)
         context.user_data.pop("v15_mode", None)
 
-        preview_lines = "\n".join(f"  `• {k}`" for k in gen_kws[:8])
+        preview_lines = "\n".join(f"  `• {_v15_md_esc(k)}`" for k in gen_kws[:8])
         after_gen_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(f"🔍 Cʜᴇᴄᴋ Kᴇʏᴡᴏʀᴅs Qᴜᴀʟɪᴛʏ Nᴏᴡ ({len(gen_kws):,})", callback_data="v15_check_gen_now")],
             [InlineKeyboardButton("🔥 Mᴀᴋᴇ UHQ Dᴏʀᴋs Fʀᴏᴍ Tʜᴇsᴇ", callback_data="v15_make_dorks_best")],
