@@ -8790,6 +8790,8 @@ def main():
     app.add_handler(CommandHandler(["killall", "stopall"], _v11_killall_cmd), group=-2)
     app.add_handler(CommandHandler("stop", _v11_stop_my_tasks_cmd), group=-2)
     app.add_handler(CommandHandler(["vps", "settings"], v14_settings_cmd), group=-2)
+    app.add_handler(CommandHandler(["kwcheck", "kwquality"], v15_kwcheck_cmd), group=-2)
+    app.add_handler(CommandHandler(["aikeywords", "aiparse"], v15_aikeywords_cmd), group=-2)
 
     # Group -1: Persistent State Hydration + Stale Update Filter + Instant License Key Auto-Redeem
     app.add_handler(MessageHandler(filters.ALL, _v12_pre_router_guard), group=-1)
@@ -15186,7 +15188,7 @@ try:
 except Exception:
     pass
 
-_V12_VERSION_TAG = "V14-APEX"
+_V12_VERSION_TAG = "V15-ULTIMATE"
 _V12_STATE_FILE = os.path.join("data", "v12_user_states.json")
 _V12_LOCK_FD = None
 _V12_CONV_REF = None
@@ -15821,7 +15823,7 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return MENU
 
 
-# Stamp live `[V14-APEX]` version right on top button of Admin Panel so Owner sees it in 1 second!
+# Stamp live `[V15-ULTIMATE]` version right on top button of Admin Panel so Owner sees it in 1 second!
 _v12_prev_make_admin_menu = make_admin_menu
 
 
@@ -15843,7 +15845,7 @@ def make_admin_menu():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 🚀 HYPER V14-APEX: DYNAMIC VPS HARDWARE CONTROLLER + 1-SEC MULTI-JUDGE PROXY
+# 🚀 HYPER V15-ULTIMATE: DYNAMIC VPS HARDWARE CONTROLLER + 1-SEC MULTI-JUDGE PROXY
 #    + 7-ENGINE RUST HTTP/2 DORK PARSER + FULL MULTI-CORE SQLi & ALL-DUMPER
 # ══════════════════════════════════════════════════════════════════════════════
 async def _get(session: aiohttp.ClientSession, url: str, proxy_url: str) -> str:
@@ -17284,7 +17286,7 @@ async def _run_dump_pipeline(
     return MENU
 
 
-# ── V14-APEX DYNAMIC HARDWARE & ENGINE CONFIGURATION CENTER ──────────────────
+# ── V15-ULTIMATE DYNAMIC HARDWARE & ENGINE CONFIGURATION CENTER ──────────────────
 import secrets as _v14_secrets
 import urllib.parse as _v14_up
 
@@ -17305,7 +17307,7 @@ except Exception:
     _V14ProxyConnector = None
     _V14_SOCKS_OK = False
 
-_V12_VERSION_TAG = "V14-APEX"
+_V12_VERSION_TAG = "V15-ULTIMATE"
 _V14_CFG_FILE = os.path.join("data", "v14_engine_config.json")
 _V14_ELITE_PROXY_FILE = os.path.join("data", "v14_elite_proxies.json")
 
@@ -17509,7 +17511,7 @@ def _v14_save_elite_proxies(px_list: list[str]) -> None:
         pass
 
 
-# ── V14-APEX 1-SECOND MULTI-SOURCE PROXY SCRAPER + 10-CDN EDGE VALIDATOR ─────
+# ── V15-ULTIMATE 1-SECOND MULTI-SOURCE PROXY SCRAPER + 10-CDN EDGE VALIDATOR ─────
 _V14_FAST_PROXY_FEEDS = [
     ("http", "https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=http&timeout=7000&country=all"),
     ("http", "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=7000&country=all&ssl=all&anonymity=all"),
@@ -17816,7 +17818,7 @@ async def _v14_scrape_proxies_button_fast(query) -> int:
     return MENU
 
 
-# ── V14-APEX HIGH-YIELD DORK GENERATOR + ENGINE-NATIVE DORK TRANSLATOR ───────
+# ── V15-ULTIMATE HIGH-YIELD DORK GENERATOR + ENGINE-NATIVE DORK TRANSLATOR ───────
 _V14_GOLD_SQLI_PARAMS = [
     "id", "pid", "cid", "cat", "page", "item", "uid", "prod", "product_id",
     "news_id", "view", "num", "nid", "no", "article_id", "category_id",
@@ -17976,7 +17978,7 @@ def _v14_translate_dork_for_engine(raw_dork: str, engine_name: str) -> str:
     return d
 
 
-# ── V14-APEX 7-ENGINE ASYNC RUST HTTP/2 + REAL SITE PARAM SPIDER ENGINE ──────
+# ── V15-ULTIMATE 7-ENGINE ASYNC RUST HTTP/2 + REAL SITE PARAM SPIDER ENGINE ──────
 _V14_HREF_RE     = re.compile(r'''href=["']([^"'<>\s]{8,700})["']''', re.I)
 _V14_GOOGLE_Q_RE = re.compile(r'''/url\?(?:q|url)=([^&"'<>\s]+)''', re.I)
 _V14_YAHOO_RU_RE = re.compile(r'''/RU=([^/"'&<>\s]+)''')
@@ -18902,7 +18904,7 @@ async def run_vuln_alldata_dumper(
     )
 
 
-# ── V14-APEX INTERACTIVE TELEGRAM UI FOR `⚙️ VPS & ENGINE SETTINGS` ──────────
+# ── V15-ULTIMATE INTERACTIVE TELEGRAM UI FOR `⚙️ VPS & ENGINE SETTINGS` ──────────
 def _v14_settings_panel_text() -> str:
     lim = get_v14_runtime_limits()
     hw = lim["hw"]
@@ -18967,7 +18969,7 @@ def make_admin_menu():
     kb = _v14_prev_admin_menu()
     rows = [list(r) for r in kb.inline_keyboard]
     new_rows = [
-        [InlineKeyboardButton("☢️ FORCE KILL ALL TASKS [V14-APEX]", callback_data="admin_killall")],
+        [InlineKeyboardButton("☢️ FORCE KILL ALL TASKS [V15-ULTIMATE]", callback_data="admin_killall")],
         [InlineKeyboardButton(f"⚙️ VPS & Engine Settings ({get_v14_runtime_limits()['short']})", callback_data="v14_settings")],
     ]
     for r in rows:
@@ -19182,6 +19184,1620 @@ async def _v12_pre_router_guard(update: Update, context: ContextTypes.DEFAULT_TY
                 parse_mode=ParseMode.MARKDOWN,
             )
             raise _V14HandlerStop()
+
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 💎🧠 HYPER V15-ULTIMATE:
+#   [1] ADVANCED KEYWORDS QUALITY CHECKER (Video UI Style: Premium / Good / Normal / Bad)
+#       + "❓ Not have keywords?" + Instant UHQ/HQ Keyword Maker + 1-Click Check Now
+#       + Selective Download (Premium Only, Good Only, Normal, Bad, Premium+Good, All, Split ZIP)
+#   [2] 🧠 AI DUMP TARGET ANALYZER ➪ LIVE WEB/SERP HQ KEYWORD PARSER & GENERATOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+import zipfile as _v15_zipfile
+from html import unescape as _v15_unescape
+
+_V15_STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "v15_kw_sessions")
+os.makedirs(_V15_STATE_DIR, exist_ok=True)
+
+_V15_TRASH_EXACT = {
+    "a", "an", "the", "and", "or", "for", "to", "in", "on", "of", "at", "by", "with", "from",
+    "free", "test", "testing", "sample", "example", "demo", "hello", "world", "google", "youtube",
+    "facebook", "instagram", "whatsapp", "tiktok", "twitter", "wikipedia", "reddit", "amazon",
+    "news", "video", "videos", "mp3", "mp4", "pdf", "jpg", "png", "gif", "wallpaper", "lyrics",
+    "weather", "horoscope", "jokes", "quotes", "memes", "movie", "movies", "song", "songs",
+    "game", "games", "play", "online", "website", "site", "web", "page", "home", "index",
+    "click", "here", "view", "more", "new", "best", "top", "good", "bad", "nice", "cool",
+    "download", "crack", "hack", "nulled", "cracked", "leaked", "combo", "combolist", "dork", "dorks",
+    "sqli", "sqlmap", "havij", "admin", "login", "password", "user", "1234", "123456", "qwerty",
+}
+
+_V15_SATURATED_BROAD = {
+    "fortnite", "minecraft", "roblox", "pubg", "netflix", "spotify", "steam", "paypal", "bitcoin",
+    "crypto", "shop", "store", "gaming", "anime", "vpn", "proxy", "hosting", "music", "fashion",
+    "shoes", "phone", "laptop", "car", "hotel", "travel", "food", "fitness", "health", "school",
+}
+
+_V15_TIER1_TRANSACTIONAL = {
+    "checkout", "billing", "payment", "gateway", "invoice", "order", "orders", "cart", "basket",
+    "stripe", "braintree", "authorize", "adyen", "worldpay", "razorpay", "payu", "mollie", "square",
+    "klarna", "afterpay", "woocommerce", "opencart", "prestashop", "magento", "bigcommerce", "whmcs",
+    "merchant", "cardholder", "transaction", "receipt", "shipping", "voucher", "giftcard", "coupon",
+    "redeem", "topup", "recharge", "wallet", "balance", "deposit", "withdraw", "payout", "escrow",
+}
+
+_V15_TIER1_ACCOUNT_DB = {
+    "account", "accounts", "member", "members", "customer", "customers", "client", "clients",
+    "subscriber", "subscription", "membership", "portal", "dashboard", "profile", "myaccount",
+    "signin", "signup", "register", "registration", "auth", "credentials", "userpanel", "clientarea",
+    "ticket", "tickets", "support", "booking", "reservation", "passenger", "patient", "student",
+    "alumni", "applicant", "vendor", "reseller", "affiliate", "partner", "vip", "premium", "license",
+}
+
+_V15_TIER2_COMMERCIAL = {
+    "product", "products", "catalog", "catalogue", "category", "collection", "item", "detail",
+    "details", "bundle", "pack", "pass", "keys", "cdkey", "digital", "delivery", "instant",
+    "storefront", "boutique", "outlet", "wholesale", "mart", "supply", "gear", "accessories",
+    "jewelry", "cosmetics", "skincare", "supplements", "electronics", "gadgets", "hardware",
+    "sneakers", "apparel", "watches", "perfume", "eyewear", "furniture", "pet", "florist",
+    "bakery", "gourmet", "coffee", "wine", "vape", "cbd", "fishing", "hunting", "cycling",
+    "motorsport", "autoparts", "tyres", "tools", "dental", "clinic", "pharmacy", "optical",
+    "academy", "institute", "university", "college", "tuition", "course", "exam", "certificate",
+    "hosting", "vps", "dedicated", "domain", "cpanel", "plesk", "rdp", "cloud", "server",
+    "exchange", "trading", "forex", "token", "staking", "mining", "defi", "ledger", "airdrop",
+    "casino", "sportsbook", "betting", "poker", "slots", "jackpot", "roulette", "wager",
+    "streaming", "ott", "iptv", "vod", "cinema", "series", "anime", "manga", "comics",
+}
+
+_V15_DUMP_PROFILES = {
+    "cc": {
+        "label": "💳 CC / Payment Gateway & Checkout Databases",
+        "tables": ["orders", "payments", "transactions", "billing_address", "customer_cards", "payment_tokens", "sales_flat_order_payment"],
+        "columns": ["card_number", "cc_num", "exp_month", "exp_year", "cvv", "cardholder_name", "billing_zip", "gateway_token"],
+        "footprints": ["checkout.php?order_id=", "payment.php?id=", "cart.php?id=", "billing.php?order=", "invoice.php?id=", "order_detail.php?id=", "shop_product.php?id=", "catalog.php?cat_id="],
+        "modifiers": [
+            "checkout billing", "stripe payment order", "woocommerce cart checkout", "opencart product order",
+            "magento customer billing", "prestashop cart order", "giftcard instant checkout", "credit card payment gateway",
+            "online store order invoice", "express checkout shipping", "boutique shop cart", "digital voucher checkout",
+            "autoparts store checkout", "cosmetics shop order", "supplement store billing", "electronics outlet cart",
+            "jewelry store checkout", "sneaker shop payment", "florist delivery checkout", "gourmet food order cart",
+            "pet supply store checkout", "eyewear boutique billing", "watch store order payment", "vape shop cart checkout",
+        ],
+        "seeds": [
+            "woocommerce checkout", "opencart shop", "prestashop store", "magento checkout", "stripe payment shop",
+            "buy gift card online", "boutique online checkout", "order invoice billing", "autoparts online store",
+            "skincare shop checkout", "supplements online cart", "jewelry boutique order", "electronics store cart",
+        ],
+    },
+    "combo": {
+        "label": "📧 Email:Pass & User:Pass High-Hit Account Databases",
+        "tables": ["users", "members", "accounts", "customers", "subscribers", "xf_user", "vb_user", "wp_users"],
+        "columns": ["email", "user_email", "password", "pass_hash", "username", "salt", "api_key", "subscription_status"],
+        "footprints": ["member.php?id=", "profile.php?uid=", "account.php?user_id=", "user.php?id=", "login.php?redirect=", "portal.php?id=", "viewprofile.php?u=", "subscribe.php?plan="],
+        "modifiers": [
+            "member login portal", "customer account dashboard", "vip subscription login", "user profile settings",
+            "client area signin", "registered member forum", "premium account access", "subscriber portal login",
+            "community member directory", "loyalty account rewards", "verified customer login", "partner portal auth",
+            "reseller account panel", "cloud dashboard signin", "digital membership access", "billing client area",
+        ],
+        "seeds": [
+            "member login portal", "customer client area", "vip membership account", "subscriber dashboard login",
+            "community forum member", "reseller panel login", "loyalty rewards account", "premium user portal",
+        ],
+    },
+    "gaming": {
+        "label": "🎮 Gaming, Steam, Valorant, Top-Up & CD-Key Databases",
+        "tables": ["players", "game_accounts", "orders", "cdkeys", "wallet_topup", "vouchers", "tournaments", "guild_members"],
+        "columns": ["email", "username", "password_hash", "steam_id", "riot_tag", "key_code", "coin_balance", "vip_tier"],
+        "footprints": ["game.php?id=", "item.php?item_id=", "topup.php?game_id=", "product.php?id=", "key.php?id=", "store.php?cat=", "player.php?uid=", "tournament.php?tid="],
+        "modifiers": [
+            "steam cdkey store", "valorant points topup", "instant game key delivery", "esports tournament member",
+            "minecraft server store", "roblox robux voucher", "cs2 skin market wallet", "genshin crystal recharge",
+            "pubg uc instant topup", "playstation psn card shop", "xbox gamepass key store", "rpg gold marketplace",
+            "gaming gear checkout", "account boosting order", "private server player panel", "guild member portal",
+        ],
+        "seeds": [
+            "buy steam key online", "game topup store", "valorant points shop", "psn giftcard checkout",
+            "esports tournament portal", "gaming account marketplace", "cdkey instant delivery", "mmo gold shop",
+        ],
+    },
+    "ott": {
+        "label": "🎬 OTT Streaming, IPTV, Music & Digital Subscription DBs",
+        "tables": ["subscribers", "subscriptions", "iptv_lines", "packages", "vod_users", "resellers", "billing_cycles"],
+        "columns": ["email", "password", "plan_name", "expire_date", "m3u_token", "max_connections", "status"],
+        "footprints": ["plan.php?id=", "package.php?pid=", "subscribe.php?id=", "channel.php?cid=", "movie.php?id=", "reseller.php?id=", "panel.php?uid="],
+        "modifiers": [
+            "iptv subscription panel", "4k streaming package order", "ott reseller dashboard", "premium vod membership",
+            "smart tv m3u checkout", "sports pass streaming plan", "music family subscription", "anime premium account",
+            "cinema club membership", "audiobook subscriber login", "live tv channel billing", "multi device plan order",
+        ],
+        "seeds": [
+            "iptv subscription shop", "ott premium account", "4k m3u panel", "streaming membership plan",
+            "vod cinema portal", "iptv reseller billing", "live sports pass checkout", "anime streaming member",
+        ],
+    },
+    "crypto": {
+        "label": "🪙 Crypto Exchange, DeFi, Forex & Investor Lead Databases",
+        "tables": ["traders", "wallets", "kyc_leads", "deposits", "withdrawals", "affiliates", "ico_investors", "signals_vip"],
+        "columns": ["email", "phone", "full_name", "country", "wallet_address", "usdt_balance", "deposit_tx", "password_hash"],
+        "footprints": ["trader.php?id=", "market.php?pair=", "signal.php?id=", "wallet.php?uid=", "exchange.php?id=", "plan.php?invest=", "affiliate.php?ref="],
+        "modifiers": [
+            "crypto exchange client login", "forex trading vip signal", "usdt wallet deposit portal", "launchpad investor dashboard",
+            "cloud mining contract order", "copytrading account panel", "hardware wallet shop checkout", "otc desk client onboarding",
+            "defi staking member portal", "prop firm challenge checkout", "crypto debit card account", "token presale whitelist",
+        ],
+        "seeds": [
+            "forex prop firm checkout", "crypto trading portal", "usdt exchange wallet", "vip forex signals member",
+            "crypto mining plan shop", "hardware wallet checkout", "otc crypto desk", "trading academy member",
+        ],
+    },
+    "paypal": {
+        "label": "💸 PayPal, Giftcard, Wallet & Digital Voucher Databases",
+        "tables": ["orders", "paypal_ipn", "giftcards", "vouchers", "ewallet_tx", "payout_requests", "digital_codes"],
+        "columns": ["payer_email", "receiver_email", "txn_id", "voucher_code", "pin_code", "amount", "currency"],
+        "footprints": ["voucher.php?id=", "giftcard.php?id=", "paypal.php?order_id=", "redeem.php?code=", "buy.php?item_id=", "digital.php?id="],
+        "modifiers": [
+            "paypal express checkout store", "digital giftcard instant code", "prepaid voucher shop order", "itunes googleplay card store",
+            "amazon gift voucher checkout", "razer gold pin recharge", "ewallet instant topup shop", "cashback reward payout portal",
+        ],
+        "seeds": [
+            "buy digital giftcard paypal", "instant voucher code shop", "prepaid card online store", "razer gold topup checkout",
+        ],
+    },
+}
+
+_V15_GEO_MAP = {
+    "usa": ("🇺🇸 USA", ["us", "usa", "new york", "california", "texas", "florida", "miami", "chicago"]),
+    "us": ("🇺🇸 USA", ["us", "usa", "california", "texas", "new york", "florida"]),
+    "america": ("🇺🇸 USA", ["usa", "american", "new york", "california", "texas"]),
+    "uk": ("🇬🇧 UK", ["uk", "london", "manchester", "british", "england"]),
+    "britain": ("🇬🇧 UK", ["uk", "london", "british"]),
+    "india": ("🇮🇳 India", ["india", "mumbai", "delhi", "bangalore", "chennai", "hyderabad"]),
+    "indian": ("🇮🇳 India", ["india", "mumbai", "delhi", "bangalore", "pune"]),
+    "canada": ("🇨🇦 Canada", ["canada", "toronto", "vancouver", "montreal"]),
+    "australia": ("🇦🇺 Australia", ["australia", "sydney", "melbourne", "brisbane"]),
+    "germany": ("🇩🇪 Germany", ["germany", "berlin", "munich", "hamburg", "deutschland"]),
+    "france": ("🇫🇷 France", ["france", "paris", "lyon", "boutique"]),
+    "brazil": ("🇧🇷 Brazil", ["brasil", "sao paulo", "loja", "comprar"]),
+    "japan": ("🇯🇵 Japan", ["japan", "tokyo", "osaka"]),
+    "uae": ("🇦🇪 UAE", ["dubai", "uae", "abu dhabi"]),
+    "dubai": ("🇦🇪 UAE", ["dubai", "uae", "emirates"]),
+    "europe": ("🇪🇺 Europe", ["uk", "germany", "france", "netherlands", "spain", "italy"]),
+}
+
+
+def _v15_state_file(uid: int) -> str:
+    return os.path.join(_V15_STATE_DIR, f"u_{int(uid)}.json")
+
+
+def _v15_load_session(uid: int) -> dict:
+    p = _v15_state_file(uid)
+    if os.path.exists(p):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                return d
+        except Exception:
+            pass
+    return {}
+
+
+def _v15_save_session(uid: int, data: dict) -> None:
+    p = _v15_state_file(uid)
+    tmp = f"{p}.tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as wf:
+        json.dump(data, wf, ensure_ascii=False)
+    os.replace(tmp, p)
+
+
+def _v15_clean_kw_line(raw: str) -> str:
+    s = (raw or "").strip()
+    if not s or len(s) > 160:
+        return ""
+    s = re.sub(r"^\s*(?:\d+[\.\)\-\:]|[\•\-\*\>]+)\s*", "", s).strip()
+    return s
+
+
+def _v15_is_gibberish_token(tok: str) -> bool:
+    t = re.sub(r"[^a-z]", "", tok.lower())
+    if len(t) < 2:
+        return False
+    vowels = sum(1 for ch in t if ch in "aeiouy")
+    if len(t) >= 6 and vowels == 0:
+        return True
+    if len(t) >= 9 and (vowels / max(1, len(t))) < 0.14:
+        return True
+    if re.search(r"(.)\1\1\1", t):
+        return True
+    return False
+
+
+async def _v15_fetch_live_autocomplete_batch(seeds: list[str], timeout_sec: float = 4.5) -> tuple[list[str], set[str]]:
+    clean_seeds = []
+    seen_s = set()
+    for s in seeds:
+        cs = re.sub(r"\s+", " ", (s or "").strip().lower())
+        if cs and cs not in seen_s:
+            seen_s.add(cs)
+            clean_seeds.append(cs)
+    if not clean_seeds:
+        return [], set()
+
+    if os.environ.get("_V15_FAST_OFFLINE_TEST") == "1":
+        synth = []
+        live_roots = set()
+        for cs in clean_seeds[:40]:
+            if not any(_v15_is_gibberish_token(w) for w in cs.split()):
+                live_roots.add(cs)
+                for mod in ("checkout billing", "online store order", "account login portal", "giftcard payment"):
+                    synth.append(f"{cs} {mod}")
+        return synth, live_roots
+
+    suggestions: list[str] = []
+    live_roots: set[str] = set()
+    sem = asyncio.Semaphore(24)
+    connector = aiohttp.TCPConnector(limit=48, ttl_dns_cache=300, ssl=False)
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36"}
+
+    async with aiohttp.ClientSession(connector=connector, headers=headers) as sess:
+        async def _probe_one(q: str):
+            found_local = []
+            q_enc = quote_plus(q)
+            urls = [
+                ("google", f"https://suggestqueries.google.com/complete/search?client=firefox&q={q_enc}"),
+                ("ddg", f"https://duckduckgo.com/ac/?q={q_enc}&type=list"),
+                ("bing", f"https://api.bing.com/osjson.aspx?query={q_enc}"),
+            ]
+            async with sem:
+                for _, u in urls:
+                    try:
+                        async with sess.get(u, timeout=aiohttp.ClientTimeout(total=timeout_sec)) as resp:
+                            if resp.status != 200:
+                                continue
+                            txt = await resp.text(errors="ignore")
+                            data = json.loads(txt)
+                            arr = []
+                            if isinstance(data, list) and len(data) >= 2 and isinstance(data[1], list):
+                                arr = [str(x).strip() for x in data[1] if isinstance(x, str)]
+                            elif isinstance(data, list):
+                                arr = [str(x.get("phrase", "")).strip() for x in data if isinstance(x, dict)]
+                            for item in arr:
+                                if item:
+                                    found_local.append(item)
+                    except Exception:
+                        continue
+            if found_local:
+                live_roots.add(q)
+                suggestions.extend(found_local)
+
+        tasks = [asyncio.create_task(_probe_one(s)) for s in clean_seeds[:48]]
+        if tasks:
+            await asyncio.wait(tasks, timeout=max(3.0, timeout_sec + 2.0))
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
+    dedup_sug = []
+    seen_out = set()
+    for item in suggestions:
+        cl = re.sub(r"\s+", " ", item.strip())
+        kl = cl.lower()
+        if 3 <= len(cl) <= 90 and kl not in seen_out:
+            seen_out.add(kl)
+            dedup_sug.append(cl)
+    return dedup_sug, live_roots
+
+
+async def _v15_scrape_live_serp_keywords(queries: list[str], max_pages: int = 12) -> list[str]:
+    if os.environ.get("_V15_FAST_OFFLINE_TEST") == "1" or not queries:
+        return []
+
+    extracted_phrases: list[str] = []
+    discovered_urls: list[str] = []
+    sem = asyncio.Semaphore(16)
+    connector = aiohttp.TCPConnector(limit=32, ttl_dns_cache=300, ssl=False)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    def _extract_keywords_from_html(html_text: str, page_url: str = "") -> list[str]:
+        out_kw = []
+        if not html_text:
+            return out_kw
+        for m in re.finditer(r'<meta[^>]+name=["\']keywords["\'][^>]+content=["\']([^"\']+)["\']', html_text, re.I):
+            for part in re.split(r"[,;|/•–—\-]+", _v15_unescape(m.group(1))):
+                p = re.sub(r"\s+", " ", part).strip()
+                if 4 <= len(p) <= 65:
+                    out_kw.append(p)
+        for m in re.finditer(r"<(?:title|h1|h2|h3)[^>]*>(.*?)</(?:title|h1|h2|h3)>", html_text, re.I | re.S):
+            raw_t = re.sub(r"<[^>]+>", " ", _v15_unescape(m.group(1)))
+            for seg in re.split(r"[\|\•\—\–\:\;\(\)\[\]\/]+", raw_t):
+                seg_clean = re.sub(r"[^a-zA-Z0-9\s\-]", " ", seg)
+                seg_clean = re.sub(r"\s+", " ", seg_clean).strip()
+                wds = seg_clean.split()
+                if 2 <= len(wds) <= 5 and 6 <= len(seg_clean) <= 55:
+                    out_kw.append(seg_clean.lower())
+        if page_url:
+            path = urlparse(page_url).path or ""
+            for slug in path.split("/"):
+                slug_clean = re.sub(r"\.(?:php|html?|aspx?|jsp)$", "", slug, flags=re.I)
+                slug_clean = re.sub(r"[\-_]+", " ", slug_clean).strip().lower()
+                wds = [w for w in slug_clean.split() if w.isalpha() and len(w) >= 3]
+                if 2 <= len(wds) <= 5:
+                    out_kw.append(" ".join(wds))
+        return out_kw
+
+    async with aiohttp.ClientSession(connector=connector, headers=headers) as sess:
+        async def _search_one(q: str):
+            q_enc = quote_plus(q)
+            search_endpoints = [
+                f"https://search.yahoo.com/search?p={q_enc}&n=10",
+                f"https://html.duckduckgo.com/html/?q={q_enc}",
+                f"https://search.brave.com/search?q={q_enc}&source=web",
+            ]
+            async with sem:
+                for ep in search_endpoints[:2]:
+                    try:
+                        async with sess.get(ep, timeout=aiohttp.ClientTimeout(total=5.0)) as r:
+                            if r.status == 200:
+                                body = await r.text(errors="ignore")
+                                extracted_phrases.extend(_extract_keywords_from_html(body))
+                                for u in _v14_extract_urls_from_html(body)[:6]:
+                                    discovered_urls.append(u)
+                    except Exception:
+                        continue
+
+        stasks = [asyncio.create_task(_search_one(q)) for q in queries[:10]]
+        if stasks:
+            await asyncio.wait(stasks, timeout=7.0)
+            for t in stasks:
+                if not t.done():
+                    t.cancel()
+
+        unique_pages = []
+        seen_hosts = set()
+        for u in discovered_urls:
+            h = (urlparse(u).netloc or "").lower()
+            if h and h not in seen_hosts:
+                seen_hosts.add(h)
+                unique_pages.append(u)
+            if len(unique_pages) >= max_pages:
+                break
+
+        async def _crawl_page(u: str):
+            async with sem:
+                try:
+                    async with sess.get(u, timeout=aiohttp.ClientTimeout(total=4.2)) as r:
+                        if r.status == 200:
+                            body = await r.text(errors="ignore")
+                            extracted_phrases.extend(_extract_keywords_from_html(body, u))
+                except Exception:
+                    pass
+
+        ctasks = [asyncio.create_task(_crawl_page(u)) for u in unique_pages]
+        if ctasks:
+            await asyncio.wait(ctasks, timeout=6.0)
+            for t in ctasks:
+                if not t.done():
+                    t.cancel()
+
+    return extracted_phrases
+
+
+def _v15_score_single_keyword(kw: str, live_verified_roots: set[str] | None = None) -> tuple[int, str, str]:
+    s = _v15_clean_kw_line(kw)
+    if not s:
+        return 0, "bad", "Empty line"
+
+    low = s.lower()
+    if low.startswith(("http://", "https://", "www.", "ftp://")):
+        return 12, "bad", "Raw URL (not keyword)"
+    if re.match(r"^[^@\s]+@[^@\s]+:[^\s]+$", s):
+        return 15, "bad", "Combo line (not keyword)"
+    if re.fullmatch(r"[\d\W_]+", s) or len(low) < 3:
+        return 8, "bad", "Too short / symbols only"
+    if re.search(r"\bpage=\d+\b", low):
+        return 22, "bad", "Dead page=N poison"
+
+    has_dork_op = bool(re.search(r"\b(?:inurl|intitle|intext|allinurl|site|filetype|ext):", low)) or (".php?" in low or ".asp?" in low or ".aspx?" in low)
+
+    norm = re.sub(r"[\-_/\.=\?&:\"\'\(\)\[\]]+", " ", low)
+    words = [w for w in norm.split() if w]
+    if not words:
+        return 5, "bad", "Invalid characters"
+
+    if any(_v15_is_gibberish_token(w) for w in words):
+        return 14, "bad", "Unindexed gibberish"
+
+    if len(words) == 1:
+        w0 = words[0]
+        if w0 in _V15_TRASH_EXACT or len(w0) <= 3 or w0.isdigit():
+            return 18, "bad", "Generic public word"
+        if w0 in _V15_SATURATED_BROAD:
+            return 34, "bad", "Over-farmed single keyword"
+        if w0 in _V15_TIER1_TRANSACTIONAL or w0 in _V15_TIER1_ACCOUNT_DB:
+            return 52, "normal", "Broad single DB term"
+        return 46, "normal", "Single broad niche word"
+
+    if len(words) >= 8 and not has_dork_op:
+        return 31, "bad", "Over-long sentence (0 SERP hits)"
+
+    non_trash = [w for w in words if w not in _V15_TRASH_EXACT]
+    if not non_trash:
+        return 20, "bad", "Public stop-words only"
+    trash_ratio = 1.0 - (len(non_trash) / len(words))
+    if trash_ratio > 0.55:
+        return 33, "bad", "High public noise"
+
+    score = 44
+    reasons = []
+
+    wc = len(words)
+    if 3 <= wc <= 4:
+        score += 13
+        reasons.append("Ideal 3–4w private long-tail")
+    elif wc == 2:
+        score += 9
+        reasons.append("Clean 2w phrase")
+    elif wc == 5:
+        score += 11
+        reasons.append("Targeted 5w long-tail")
+    elif wc in (6, 7):
+        score += 4
+
+    t1_pay_hits = sum(1 for w in words if w in _V15_TIER1_TRANSACTIONAL)
+    t1_acc_hits = sum(1 for w in words if w in _V15_TIER1_ACCOUNT_DB)
+    t2_com_hits = sum(1 for w in words if w in _V15_TIER2_COMMERCIAL)
+
+    if t1_pay_hits >= 2:
+        score += 24
+        reasons.append("Multi-Gateway/Checkout Intent")
+    elif t1_pay_hits == 1:
+        score += 14
+        reasons.append("Checkout/Billing DB Intent")
+
+    if t1_acc_hits >= 2:
+        score += 20
+        reasons.append("High-Hit Account/Auth Schema")
+    elif t1_acc_hits == 1:
+        score += 12
+        reasons.append("User/Member DB Intent")
+
+    if t2_com_hits >= 1:
+        score += min(13, 8 + (t2_com_hits - 1) * 4)
+        reasons.append("Commercial Niche Footprint")
+
+    has_specific_niche = any(
+        len(w) >= 4
+        and w not in _V15_TIER1_TRANSACTIONAL
+        and w not in _V15_TIER1_ACCOUNT_DB
+        and w not in _V15_TRASH_EXACT
+        for w in words
+    )
+    if has_specific_niche and (t1_pay_hits + t1_acc_hits) >= 2:
+        score += 8
+        reasons.append("UHQ Niche+DB Combo")
+    elif has_specific_niche and (t1_pay_hits + t1_acc_hits) == 1:
+        score += 5
+        reasons.append("HQ Targeted Niche")
+
+    if has_dork_op:
+        if "?" in low and "=" in low:
+            score += 8
+            reasons.append("Param-Ready SQLi Pattern")
+        else:
+            score += 4
+
+    if live_verified_roots:
+        phrase_2w = " ".join(words[:2])
+        if low in live_verified_roots or phrase_2w in live_verified_roots or words[0] in live_verified_roots:
+            score += 4
+            reasons.append("Live SERP Verified")
+
+    if low.startswith(("how to ", "what is ", "where is ", "why does ", "free download ")):
+        score -= 32
+        reasons = ["Informational query (poor DB yield)"]
+
+    score = max(1, min(98, int(score)))
+    if score >= 85:
+        tier = "premium"
+    elif score >= 68:
+        tier = "good"
+    elif score >= 45:
+        tier = "normal"
+    else:
+        tier = "bad"
+
+    reason_str = " • ".join(reasons[:2]) if reasons else ("Standard Niche Phrase" if score >= 45 else "Low DB Relevance")
+    return score, tier, reason_str
+
+
+async def _v15_check_keywords_quality(raw_lines: list[str]) -> dict:
+    total_raw = len(raw_lines)
+    unique_kws: list[str] = []
+    seen_lower: set[str] = set()
+    for line in raw_lines:
+        cl = _v15_clean_kw_line(line)
+        if not cl:
+            continue
+        kl = cl.lower()
+        if kl not in seen_lower:
+            seen_lower.add(kl)
+            unique_kws.append(cl)
+
+    dups_removed = max(0, total_raw - len(unique_kws))
+
+    sample_roots = []
+    seen_r = set()
+    for kw in unique_kws[:200]:
+        wds = re.sub(r"[^a-zA-Z0-9\s]", " ", kw.lower()).split()
+        root = " ".join(wds[:2]) if len(wds) >= 2 else (wds[0] if wds else "")
+        if len(root) >= 3 and root not in seen_r:
+            seen_r.add(root)
+            sample_roots.append(root)
+        if len(sample_roots) >= 20:
+            break
+
+    _, live_roots = await _v15_fetch_live_autocomplete_batch(sample_roots, timeout_sec=3.2)
+
+    tiers = {"premium": [], "good": [], "normal": [], "bad": []}
+    scored_samples = {"premium": [], "good": [], "normal": [], "bad": []}
+    score_sum = 0
+
+    for idx, kw in enumerate(unique_kws):
+        sc, tier, rsn = _v15_score_single_keyword(kw, live_roots)
+        score_sum += sc
+        tiers[tier].append((sc, kw, rsn))
+        if idx % 4000 == 0 and idx > 0:
+            await asyncio.sleep(0)
+
+    for tk in ("premium", "good", "normal", "bad"):
+        tiers[tk].sort(key=lambda x: (-x[0], x[1].lower()))
+        scored_samples[tk] = [
+            {"score": x[0], "kw": x[1], "reason": x[2]}
+            for x in tiers[tk][:4]
+        ]
+
+    avg_score = round(score_sum / max(1, len(unique_kws)), 1) if unique_kws else 0.0
+    return {
+        "total_input": total_raw,
+        "unique_count": len(unique_kws),
+        "dups_removed": dups_removed,
+        "avg_score": avg_score,
+        "premium": [x[1] for x in tiers["premium"]],
+        "good": [x[1] for x in tiers["good"]],
+        "normal": [x[1] for x in tiers["normal"]],
+        "bad": [x[1] for x in tiers["bad"]],
+        "all": [x[1] for x in (tiers["premium"] + tiers["good"] + tiers["normal"] + tiers["bad"])],
+        "samples": scored_samples,
+    }
+
+
+def _v15_bar(pct: float, width: int = 10) -> str:
+    filled = max(0, min(width, round((pct / 100.0) * width)))
+    return "█" * filled + "░" * (width - filled)
+
+
+def _v15_build_kwqc_dashboard(res: dict, title_prefix: str = "💎 𝗞𝗘𝗬𝗪𝗢𝗥𝗗𝗦 𝗤𝗨𝗔𝗟𝗜𝗧𝗬 𝗖𝗛𝗘𝗖𝗞𝗘𝗥") -> tuple[str, InlineKeyboardMarkup]:
+    tot = max(1, int(res.get("unique_count") or 0))
+    n_prem = len(res.get("premium") or [])
+    n_good = len(res.get("good") or [])
+    n_norm = len(res.get("normal") or [])
+    n_bad = len(res.get("bad") or [])
+    n_uhq_pack = n_prem + n_good
+    avg_sc = float(res.get("avg_score") or 0.0)
+
+    p_prem = (n_prem * 100.0) / tot if res.get("unique_count") else 0.0
+    p_good = (n_good * 100.0) / tot if res.get("unique_count") else 0.0
+    p_norm = (n_norm * 100.0) / tot if res.get("unique_count") else 0.0
+    p_bad = (n_bad * 100.0) / tot if res.get("unique_count") else 0.0
+
+    if avg_sc >= 82:
+        grade = "💎 UHQ PRIVATE GRADE"
+    elif avg_sc >= 68:
+        grade = "🟢 HQ HIGH-YIELD GRADE"
+    elif avg_sc >= 48:
+        grade = "🟡 NORMAL MIXED GRADE"
+    else:
+        grade = "🔴 LOW / PUBLIC TRASH"
+
+    sample_lines = []
+    samples = res.get("samples") or {}
+    badge_map = [
+        ("premium", "💎 PREMIUM"),
+        ("good", "🟢 GOOD"),
+        ("normal", "🟡 NORMAL"),
+        ("bad", "🔴 BAD"),
+    ]
+    for tk, badge in badge_map:
+        for item in (samples.get(tk) or [])[:2]:
+            kw_disp = str(item.get("kw", ""))[:40]
+            sc_disp = item.get("score", 0)
+            sample_lines.append(f"{badge} `[{sc_disp}/100]` — `{kw_disp}`")
+
+    sample_block = "\n".join(sample_lines[:8]) if sample_lines else "• _No valid keywords found_"
+
+    text = (
+        f"{title_prefix}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📥 *Iɴᴘᴜᴛ Lɪɴᴇs*     : `{res.get('total_input', 0):,}`\n"
+        f"🧹 *Uɴɪǫᴜᴇ Cʜᴇᴄᴋᴇᴅ* : `{res.get('unique_count', 0):,}` _(Dups Removed: `{res.get('dups_removed', 0):,}`)_\n"
+        f"📈 *Qᴜᴀʟɪᴛʏ Sᴄᴏʀᴇ*  : `{avg_sc:.1f} / 100` — *{grade}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💎 *Pʀᴇᴍɪᴜᴍ (UHQ)* : `{n_prem:,}` (`{p_prem:.1f}%`) `{_v15_bar(p_prem)}`\n"
+        f"🟢 *Gᴏᴏᴅ (HQ)*     : `{n_good:,}` (`{p_good:.1f}%`) `{_v15_bar(p_good)}`\n"
+        f"🟡 *Nᴏʀᴍᴀʟ (MQ)*   : `{n_norm:,}` (`{p_norm:.1f}%`) `{_v15_bar(p_norm)}`\n"
+        f"🔴 *Bᴀᴅ / Tʀᴀsʜ*   : `{n_bad:,}` (`{p_bad:.1f}%`) `{_v15_bar(p_bad)}`\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔬 *Aᴅᴠᴀɴᴄᴇᴅ Sᴄᴏʀᴇ Pʀᴇᴠɪᴇᴡ:*\n"
+        f"{sample_block}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👇 *Kᴏɴsᴇ Kᴇʏᴡᴏʀᴅs Lᴇɴᴇ Hᴀɪ? Sᴇʟᴇᴄᴛ Kᴀʀᴏ:*"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"💎 Pʀᴇᴍɪᴜᴍ ({n_prem:,})", callback_data="v15_dl_premium"),
+            InlineKeyboardButton(f"🟢 Gᴏᴏᴅ ({n_good:,})", callback_data="v15_dl_good"),
+        ],
+        [
+            InlineKeyboardButton(f"🟡 Nᴏʀᴍᴀʟ ({n_norm:,})", callback_data="v15_dl_normal"),
+            InlineKeyboardButton(f"🔴 Bᴀᴅ ({n_bad:,})", callback_data="v15_dl_bad"),
+        ],
+        [
+            InlineKeyboardButton(f"🔥 Pʀᴇᴍɪᴜᴍ + Gᴏᴏᴅ UHQ Pack ({n_uhq_pack:,})", callback_data="v15_dl_uhqpack"),
+        ],
+        [
+            InlineKeyboardButton(f"📦 Aʟʟ Kᴇʏᴡᴏʀᴅs ({res.get('unique_count', 0):,})", callback_data="v15_dl_all"),
+            InlineKeyboardButton("📁 Fᴜʟʟ Sᴘʟɪᴛ ZIP", callback_data="v15_dl_zip"),
+        ],
+        [
+            InlineKeyboardButton(f"⚡ Mᴀᴋᴇ UHQ Dᴏʀᴋs ({max(n_uhq_pack, n_norm):,})", callback_data="v15_make_dorks_best"),
+        ],
+        [
+            InlineKeyboardButton("🔄 Cʜᴇᴄᴋ Mᴏʀᴇ Kᴇʏᴡᴏʀᴅs", callback_data="menu_kw_checker"),
+            InlineKeyboardButton("🏠 Mᴀɪɴ Mᴇɴᴜ", callback_data="back_to_menu"),
+        ],
+    ])
+    return text, kb
+
+
+def _v15_kw_checker_home_ui() -> tuple[str, InlineKeyboardMarkup]:
+    txt = (
+        "💎 *𝗞𝗘𝗬𝗪𝗢𝗥𝗗𝗦 𝗤𝗨𝗔𝗟𝗜𝗧𝗬 𝗖𝗛𝗘𝗖𝗞𝗘𝗥 [𝗨𝗛𝗤 𝗘𝗗𝗜𝗧𝗜𝗢𝗡]*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📤 *Aᴘɴᴇ Kᴇʏᴡᴏʀᴅs Bʜᴇᴊᴏ (Tᴇxᴛ Pᴀsᴛᴇ ʏᴀ `.txt` / `.zip` Fɪʟᴇ):*\n"
+        "• Bot har keyword ko *Live Search Demand + DB/Checkout Intent + Anti-Public Uniqueness* se check karega!\n\n"
+        "📊 *Qᴜᴀʟɪᴛʏ Tɪᴇʀs:*\n"
+        "  💎 *Pʀᴇᴍɪᴜᴍ (UHQ)* — `[85–100]` Private High-Hit DB Keywords\n"
+        "  🟢 *Gᴏᴏᴅ (HQ)*     — `[68–84]` Strong Commercial Niche Keywords\n"
+        "  🟡 *Nᴏʀᴍᴀʟ*        — `[45–67]` Medium / Broad Keywords\n"
+        "  🔴 *Bᴀᴅ*           — `[0–44]` Saturated Public / Dead Trash\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "❓ *Nᴏᴛ ʜᴀᴠᴇ ᴋᴇʏᴡᴏʀᴅs?*\n"
+        "👇 _Niche button click karo, kuch seed words do — bot UHQ & HQ Keywords bana dega aur turant unki Quality Check bhi kar dega!_"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❓ Nᴏᴛ ʜᴀᴠᴇ ᴋᴇʏᴡᴏʀᴅs? 👇", callback_data="v15_not_have_kw")],
+        [InlineKeyboardButton("⚡ Gᴇɴᴇʀᴀᴛᴇ UHQ / HQ Kᴇʏᴡᴏʀᴅs", callback_data="v15_not_have_kw")],
+        [InlineKeyboardButton("🏠 Mᴀɪɴ Mᴇɴᴜ", callback_data="back_to_menu")],
+    ])
+    return txt, kb
+
+
+async def _v15_generate_uhq_hq_keywords_from_seeds(seeds_raw: list[str], target_count: int = 500) -> list[str]:
+    target_count = max(25, min(200_000, int(target_count)))
+    base_seeds = []
+    seen_b = set()
+    for raw in seeds_raw:
+        for piece in re.split(r"[\n,;]+", raw or ""):
+            c = re.sub(r"[^a-zA-Z0-9\s\-]", " ", piece).strip().lower()
+            c = re.sub(r"\s+", " ", c)
+            if 2 <= len(c) <= 50 and c not in seen_b:
+                seen_b.add(c)
+                base_seeds.append(c)
+    if not base_seeds:
+        base_seeds = ["woocommerce", "stripe store", "digital giftcard", "gaming topup"]
+
+    live_sug, live_roots = await _v15_fetch_live_autocomplete_batch(base_seeds[:30], timeout_sec=4.0)
+    seed_pool = list(base_seeds)
+    for sg in live_sug:
+        csg = re.sub(r"[^a-zA-Z0-9\s\-]", " ", sg.lower())
+        csg = re.sub(r"\s+", " ", csg).strip()
+        if 2 <= len(csg.split()) <= 4 and csg not in seen_b:
+            seen_b.add(csg)
+            seed_pool.append(csg)
+
+    uhq_modifiers = [
+        "checkout billing", "order invoice", "cart payment", "customer account", "member login portal",
+        "stripe checkout", "paypal express order", "giftcard voucher", "client area signin", "vip subscription",
+        "storefront cart", "billing address", "order confirmation", "wallet topup", "instant key delivery",
+        "reseller dashboard", "subscriber portal", "online shop order", "payment receipt", "digital checkout",
+        "product catalog order", "voucher redeem", "account profile", "checkout shipping", "merchant gateway",
+        "membership plan order", "store checkout", "customer portal", "order tracking", "cart billing",
+    ]
+    niche_verticals = [
+        "usa", "uk", "canada", "australia", "pro", "express", "direct", "official", "plus", "prime",
+        "global", "europe", "store", "hub", "mart", "zone", "club", "center", "outlet", "boutique",
+    ]
+
+    candidates: list[str] = []
+    seen_out: set[str] = set()
+
+    def _add(cand: str):
+        c = re.sub(r"\s+", " ", cand.strip().lower())
+        wds = c.split()
+        if len(wds) > 5:
+            c = " ".join(wds[:5])
+        if c and c not in seen_out:
+            seen_out.add(c)
+            candidates.append(c)
+
+    for sg in live_sug:
+        _add(sg)
+
+    for mod in uhq_modifiers:
+        for sp in seed_pool:
+            w_sp = sp.split()[:2]
+            _add(f"{' '.join(w_sp)} {mod}")
+            if len(candidates) >= target_count * 2:
+                break
+        if len(candidates) >= target_count * 2:
+            break
+
+    idx_v = 0
+    while len(candidates) < target_count * 2 and idx_v < len(niche_verticals):
+        vert = niche_verticals[idx_v]
+        idx_v += 1
+        for mod in uhq_modifiers:
+            for sp in seed_pool[:60]:
+                w_sp = sp.split()[:2]
+                _add(f"{' '.join(w_sp)} {vert} {mod}")
+                if len(candidates) >= target_count * 2:
+                    break
+            if len(candidates) >= target_count * 2:
+                break
+
+    extra_idx = 1
+    extra_nouns = list(_V15_TIER2_COMMERCIAL)
+    while len(candidates) < target_count:
+        n_tok = extra_nouns[extra_idx % len(extra_nouns)].strip()
+        m_tok = uhq_modifiers[extra_idx % len(uhq_modifiers)]
+        s_tok = seed_pool[extra_idx % len(seed_pool)].split()[0]
+        _add(f"{s_tok} {n_tok} {m_tok}")
+        extra_idx += 1
+        if extra_idx > target_count * 4:
+            break
+
+    prem_b, good_b, norm_b = [], [], []
+    for c in candidates:
+        sc, tier, _ = _v15_score_single_keyword(c, live_roots)
+        if tier == "premium":
+            prem_b.append((sc, c))
+        elif tier == "good":
+            good_b.append((sc, c))
+        elif tier == "normal":
+            norm_b.append((sc, c))
+    prem_b.sort(key=lambda x: -x[0])
+    good_b.sort(key=lambda x: -x[0])
+    norm_b.sort(key=lambda x: -x[0])
+    want_prem = int(target_count * 0.45)
+    want_good = target_count - want_prem
+    picked = [x[1] for x in prem_b[:want_prem]] + [x[1] for x in good_b[:want_good]]
+    if len(picked) < target_count:
+        rem = [x[1] for x in (prem_b[want_prem:] + good_b[want_good:] + norm_b)]
+        picked.extend(rem[: target_count - len(picked)])
+    return picked[:target_count]
+
+
+async def _v15_query_live_ai_keywords(target_prompt: str, profile_info: dict, geos: list[str]) -> dict:
+    if os.environ.get("_V15_FAST_OFFLINE_TEST") == "1":
+        return {"ai_engine": "Hybrid Neural + Schema Engine", "niches": [], "keywords": [], "summary": ""}
+
+    sys_prompt = (
+        "You are an elite e-commerce & database reconnaissance keyword strategist. "
+        "Given the user's target dump topic, return STRICT JSON ONLY with keys: "
+        '{"summary": "1 concise line explaining the best target websites & DB footprints", '
+        '"niches": ["12 ultra-specific commercial sub-niches/CMS/platforms with custom PHP/SQL databases"], '
+        '"keywords": ["35 unique 2-to-4 word commercial checkout/account/billing search keywords with high SQL database presence"]}. '
+        "Never include markdown fences."
+    )
+    user_q = (
+        f"User Dump Target: {target_prompt}\n"
+        f"Detected Category: {profile_info.get('label', '')}\n"
+        f"Target Markets: {', '.join(geos) if geos else 'Global Tier-1 (US/UK/CA/AU/EU)'}"
+    )
+
+    connector = aiohttp.TCPConnector(limit=8, ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        gem_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if gem_key:
+            try:
+                g_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gem_key}"
+                payload = {"contents": [{"parts": [{"text": f"{sys_prompt}\n\n{user_q}"}]}]}
+                async with sess.post(g_url, json=payload, timeout=aiohttp.ClientTimeout(total=7.0)) as r:
+                    if r.status == 200:
+                        d = await r.json()
+                        txt = d["candidates"][0]["content"]["parts"][0]["text"]
+                        m = re.search(r"\{.*\}", txt, re.S)
+                        if m:
+                            parsed = json.loads(m.group(0))
+                            parsed["ai_engine"] = "Google Gemini AI + Live SERP Parser"
+                            return parsed
+            except Exception:
+                pass
+
+        or_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if or_key:
+            try:
+                headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"}
+                payload = {
+                    "model": "meta-llama/llama-3.1-8b-instruct:free",
+                    "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_q}],
+                }
+                async with sess.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=7.0)) as r:
+                    if r.status == 200:
+                        d = await r.json()
+                        txt = d["choices"][0]["message"]["content"]
+                        m = re.search(r"\{.*\}", txt, re.S)
+                        if m:
+                            parsed = json.loads(m.group(0))
+                            parsed["ai_engine"] = "OpenRouter LLM + Live SERP Parser"
+                            return parsed
+            except Exception:
+                pass
+
+        try:
+            payload = {
+                "model": "openai",
+                "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_q}],
+                "temperature": 0.7,
+            }
+            async with sess.post("https://text.pollinations.ai/openai", json=payload, timeout=aiohttp.ClientTimeout(total=8.0)) as r:
+                if r.status == 200:
+                    d = await r.json()
+                    txt = d["choices"][0]["message"]["content"]
+                    m = re.search(r"\{.*\}", txt, re.S)
+                    if m:
+                        parsed = json.loads(m.group(0))
+                        parsed["ai_engine"] = "Live Neural AI + Multi-Engine SERP Parser"
+                        return parsed
+        except Exception:
+            pass
+
+    return {"ai_engine": "Deep Schema AI + Live Multi-Engine SERP Parser", "niches": [], "keywords": [], "summary": ""}
+
+
+async def _v15_run_ai_target_keyword_parser(target_text: str, requested_count: int = 1000, progress_cb=None) -> dict:
+    raw_lower = (target_text or "").lower()
+
+    count = int(requested_count or 1000)
+    m_k = re.search(r"\b(\d{1,3})\s*k\b", raw_lower)
+    if m_k:
+        count = int(m_k.group(1)) * 1000
+    else:
+        for num_str in re.findall(r"\b(\d{3,6})\b", raw_lower):
+            n_val = int(num_str)
+            if 100 <= n_val <= 100_000 and n_val not in (2024, 2025, 2026):
+                count = n_val
+                break
+    count = max(100, min(100_000, count))
+
+    matched_cats = []
+    if any(k in raw_lower for k in ("cc", "card", "cvv", "bin", "stripe", "braintree", "checkout", "billing", "payment", "gateway", "woocommerce", "magento", "opencart", "shop", "ecommerce", "product")):
+        matched_cats.append("cc")
+    if any(k in raw_lower for k in ("email:pass", "email pass", "user:pass", "combo", "combos", "combolist", "account", "accounts", "login", "member", "mail access", "cracking")):
+        matched_cats.append("combo")
+    if any(k in raw_lower for k in ("game", "gaming", "steam", "valorant", "fortnite", "minecraft", "roblox", "pubg", "freefire", "psn", "xbox", "cdkey", "topup", "esports")):
+        matched_cats.append("gaming")
+    if any(k in raw_lower for k in ("netflix", "spotify", "ott", "iptv", "streaming", "disney", "prime video", "crunchyroll", "vod", "cinema")):
+        matched_cats.append("ott")
+    if any(k in raw_lower for k in ("crypto", "bitcoin", "btc", "usdt", "ethereum", "wallet", "forex", "trading", "exchange", "defi", "coin", "leads")):
+        matched_cats.append("crypto")
+    if any(k in raw_lower for k in ("paypal", "giftcard", "gift card", "voucher", "redeem", "cashapp", "venmo", "ewallet")):
+        matched_cats.append("paypal")
+
+    if not matched_cats:
+        matched_cats = ["cc", "combo"]
+
+    primary_cat = matched_cats[0]
+    prof = _V15_DUMP_PROFILES[primary_cat]
+
+    geo_labels = []
+    geo_tokens = []
+    for gk, (g_lbl, g_words) in _V15_GEO_MAP.items():
+        if re.search(rf"\b{re.escape(gk)}\b", raw_lower):
+            if g_lbl not in geo_labels:
+                geo_labels.append(g_lbl)
+            geo_tokens.extend(g_words)
+
+    hinglish_stop = {
+        "mujhe", "muje", "mereko", "ko", "ka", "ki", "ke", "karna", "krna", "karke", "chahiye",
+        "chaye", "hai", "ha", "ho", "aur", "ya", "wala", "wale", "se", "me", "mein", "batao",
+        "nikal", "nikalo", "de", "do", "dena", "dump", "dumping", "dumper", "for", "with",
+        "and", "the", "need", "want", "make", "generate", "hq", "uhq", "keywords", "keyword",
+        "best", "quality", "mast", "high", "please", "bro", "bhai", "all", "data",
+    }
+    custom_topic_words = [
+        w for w in re.sub(r"[^a-zA-Z0-9\s\-\_]", " ", raw_lower).split()
+        if len(w) >= 3 and not w.isdigit() and w not in hinglish_stop
+    ]
+
+    if progress_cb:
+        await progress_cb("🧠 *Sᴛᴀɢᴇ 1/4:* AI Target Schema, DB Tables & Payment/Auth Footprints Analyze kar raha hai...")
+
+    ai_res = await _v15_query_live_ai_keywords(target_text, prof, geo_labels)
+
+    merged_seeds: list[str] = []
+    if custom_topic_words:
+        joined_custom = " ".join(custom_topic_words[:3])
+        merged_seeds.append(joined_custom)
+        for cw in custom_topic_words[:6]:
+            merged_seeds.append(cw)
+            for g in geo_tokens[:3]:
+                merged_seeds.append(f"{cw} {g}")
+
+    for nch in (ai_res.get("niches") or [])[:16]:
+        if isinstance(nch, str) and len(nch.strip()) >= 3:
+            merged_seeds.append(nch.strip().lower())
+
+    for mc in matched_cats:
+        merged_seeds.extend(_V15_DUMP_PROFILES[mc]["seeds"])
+
+    if progress_cb:
+        await progress_cb("🌐 *Sᴛᴀɢᴇ 2/4:* Live Google + Bing + DuckDuckGo Autocomplete & Search Demand Scrape ho raha hai...")
+
+    live_ac, _ = await _v15_fetch_live_autocomplete_batch(merged_seeds[:36], timeout_sec=4.2)
+
+    if progress_cb:
+        await progress_cb("🕷️ *Sᴛᴀɢᴇ 3/4:* Live Search Engine SERP Pages se Meta Keywords, Product Titles & URL Slugs Parse ho rahe hain...")
+
+    serp_queries = [f'"{s}" checkout OR login OR product' for s in merged_seeds[:8]]
+    serp_parsed = await _v15_scrape_live_serp_keywords(serp_queries, max_pages=10)
+
+    if progress_cb:
+        await progress_cb("💎 *Sᴛᴀɢᴇ 4/4:* Advanced Quality Checker se `Premium (UHQ)` & `Good (HQ)` Keywords Filter & Rank ho rahe hain...")
+
+    raw_pool: list[str] = []
+    for k in (ai_res.get("keywords") or []):
+        if isinstance(k, str):
+            raw_pool.append(k)
+    raw_pool.extend(live_ac)
+    raw_pool.extend(serp_parsed)
+
+    all_mods = []
+    for mc in matched_cats:
+        all_mods.extend(_V15_DUMP_PROFILES[mc]["modifiers"])
+
+    root_phrases = []
+    seen_rp = set()
+    for item in (merged_seeds + live_ac[:80] + serp_parsed[:80] + list(ai_res.get("niches") or [])):
+        clean_it = re.sub(r"[^a-zA-Z0-9\s\-]", " ", str(item).lower())
+        clean_it = re.sub(r"\s+", " ", clean_it).strip()
+        wds = [w for w in clean_it.split() if w not in hinglish_stop and len(w) >= 3]
+        if wds:
+            p2 = " ".join(wds[:2])
+            if p2 not in seen_rp:
+                seen_rp.add(p2)
+                root_phrases.append(p2)
+
+    if not root_phrases:
+        root_phrases = ["woocommerce shop", "stripe store", "member portal", "digital voucher"]
+
+    for mod in all_mods:
+        for rp in root_phrases:
+            raw_pool.append(f"{rp} {mod}")
+            for g in geo_tokens[:2]:
+                raw_pool.append(f"{rp} {g} {mod}")
+            if len(raw_pool) >= count * 3:
+                break
+        if len(raw_pool) >= count * 3:
+            break
+
+    if len(raw_pool) < count * 2:
+        extra_uhq = await _v15_generate_uhq_hq_keywords_from_seeds(root_phrases[:25], count * 2)
+        raw_pool.extend(extra_uhq)
+
+    qc_full = await _v15_check_keywords_quality(raw_pool)
+    want_p = int(count * 0.48)
+    want_g = count - want_p
+    hq_selected = qc_full["premium"][:want_p] + qc_full["good"][:want_g]
+    if len(hq_selected) < count:
+        leftover = qc_full["premium"][want_p:] + qc_full["good"][want_g:] + qc_full["normal"]
+        hq_selected.extend(leftover[: count - len(hq_selected)])
+    hq_selected = hq_selected[:count]
+
+    final_qc = await _v15_check_keywords_quality(hq_selected)
+    return {
+        "target_input": target_text,
+        "count": len(final_qc["all"]),
+        "category_label": " + ".join(_V15_DUMP_PROFILES[c]["label"] for c in matched_cats[:2]),
+        "tables": prof["tables"][:6],
+        "columns": prof["columns"][:6],
+        "footprints": prof["footprints"][:6],
+        "geos": geo_labels or ["🌍 Global Tier-1 (US / UK / CA / AU / EU)"],
+        "ai_engine": ai_res.get("ai_engine", "Deep Schema AI + Live SERP Parser"),
+        "ai_summary": ai_res.get("summary") or f"Targeted {prof['label']} platforms with live SQL order/account tables & custom PHP endpoints.",
+        "live_ac_count": len(live_ac),
+        "serp_parsed_count": len(serp_parsed),
+        "qc": final_qc,
+    }
+
+
+def _v15_ai_parser_home_ui() -> tuple[str, InlineKeyboardMarkup]:
+    txt = (
+        "🧠 *𝗔𝗜 𝗧𝗔𝗥𝗚𝗘𝗧 ➪ 𝗛𝗤 𝗞𝗘𝗬𝗪𝗢𝗥𝗗 𝗣𝗔𝗥𝗦𝗘𝗥 [𝗩𝟭𝟱]*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🎯 *Tᴜᴍᴋᴏ Kʏᴀ Dᴜᴍᴘ Kᴀʀɴᴀ Hᴀɪ? Bᴀs Lɪᴋʜ Kᴀʀ Bʜᴇᴊᴏ!*\n"
+        "_(English ya Hinglish me kuch bhi likho — AI pehle target database tables, payment gateways & platforms analyze karega, live search engines parse karega, aur sirf `💎 Premium` + `🟢 Good` UHQ Keywords nikal kar dega!)_\n\n"
+        "💡 *E x a m p l e s :*\n"
+        "  • `CC dump karna ha USA UK Stripe WooCommerce 1000`\n"
+        "  • `email:pass gaming Steam Valorant accounts 2000`\n"
+        "  • `Netflix Spotify OTT IPTV streaming combos 1500`\n"
+        "  • `Crypto exchange USDT wallet trader leads 1000`\n"
+        "  • `PayPal giftcard digital voucher shop 1000`\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "👇 *Ya niche 1-Click Preset choose karo:*"
+    )
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("💳 CC & Payment Checkout", callback_data="v15_aipreset_cc"),
+            InlineKeyboardButton("📧 Email:Pass Combos", callback_data="v15_aipreset_combo"),
+        ],
+        [
+            InlineKeyboardButton("🎮 Gaming & Steam/TopUp", callback_data="v15_aipreset_gaming"),
+            InlineKeyboardButton("🎬 OTT Netflix/IPTV", callback_data="v15_aipreset_ott"),
+        ],
+        [
+            InlineKeyboardButton("🪙 Crypto & Forex Leads", callback_data="v15_aipreset_crypto"),
+            InlineKeyboardButton("💸 PayPal & Giftcards", callback_data="v15_aipreset_paypal"),
+        ],
+        [
+            InlineKeyboardButton("💎 Keyword Quality Checker", callback_data="menu_kw_checker"),
+            InlineKeyboardButton("🏠 Mᴀɪɴ Mᴇɴᴜ", callback_data="back_to_menu"),
+        ],
+    ])
+    return txt, kb
+
+
+async def _v15_send_txt_result(chat_id: int, bot_obj, uid: int, lines: list[str], filename: str, caption: str, reply_markup=None):
+    content_bytes = ("\n".join(lines) + "\n").encode("utf-8")
+    try:
+        _v9_vault_save(uid, "OUT", filename, content_bytes, category="v15_keywords")
+    except Exception:
+        pass
+    bio = io.BytesIO(content_bytes)
+    bio.name = filename
+    await bot_obj.send_document(
+        chat_id=chat_id,
+        document=bio,
+        filename=filename,
+        caption=caption,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=reply_markup,
+    )
+
+
+async def _v15_execute_ai_parser_and_deliver(chat_id: int, uid: int, target_query: str, context: ContextTypes.DEFAULT_TYPE):
+    status_msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            f"🧠 *𝗔𝗜 𝗧𝗔𝗥𝗚𝗘𝗧 𝗔𝗡𝗔𝗟𝗬𝗭𝗘𝗥 𝗦𝗧𝗔𝗥𝗧𝗘𝗗...*\n"
+            f"🎯 Target: `{target_query[:80]}`\n"
+            f"⏳ _Initializing AI Schema Brain + Live Multi-Engine Keyword Parser..._"
+        ),
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    last_stage_ts = [0.0]
+
+    async def _prog(stage_txt: str):
+        now = time.time()
+        if now - last_stage_ts[0] < 0.8:
+            return
+        last_stage_ts[0] = now
+        try:
+            await status_msg.edit_text(
+                f"🧠 *𝗔𝗜 𝗧𝗔𝗥𝗚𝗘𝗧 ➪ 𝗛𝗤 𝗞𝗘𝗬𝗪𝗢𝗥𝗗 𝗣𝗔𝗥𝗦𝗘𝗥*\n"
+                f"🎯 Target: `{target_query[:70]}`\n\n"
+                f"{stage_txt}",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception:
+            pass
+
+    t0 = time.perf_counter()
+    result = await _v15_run_ai_target_keyword_parser(target_query, requested_count=1000, progress_cb=_prog)
+    elapsed = time.perf_counter() - t0
+    qc = result["qc"]
+
+    sess_data = _v15_load_session(uid)
+    sess_data["mode"] = None
+    sess_data["last_qc"] = qc
+    sess_data["last_footprints"] = result["footprints"]
+    _v15_save_session(uid, sess_data)
+    context.user_data.pop("v15_mode", None)
+
+    top_preview = "\n".join(f"  `• {k}`" for k in qc["all"][:8])
+    report_txt = (
+        f"🧠 *𝗔𝗜 𝗧𝗔𝗥𝗚𝗘𝗧 𝗔𝗡𝗔𝗟𝗬𝗦𝗜𝗦 & 𝗛𝗤 𝗞𝗘𝗬𝗪𝗢𝗥𝗗𝗦 𝗥𝗘𝗔𝗗𝗬!* ✅\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎯 *Tᴀʀɢᴇᴛ*       : `{result['target_input'][:65]}`\n"
+        f"🏷️ *Cᴀᴛᴇɢᴏʀʏ*     : {result['category_label']}\n"
+        f"🌍 *Mᴀʀᴋᴇᴛ Gᴇᴏ*   : `{', '.join(result['geos'])}`\n"
+        f"🗄️ *Tᴀʀɢᴇᴛ DBs*   : `{', '.join(result['tables'][:5])}`\n"
+        f"🔑 *Tᴀʀɢᴇᴛ Cᴏʟs*  : `{', '.join(result['columns'][:5])}`\n"
+        f"🤖 *AI Sᴛʀᴀᴛᴇɢʏ*  : _{result['ai_summary'][:140]}_\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💎 *Pʀᴇᴍɪᴜᴍ (UHQ)* : `{len(qc['premium']):,}`   |   🟢 *Gᴏᴏᴅ (HQ)* : `{len(qc['good']):,}`\n"
+        f"📦 *Tᴏᴛᴀʟ HQ Gᴇɴ* : `{len(qc['all']):,}`   |   ⚡ *Sᴄᴏʀᴇ* : `{qc['avg_score']:.1f}/100` (`{elapsed:.1f}s`)\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔥 *Tᴏᴘ AI-Pᴀʀsᴇᴅ UHQ Kᴇʏᴡᴏʀᴅs:*\n{top_preview}"
+    )
+
+    action_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔍 Qᴜᴀʟɪᴛʏ Cʜᴇᴄᴋᴇʀ Bʀᴇᴀᴋᴅᴏᴡɴ (Premium/Good/ZIP)", callback_data="v15_open_last_qc")],
+        [
+            InlineKeyboardButton(f"💎 Pʀᴇᴍɪᴜᴍ Oɴʟʏ ({len(qc['premium']):,})", callback_data="v15_dl_premium"),
+            InlineKeyboardButton(f"🟢 Gᴏᴏᴅ Oɴʟʏ ({len(qc['good']):,})", callback_data="v15_dl_good"),
+        ],
+        [InlineKeyboardButton("🔥 Gᴇɴᴇʀᴀᴛᴇ Tᴀʀɢᴇᴛ UHQ SQLi Dᴏʀᴋs", callback_data="v15_make_dorks_best")],
+        [
+            InlineKeyboardButton("🧠 Nᴇᴡ AI Tᴀʀɢᴇᴛ", callback_data="menu_ai_kw_parser"),
+            InlineKeyboardButton("🏠 Mᴀɪɴ Mᴇɴᴜ", callback_data="back_to_menu"),
+        ],
+    ])
+
+    try:
+        await status_msg.edit_text(report_txt, parse_mode=ParseMode.MARKDOWN, reply_markup=action_kb)
+    except Exception:
+        await context.bot.send_message(chat_id=chat_id, text=report_txt, parse_mode=ParseMode.MARKDOWN, reply_markup=action_kb)
+
+    safe_slug = re.sub(r"[^a-zA-Z0-9]+", "_", target_query.strip())[:24].strip("_") or "Target"
+    await _v15_send_txt_result(
+        chat_id=chat_id,
+        bot_obj=context.bot,
+        uid=uid,
+        lines=qc["all"],
+        filename=f"AI_UHQ_Keywords_{safe_slug}_{len(qc['all'])}.txt",
+        caption=(
+            f"✅ *AI Tᴀʀɢᴇᴛ HQ Kᴇʏᴡᴏʀᴅs Fɪʟᴇ* (`{len(qc['all']):,}` lines)\n"
+            f"💎 Premium: `{len(qc['premium']):,}` | 🟢 Good: `{len(qc['good']):,}` | Avg Score: `{qc['avg_score']:.1f}/100`"
+        ),
+        reply_markup=action_kb,
+    )
+
+
+_v15_prev_make_main_menu = make_main_menu
+
+
+def make_main_menu():
+    kb = _v15_prev_make_main_menu()
+    rows = [list(r) for r in kb.inline_keyboard]
+    existing = {b.callback_data for r in rows for b in r}
+    if "menu_kw_checker" not in existing:
+        insert_pos = 1 if len(rows) >= 1 else 0
+        rows.insert(insert_pos, [
+            InlineKeyboardButton("💎 Kᴇʏᴡᴏʀᴅ Qᴜᴀʟɪᴛʏ Cʜᴇᴄᴋᴇʀ", callback_data="menu_kw_checker"),
+            InlineKeyboardButton("🧠 AI Tᴀʀɢᴇᴛ Kᴇʏᴡᴏʀᴅ Pᴀʀsᴇʀ", callback_data="menu_ai_kw_parser"),
+        ])
+    return InlineKeyboardMarkup(rows)
+
+
+async def v15_kwcheck_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    u = update.effective_user
+    if not u:
+        return
+    if not has_access(u.id):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return
+    sess = _v15_load_session(u.id)
+    sess["mode"] = "kwqc_wait_keywords"
+    _v15_save_session(u.id, sess)
+    context.user_data["v15_mode"] = "kwqc_wait_keywords"
+    txt, kb = _v15_kw_checker_home_ui()
+    await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+
+
+async def v15_aikeywords_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    u = update.effective_user
+    if not u:
+        return
+    if not has_access(u.id):
+        await update.message.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        return
+    sess = _v15_load_session(u.id)
+    sess["mode"] = "ai_wait_target"
+    _v15_save_session(u.id, sess)
+    context.user_data["v15_mode"] = "ai_wait_target"
+    txt, kb = _v15_ai_parser_home_ui()
+    await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+
+
+_v15_prev_button_handler = button_handler
+
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q and q.data:
+        data = q.data
+        uid = q.from_user.id
+        chat_id = q.message.chat_id
+
+        if data == "back_to_menu" or (data.startswith("menu_") and data not in ("menu_kw_checker", "menu_ai_kw_parser")):
+            if context.user_data.get("v15_mode"):
+                context.user_data.pop("v15_mode", None)
+            sess_clean = _v15_load_session(uid)
+            if sess_clean.get("mode"):
+                sess_clean["mode"] = None
+                _v15_save_session(uid, sess_clean)
+
+        if data in (
+            "menu_kw_checker", "v15_not_have_kw", "v15_check_gen_now", "v15_open_last_qc",
+            "v15_dl_premium", "v15_dl_good", "v15_dl_normal", "v15_dl_bad",
+            "v15_dl_uhqpack", "v15_dl_all", "v15_dl_zip", "v15_make_dorks_best",
+            "menu_ai_kw_parser",
+        ) or data.startswith("v15_aipreset_"):
+            if not has_access(uid):
+                try:
+                    await q.answer("🔒 VIP Access Required!", show_alert=True)
+                except Exception:
+                    pass
+                await context.bot.send_message(chat_id=chat_id, text=access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+                return MENU
+
+            if data == "menu_kw_checker":
+                try:
+                    await q.answer("💎 Keyword Quality Checker")
+                except Exception:
+                    pass
+                sess = _v15_load_session(uid)
+                sess["mode"] = "kwqc_wait_keywords"
+                _v15_save_session(uid, sess)
+                context.user_data["v15_mode"] = "kwqc_wait_keywords"
+                txt, kb = _v15_kw_checker_home_ui()
+                try:
+                    await q.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                except Exception:
+                    await context.bot.send_message(chat_id=chat_id, text=txt, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                return MENU
+
+            if data == "v15_not_have_kw":
+                try:
+                    await q.answer("⚡ UHQ / HQ Keyword Maker")
+                except Exception:
+                    pass
+                sess = _v15_load_session(uid)
+                sess["mode"] = "kwqc_wait_seeds_for_uhq"
+                _v15_save_session(uid, sess)
+                context.user_data["v15_mode"] = "kwqc_wait_seeds_for_uhq"
+                prompt_txt = (
+                    "⚡ *𝗨𝗛𝗤 / 𝗛𝗤 𝗞𝗘𝗬𝗪𝗢𝗥𝗗 𝗠𝗔𝗞𝗘𝗥 [𝗣𝗥𝗜𝗩𝗔𝗧𝗘 𝗠𝗘𝗧𝗛𝗢𝗗]*\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "✍️ *Kuch Seed Keywords bhejo (1 line ya comma/newline me) + optional count:*\n\n"
+                    "💡 *Examples:*\n"
+                    "  • `stripe, woocommerce, shopify 500`\n"
+                    "  • `netflix, iptv, spotify 1000`\n"
+                    "  • `steam, valorant, gaming store 2000`\n\n"
+                    "🔥 _Bot Live Search Autocomplete + DB Checkout/Account Modifiers se UHQ & HQ Keywords generate karega, aur niche turant **`🔍 Check Keywords Quality Now`** ka button dega!_"
+                )
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Bᴀᴄᴋ ᴛᴏ Qᴜᴀʟɪᴛʏ Cʜᴇᴄᴋᴇʀ", callback_data="menu_kw_checker")],
+                    [InlineKeyboardButton("🏠 Mᴀɪɴ Mᴇɴᴜ", callback_data="back_to_menu")],
+                ])
+                try:
+                    await q.message.edit_text(prompt_txt, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                except Exception:
+                    await context.bot.send_message(chat_id=chat_id, text=prompt_txt, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                return MENU
+
+            if data == "v15_check_gen_now":
+                sess = _v15_load_session(uid)
+                gen_list = sess.get("generated_uhq") or []
+                if not gen_list:
+                    await q.answer("⚠️ Pehle keywords generate ya upload karo!", show_alert=True)
+                    return MENU
+                try:
+                    await q.answer("🔍 Checking Keywords Quality...")
+                except Exception:
+                    pass
+                wait_msg = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🔍 *Checking `{len(gen_list):,}` Generated Keywords with Advanced Multi-Signal Engine...*",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                qc = await _v15_check_keywords_quality(gen_list)
+                sess["last_qc"] = qc
+                sess["mode"] = None
+                _v15_save_session(uid, sess)
+                context.user_data.pop("v15_mode", None)
+                dash_txt, dash_kb = _v15_build_kwqc_dashboard(qc)
+                await wait_msg.edit_text(dash_txt, reply_markup=dash_kb, parse_mode=ParseMode.MARKDOWN)
+                return MENU
+
+            if data == "v15_open_last_qc":
+                sess = _v15_load_session(uid)
+                qc = sess.get("last_qc")
+                if not qc:
+                    await q.answer("⚠️ No checked keywords in session yet!", show_alert=True)
+                    return MENU
+                try:
+                    await q.answer("📊 Opening Full Quality Breakdown...")
+                except Exception:
+                    pass
+                dash_txt, dash_kb = _v15_build_kwqc_dashboard(qc)
+                await context.bot.send_message(chat_id=chat_id, text=dash_txt, reply_markup=dash_kb, parse_mode=ParseMode.MARKDOWN)
+                return MENU
+
+            if data in ("v15_dl_premium", "v15_dl_good", "v15_dl_normal", "v15_dl_bad", "v15_dl_uhqpack", "v15_dl_all"):
+                sess = _v15_load_session(uid)
+                qc = sess.get("last_qc") or {}
+                tier_meta = {
+                    "v15_dl_premium": ("premium", "💎_Premium_UHQ_Keywords.txt", "💎 *Pʀᴇᴍɪᴜᴍ (UHQ) Kᴇʏᴡᴏʀᴅs* `[Score 85–100]`"),
+                    "v15_dl_good": ("good", "🟢_Good_HQ_Keywords.txt", "🟢 *Gᴏᴏᴅ (HQ) Kᴇʏᴡᴏʀᴅs* `[Score 68–84]`"),
+                    "v15_dl_normal": ("normal", "🟡_Normal_Keywords.txt", "🟡 *Nᴏʀᴍᴀʟ Kᴇʏᴡᴏʀᴅs* `[Score 45–67]`"),
+                    "v15_dl_bad": ("bad", "🔴_Bad_Filtered_Keywords.txt", "🔴 *Bᴀᴅ / Lᴏᴡ Qᴜᴀʟɪᴛʏ Kᴇʏᴡᴏʀᴅs* `[Score 0–44]`"),
+                    "v15_dl_uhqpack": ("uhqpack", "🔥_Premium_Plus_Good_UHQ.txt", "🔥 *Pʀᴇᴍɪᴜᴍ + Gᴏᴏᴅ Cᴏᴍʙɪɴᴇᴅ UHQ Pᴀᴄᴋ*"),
+                    "v15_dl_all": ("all", "📦_All_Checked_Keywords.txt", "📦 *Aʟʟ Cʜᴇᴄᴋᴇᴅ Uɴɪǫᴜᴇ Kᴇʏᴡᴏʀᴅs*"),
+                }
+                key_name, fname, label_title = tier_meta[data]
+                items = (qc.get("premium", []) + qc.get("good", [])) if key_name == "uhqpack" else qc.get(key_name, [])
+                if not items:
+                    await q.answer("⚠️ Is category me 0 keywords hain!", show_alert=True)
+                    return MENU
+                try:
+                    await q.answer(f"📥 Sending {len(items):,} keywords...")
+                except Exception:
+                    pass
+                await _v15_send_txt_result(
+                    chat_id=chat_id,
+                    bot_obj=context.bot,
+                    uid=uid,
+                    lines=items,
+                    filename=fname,
+                    caption=f"{label_title}\n📊 Total Lines: `{len(items):,}`",
+                )
+                return MENU
+
+            if data == "v15_dl_zip":
+                sess = _v15_load_session(uid)
+                qc = sess.get("last_qc") or {}
+                if not qc.get("all"):
+                    await q.answer("⚠️ No checked keywords available!", show_alert=True)
+                    return MENU
+                try:
+                    await q.answer("📁 Building Full Split Tier ZIP...")
+                except Exception:
+                    pass
+                zbuf = io.BytesIO()
+                with _v15_zipfile.ZipFile(zbuf, "w", compression=_v15_zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr("1_Premium_UHQ_Keywords.txt", "\n".join(qc.get("premium", [])) + "\n")
+                    zf.writestr("2_Good_HQ_Keywords.txt", "\n".join(qc.get("good", [])) + "\n")
+                    zf.writestr("3_Premium_Plus_Good_Combined.txt", "\n".join(qc.get("premium", []) + qc.get("good", [])) + "\n")
+                    zf.writestr("4_Normal_Keywords.txt", "\n".join(qc.get("normal", [])) + "\n")
+                    zf.writestr("5_Bad_Trash_Keywords.txt", "\n".join(qc.get("bad", [])) + "\n")
+                    zf.writestr("All_Unique_Keywords.txt", "\n".join(qc.get("all", [])) + "\n")
+                raw_zip = zbuf.getvalue()
+                try:
+                    _v9_vault_save(uid, "OUT", "Keywords_Quality_Pack_All_Tiers.zip", raw_zip, category="v15_keywords_zip")
+                except Exception:
+                    pass
+                zbuf.seek(0)
+                zbuf.name = "Keywords_Quality_Pack_All_Tiers.zip"
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=zbuf,
+                    filename="Keywords_Quality_Pack_All_Tiers.zip",
+                    caption=(
+                        f"📁 *Fᴜʟʟ Kᴇʏᴡᴏʀᴅ Qᴜᴀʟɪᴛʏ Pack (ZIP)*\n"
+                        f"💎 Premium: `{len(qc.get('premium', [])):,}` | 🟢 Good: `{len(qc.get('good', [])):,}`\n"
+                        f"🟡 Normal: `{len(qc.get('normal', [])):,}` | 🔴 Bad: `{len(qc.get('bad', [])):,}`"
+                    ),
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return MENU
+
+            if data == "v15_make_dorks_best":
+                sess = _v15_load_session(uid)
+                qc = sess.get("last_qc") or {}
+                best_kws = (qc.get("premium") or []) + (qc.get("good") or [])
+                if not best_kws:
+                    best_kws = qc.get("all") or sess.get("generated_uhq") or []
+                if not best_kws:
+                    await q.answer("⚠️ No keywords found to generate dorks!", show_alert=True)
+                    return MENU
+                try:
+                    await q.answer("🔥 Generating UHQ SQLi Dorks...")
+                except Exception:
+                    pass
+                dork_target_n = min(50_000, max(2_000, len(best_kws) * 10))
+                dorks_out = generate_hq_sqli_dorks(best_kws, dork_target_n)
+                await _v15_send_txt_result(
+                    chat_id=chat_id,
+                    bot_obj=context.bot,
+                    uid=uid,
+                    lines=dorks_out,
+                    filename=f"UHQ_SQLi_Dorks_{len(dorks_out)}.txt",
+                    caption=(
+                        f"🔥 *UHQ SQLi Dᴏʀᴋs Rᴇᴀᴅʏ!* (`{len(dorks_out):,}` lines)\n"
+                        f"💎 Built from `{len(best_kws):,}` Premium/HQ Keywords _(Zero `page=N` junk — ready for Parser / Auto-Pilot!)_"
+                    ),
+                )
+                return MENU
+
+            if data == "menu_ai_kw_parser":
+                try:
+                    await q.answer("🧠 AI Target ➪ HQ Keyword Parser")
+                except Exception:
+                    pass
+                sess = _v15_load_session(uid)
+                sess["mode"] = "ai_wait_target"
+                _v15_save_session(uid, sess)
+                context.user_data["v15_mode"] = "ai_wait_target"
+                txt, kb = _v15_ai_parser_home_ui()
+                try:
+                    await q.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                except Exception:
+                    await context.bot.send_message(chat_id=chat_id, text=txt, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                return MENU
+
+            if data.startswith("v15_aipreset_"):
+                preset_map = {
+                    "v15_aipreset_cc": "CC payment checkout Stripe Braintree WooCommerce OpenCart USA UK 1000",
+                    "v15_aipreset_combo": "Email:Pass member login portal VIP account subscription database 1000",
+                    "v15_aipreset_gaming": "Gaming Steam Valorant PSN CD-Key topup store player accounts 1000",
+                    "v15_aipreset_ott": "Netflix Spotify IPTV 4K OTT streaming subscriber panel 1000",
+                    "v15_aipreset_crypto": "Crypto exchange USDT wallet Forex trader KYC investor leads 1000",
+                    "v15_aipreset_paypal": "PayPal express checkout digital giftcard voucher code store 1000",
+                }
+                q_str = preset_map.get(data, "CC payment checkout online store 1000")
+                try:
+                    await q.answer("🧠 Starting AI Target Analysis & Keyword Parsing...")
+                except Exception:
+                    pass
+                _v12_spawn_bg_pipeline(uid, "AI Keyword Parser", _v15_execute_ai_parser_and_deliver(chat_id, uid, q_str, context))
+                return MENU
+
+    return await _v15_prev_button_handler(update, context)
+
+
+_v15_prev_pre_guard = _v12_pre_router_guard
+
+
+async def _v12_pre_router_guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _v15_prev_pre_guard(update, context)
+    if not update or not update.effective_user or not update.message:
+        return
+    u = update.effective_user
+    uid = u.id
+    msg = update.message
+    txt = (msg.text or "").strip()
+    if txt.startswith("/"):
+        return
+
+    sess = _v15_load_session(uid)
+    active_mode = context.user_data.get("v15_mode") or sess.get("mode")
+    if not active_mode:
+        return
+
+    if not has_access(uid):
+        sess["mode"] = None
+        _v15_save_session(uid, sess)
+        context.user_data.pop("v15_mode", None)
+        await msg.reply_text(access_denied_text(), reply_markup=access_denied_kb(), parse_mode=ParseMode.MARKDOWN)
+        raise ApplicationHandlerStop()
+
+    if active_mode == "kwqc_wait_keywords":
+        raw_lines: list[str] = []
+        if msg.document:
+            lines_f, err = await _v8_download_and_extract_lines(update, context, max_lines=500_000)
+            if err:
+                await msg.reply_text(err, parse_mode=ParseMode.MARKDOWN)
+                raise ApplicationHandlerStop()
+            raw_lines = lines_f
+        elif txt:
+            raw_lines = [ln for ln in re.split(r"[\r\n]+", txt) if ln.strip()]
+            if len(raw_lines) == 1 and "," in raw_lines[0]:
+                raw_lines = [p.strip() for p in raw_lines[0].split(",") if p.strip()]
+
+        if not raw_lines:
+            await msg.reply_text("❌ *Koi valid keywords nahi mile!* Text paste karo ya `.txt` / `.zip` file bhejo.", parse_mode=ParseMode.MARKDOWN)
+            raise ApplicationHandlerStop()
+
+        wait_m = await msg.reply_text(
+            f"🔍 *Checking `{len(raw_lines):,}` Keywords with Advanced Quality Engine...*",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        qc = await _v15_check_keywords_quality(raw_lines)
+        sess["last_qc"] = qc
+        sess["mode"] = None
+        _v15_save_session(uid, sess)
+        context.user_data.pop("v15_mode", None)
+        dash_txt, dash_kb = _v15_build_kwqc_dashboard(qc)
+        await wait_m.edit_text(dash_txt, reply_markup=dash_kb, parse_mode=ParseMode.MARKDOWN)
+        raise ApplicationHandlerStop()
+
+    if active_mode == "kwqc_wait_seeds_for_uhq":
+        seeds_input: list[str] = []
+        req_count = 500
+        if msg.document:
+            lines_f, err = await _v8_download_and_extract_lines(update, context, max_lines=50_000)
+            if err:
+                await msg.reply_text(err, parse_mode=ParseMode.MARKDOWN)
+                raise ApplicationHandlerStop()
+            seeds_input = lines_f
+        elif txt:
+            m_sh = re.search(r"\b(\d+\s*(?:k|lakh|m)?)\s*$", txt.lower())
+            cleaned_txt = txt
+            if m_sh:
+                parsed_n = _v8_parse_human_count(m_sh.group(1))
+                if parsed_n and 25 <= parsed_n <= 200_000 and len(txt[:m_sh.start()].strip()) >= 2:
+                    req_count = parsed_n
+                    cleaned_txt = txt[:m_sh.start()].strip()
+            seeds_input = [s.strip() for s in re.split(r"[\n,;]+", cleaned_txt) if s.strip()]
+
+        if not seeds_input:
+            await msg.reply_text("❌ *Kam se kam 1–2 seed keywords likho!* (Example: `stripe, woocommerce 500`)", parse_mode=ParseMode.MARKDOWN)
+            raise ApplicationHandlerStop()
+
+        wait_m = await msg.reply_text(
+            f"⚡ *Generating `{req_count:,}` UHQ & HQ Private Keywords from `{len(seeds_input)}` seed(s)...*",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        gen_kws = await _v15_generate_uhq_hq_keywords_from_seeds(seeds_input, target_count=req_count)
+        sess["generated_uhq"] = gen_kws
+        sess["mode"] = None
+        _v15_save_session(uid, sess)
+        context.user_data.pop("v15_mode", None)
+
+        preview_lines = "\n".join(f"  `• {k}`" for k in gen_kws[:8])
+        after_gen_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"🔍 Cʜᴇᴄᴋ Kᴇʏᴡᴏʀᴅs Qᴜᴀʟɪᴛʏ Nᴏᴡ ({len(gen_kws):,})", callback_data="v15_check_gen_now")],
+            [InlineKeyboardButton("🔥 Mᴀᴋᴇ UHQ Dᴏʀᴋs Fʀᴏᴍ Tʜᴇsᴇ", callback_data="v15_make_dorks_best")],
+            [
+                InlineKeyboardButton("⚡ Gᴇɴᴇʀᴀᴛᴇ Aɢᴀɪɴ", callback_data="v15_not_have_kw"),
+                InlineKeyboardButton("🏠 Mᴀɪɴ Mᴇɴᴜ", callback_data="back_to_menu"),
+            ],
+        ])
+        await wait_m.edit_text(
+            f"✅ *UHQ & HQ Kᴇʏᴡᴏʀᴅs Gᴇɴᴇʀᴀᴛᴇᴅ!* (`{len(gen_kws):,}` lines)\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔥 *Sᴀᴍᴘʟᴇ UHQ / HQ Kᴇʏᴡᴏʀᴅs:*\n{preview_lines}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👇 *Ab niche click karke inki Advanced Quality Check karo (`Premium / Good / Normal / Bad`)!*",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=after_gen_kb,
+        )
+        await _v15_send_txt_result(
+            chat_id=msg.chat_id,
+            bot_obj=context.bot,
+            uid=uid,
+            lines=gen_kws,
+            filename=f"Generated_UHQ_HQ_Keywords_{len(gen_kws)}.txt",
+            caption=f"⚡ *UHQ / HQ Kᴇʏᴡᴏʀᴅs Rᴇᴀᴅʏ!* (`{len(gen_kws):,}` lines)\n👇 Click **`🔍 Check Keywords Quality Now`** below!",
+            reply_markup=after_gen_kb,
+        )
+        raise ApplicationHandlerStop()
+
+    if active_mode == "ai_wait_target":
+        target_str = txt
+        if msg.document:
+            lines_f, err = await _v8_download_and_extract_lines(update, context, max_lines=500)
+            if not err and lines_f:
+                target_str = " ".join(lines_f[:15])
+        if not target_str:
+            await msg.reply_text("❌ *Batao kya dump karna hai!* (e.g. `CC dump USA Stripe WooCommerce 1000` ya `email:pass gaming`)", parse_mode=ParseMode.MARKDOWN)
+            raise ApplicationHandlerStop()
+
+        sess["mode"] = None
+        _v15_save_session(uid, sess)
+        context.user_data.pop("v15_mode", None)
+        _v12_spawn_bg_pipeline(uid, "AI Keyword Parser", _v15_execute_ai_parser_and_deliver(msg.chat_id, uid, target_str, context))
+        raise ApplicationHandlerStop()
 
 
 if __name__ == "__main__":
