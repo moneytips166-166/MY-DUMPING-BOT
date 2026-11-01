@@ -96,7 +96,31 @@ def detect_hardware_specs() -> dict:
     return {"cores": cores, "ram_gb": ram_gb}
 
 
+def detect_environment() -> str:
+    """termux | windows | macos | linux"""
+    try:
+        prefix = os.environ.get("PREFIX", "") or ""
+        if (
+            os.environ.get("TERMUX_VERSION")
+            or "com.termux" in prefix
+            or os.path.isdir("/data/data/com.termux/files/usr")
+        ):
+            return "termux"
+    except Exception:
+        pass
+    if sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+ENV_KIND = detect_environment()
+IS_TERMUX = ENV_KIND == "termux"
+IS_MOBILE = IS_TERMUX or bool(os.environ.get("ANDROID_ROOT") and ENV_KIND == "linux")
+
 HW_INFO = detect_hardware_specs()
+HW_INFO["env"] = ENV_KIND
 
 MIN_THREADS = 20          # Hard floor: HAR HAAL ME kam se kam 20 parallel threads!
 MAX_THREADS = 1600        # Hard ceiling for 100+ core monsters.
@@ -108,15 +132,24 @@ def _thr(value: int, floor: int = MIN_THREADS) -> int:
 
 HARDWARE_PROFILES = {
     "auto": {
-        "label": f"⚡ Auto-Detect ({HW_INFO['cores']} Cores / {HW_INFO['ram_gb']} GB RAM)",
+        "label": (
+            f"⚡ Auto-Detect (📱 Termux {HW_INFO['cores']} Cores / {HW_INFO['ram_gb']} GB RAM)"
+            if IS_TERMUX
+            else f"⚡ Auto-Detect ({HW_INFO['cores']} Cores / {HW_INFO['ram_gb']} GB RAM)"
+        ),
         "workers": max(2, min(12, HW_INFO["cores"])),
         # I/O-bound work: even a 1-core / 1 GB VPS easily runs 24+ threads.
-        "parser_threads": _thr(max(24, HW_INFO["cores"] * 16)),
-        "sqli_threads": _thr(max(30, HW_INFO["cores"] * 30)),
-        "dump_threads": _thr(max(10, HW_INFO["cores"] * 6), floor=10),
+        # BUT a phone (Termux) gets a conservative cap so Android never kills the app.
+        "parser_threads": _thr(max(20, min(40, HW_INFO["cores"] * 5))) if IS_TERMUX else _thr(max(24, HW_INFO["cores"] * 16)),
+        "sqli_threads": _thr(max(20, min(60, HW_INFO["cores"] * 7))) if IS_TERMUX else _thr(max(30, HW_INFO["cores"] * 30)),
+        "dump_threads": 8 if IS_TERMUX else _thr(max(10, HW_INFO["cores"] * 6), floor=10),
     },
     "low": {
-        "label": "🟢 Lite (1–2 Core / 1–4 GB RAM Chota VPS)",
+        "label": (
+            "🟢 Lite (📱 Termux / 1–2 Core / 1–4 GB RAM)"
+            if IS_TERMUX
+            else "🟢 Lite (1–2 Core / 1–4 GB RAM Chota VPS)"
+        ),
         "workers": 2,
         "parser_threads": 24,
         "sqli_threads": 30,
@@ -148,7 +181,7 @@ HARDWARE_PROFILES = {
 
 def load_settings() -> dict:
     default = {
-        "profile": "auto",
+        "profile": "low" if IS_TERMUX else "auto",
         "parser_mode": "balanced",   # blitz | balanced | deep
         "thread_override": 0,        # 0 = Auto. Any value >= 20 forces that many threads.
         "page_depth": 1,             # 1-3 SERP pages per engine (deep = more URLs per dork)
@@ -197,6 +230,12 @@ def get_active_limits() -> dict:
         prof["thread_override"] = 0
         prof["parser_threads"] = _thr(prof["parser_threads"])
         prof["sqli_threads"] = _thr(prof["sqli_threads"])
+
+    # 📱 Phone / Termux safety: Android ka OOM-killer 200+ threads par app maar deta hai.
+    if IS_MOBILE:
+        prof["parser_threads"] = min(prof["parser_threads"], 100)
+        prof["sqli_threads"] = min(prof["sqli_threads"], 120)
+        prof["dump_threads"] = min(prof["dump_threads"], 12)
 
     prof["parser_mode"] = cfg.get("parser_mode", "balanced")
     prof["page_depth"] = max(1, min(3, int(cfg.get("page_depth") or 1)))
@@ -338,6 +377,8 @@ class JobState:
                 "telemetry": dict(self.telemetry),
                 "limits": get_active_limits(),
                 "has_primp": HAS_PRIMP,
+                "env_kind": ENV_KIND,
+                "is_termux": IS_TERMUX,
             }
 
 
@@ -2034,7 +2075,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5"/>
+<meta name="theme-color" content="#07090f"/>
 <title>SPIDEY V18-TITAN — Offline & Local Suite</title>
 <style>
   :root {
@@ -2099,6 +2141,25 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .hidden { display: none; }
   h2 { font-size: 17px; margin-bottom: 4px; }
   .sub { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
+
+  /* 📱 PHONE / TERMUX FRIENDLY LAYOUT */
+  @media (max-width: 640px) {
+    header { padding: 10px 12px; gap: 8px; }
+    .brand > div > div:nth-child(2) { font-size: 10.5px; }
+    .layout { padding: 10px; gap: 10px; }
+    .card { padding: 12px; border-radius: 10px; }
+    .top-controls { width: 100%; gap: 8px; }
+    .top-controls > div { width: 100%; }
+    .top-controls select, .top-controls input { width: 100% !important; }
+    .top-controls .btn, .tab-pane .btn { width: 100%; justify-content: center; }
+    .stats-row { grid-template-columns: repeat(2, 1fr) !important; }
+    .stat-val { font-size: 14px; }
+    .stat-lbl { font-size: 10px; }
+    .log-box { height: 200px; font-size: 10.5px; }
+    .preset-chips .chip { font-size: 11px; padding: 6px 10px; }
+    .file-actions .btn { flex: 1 1 46%; justify-content: center; }
+    textarea { font-size: 12px; }
+  }
 </style>
 </head>
 <body>
@@ -2361,6 +2422,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           • <b>Errors</b> = block/timeout wale engine calls<br/>
           • <b>Retries</b> = fail hone par dusre engine se automatic dobara try (0 dork waste nahi hoti)<br/>
           • <b>Threads</b> = live parallel workers (min 20 guaranteed)</p>
+
+          <hr style="border-color:#1f2b46;margin:16px 0"/>
+          <p><b>📱 TERMUX (Android phone) — VPS ke bina testing:</b><br/>
+          <code>pkg update -y &amp;&amp; pkg install -y python curl screen</code><br/>
+          <code>termux-wake-lock</code> &nbsp;(app band hone se rokta hai)<br/>
+          <code>python spidey_offline_suite.py --port 8080 --threads 40 --depth 1</code><br/>
+          Fir phone ke Chrome me: <code>http://127.0.0.1:8080</code><br/>
+          Dusre phone/PC se (same Wi-Fi): <code>http://&lt;PHONE-IP&gt;:8080</code><br/>
+          Files phone me nikalne ke liye: <code>cp spidey_offline_workspace/*/* /sdcard/Download/</code></p>
+          <p style="margin-top:8px"><b>⚠️ Phone tips:</b> Battery Optimization OFF karo • Screen band mat karo • 40 threads se zyada mat rakho • <code>pkg install sqlmap</code> optional hai.</p>
         </div>
       </div>
     </div>
@@ -2912,10 +2983,20 @@ def main() -> None:
         flush=True,
     )
     print(f"💻 Hardware         : {HW_INFO['cores']} cores / {HW_INFO['ram_gb']} GB RAM • TLS: {'Rust primp' if HAS_PRIMP else 'stdlib'}", flush=True)
+    if IS_TERMUX:
+        print("📱 Termux Mode      : phone me Chrome kholo -> http://127.0.0.1:%d" % args.port, flush=True)
+        print("   💡 App band na ho isliye: termux-wake-lock   (aur battery optimization OFF)", flush=True)
+        print("   📂 Files phone me: cp spidey_offline_workspace/*/* /sdcard/Download/", flush=True)
     print("=" * 72, flush=True)
 
     if args.open_browser:
-        threading.Timer(0.6, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}")).start()
+        def _open() -> None:
+            try:
+                webbrowser.open(f"http://127.0.0.1:{args.port}")
+            except Exception:
+                pass
+
+        threading.Timer(0.6, _open).start()
 
     try:
         srv.serve_forever()
