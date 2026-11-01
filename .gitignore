@@ -2,3 +2,8 @@
 spidey_offline_workspace/
 __pycache__/
 *.pyc
+data/
+bot.log
+bot_crash.log
+bot_fixed.py.v18_backup_*.py
+*.backup.*.py

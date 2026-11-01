@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ==============================================================================
-#  SPIDEY TELEGRAM BOT — TERMUX (ANDROID PHONE) INSTALLER
+#  SPIDEY TELEGRAM BOT v19-VENOM — TERMUX (ANDROID PHONE) INSTALLER
 #  Ye script ASLI TELEGRAM BOT (bot_fixed.py) install + run karti hai.
 #  VPS ki zaroorat NAHI — sirf phone + internet chahiye.
 #
@@ -13,7 +13,7 @@ REPO_RAW="https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/aren
 INSTALL_DIR="${1:-$HOME/spidey}"
 
 echo "=============================================================="
-echo "  🤖 SPIDEY TELEGRAM BOT — TERMUX INSTALLER"
+echo "  🤖 SPIDEY TELEGRAM BOT  •  v19-VENOM  •  TERMUX INSTALLER"
 echo "  Install dir : $INSTALL_DIR"
 echo "=============================================================="
 
@@ -68,7 +68,11 @@ if ! curl -fsSL "$REPO_RAW/bot_fixed.py" -o bot_fixed.py; then
   exit 1
 fi
 $PY -m py_compile bot_fixed.py || { echo "❌ bot_fixed.py corrupt — dobara try karo"; exit 1; }
-echo "✅ bot_fixed.py ready ($(wc -l < bot_fixed.py) lines)"
+if grep -q "V19-VENOM" bot_fixed.py; then
+  echo "✅ bot_fixed.py ready ($(wc -l < bot_fixed.py) lines) — V19-VENOM engine included"
+else
+  echo "⚠️  bot_fixed.py downloaded but V19 marker missing — update.sh se dobara lo"
+fi
 
 # ---------- 5) Launchers ----------
 echo "🛠️  [5/5] Creating launchers..."
@@ -166,6 +170,7 @@ echo "=============================================================="
 echo "  cd $INSTALL_DIR"
 echo ""
 echo "  ./start.sh      -> 🤖 Bot BACKGROUND me start (Telegram pe /start karo)"
+echo "  Telegram menu   -> ☠️ V19-VENOM ENGINE button (new!)"
 echo "  ./status.sh     -> chal raha hai ya nahi"
 echo "  ./logs.sh       -> live log"
 echo "  ./stop.sh       -> band"
