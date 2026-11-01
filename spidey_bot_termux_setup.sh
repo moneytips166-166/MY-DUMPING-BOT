@@ -151,6 +151,14 @@ PYEOF
 python3 -m py_compile bot_fixed.py && echo "✅ File OK — ab: ./restart.sh"
 EOF
 
+cat > setconfig.sh <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+# ⚙️  Token + Admin ID change karo:  ./setconfig.sh
+set -u
+cd "$(dirname "$0")" || exit 1
+curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/spidey_setconfig.sh" -o .setconfig.tmp && bash .setconfig.tmp && rm -f .setconfig.tmp
+EOF
+
 cat > update.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 set -e
@@ -161,7 +169,7 @@ curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/ar
 python3 -m py_compile bot_fixed.py && echo "✅ Updated (backup -> backups/) — ab: ./restart.sh"
 EOF
 
-chmod +x run.sh start.sh stop.sh restart.sh logs.sh status.sh settoken.sh update.sh 2>/dev/null || true
+chmod +x run.sh start.sh stop.sh restart.sh logs.sh status.sh settoken.sh setconfig.sh update.sh 2>/dev/null || true
 
 echo ""
 echo "=============================================================="
@@ -173,9 +181,10 @@ echo "  ./start.sh      -> 🤖 Bot BACKGROUND me start (Telegram pe /start karo
 echo "  Telegram menu   -> ☠️ V19-VENOM ENGINE button (new!)"
 echo "  ./status.sh     -> chal raha hai ya nahi"
 echo "  ./logs.sh       -> live log"
+echo "  ./setconfig.sh  -> ⚙️ token / admin id change"
 echo "  ./stop.sh       -> band"
 echo "  ./restart.sh    -> restart"
-echo "  ./settoken.sh   -> naya bot token"
+echo "  ./setconfig.sh  -> ⚙️ token + admin id dono change karo"
 echo "  ./update.sh     -> latest version"
 echo ""
 echo "  💡 Phone ko sona nahi dena: Battery Optimization OFF (Settings > Apps > Termux)"

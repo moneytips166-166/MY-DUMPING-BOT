@@ -9244,6 +9244,8 @@ def main():
         aigen_callback,
         pattern=r"^aigen_(anthropic|gemini|gpt4o|mistral|llama|deepseek)$",
     ), group=-1)
+    app.add_handler(CommandHandler("myid", _v192_myid_cmd), group=-1)
+    app.add_handler(CommandHandler("adminid", _v192_adminid_cmd), group=-1)
 
     async def _run_bot():
         loop = asyncio.get_running_loop()
@@ -23157,9 +23159,9 @@ _V19_NICHE_HINTS = {
 
 
 def _v19_make_keywords(seeds: list, count: int) -> list:
+    """Exact-count UHQ keyword generator (8x10x9 variant expansion — 50,000+ guaranteed)."""
     count = max(1, int(count))
-    bases = []
-    seen_b = set()
+    bases, seen_b = [], set()
     for s in seeds:
         s = re.sub(r"\s+", " ", str(s or "").strip().lower())
         if not s:
@@ -23176,42 +23178,47 @@ def _v19_make_keywords(seeds: list, count: int) -> list:
     if not bases:
         bases = ["online shop", "digital store", "checkout cart"]
 
-    niche_suffix = []
-    joined = " ".join(bases).lower()
-    for _niche, _words in _V19_NICHE_HINTS.items():
-        if any(w in joined for w in _words):
-            niche_suffix.extend(["gift card", "instant delivery", "digital code", "vip access"])
-            break
-    suffix = list(dict.fromkeys(_V19_KW_SUFFIX + niche_suffix))
-
     out, seen = [], set()
 
     def _push(kw: str) -> bool:
-        kw = re.sub(r"\s+", " ", kw).strip()
-        if not kw or len(kw) < 6 or len(kw) > 60 or kw in seen:
+        kw = re.sub(r"\s+", " ", str(kw or "")).strip()
+        if not kw or len(kw) < 6 or len(kw) > 70 or kw in seen:
             return False
         if not re.search(r"[a-z]{2,}", kw):
             return False
         seen.add(kw)
         out.append(kw)
-        return True
+        return len(out) >= count
 
+    B = len(bases)
+    S = len(_V19_KW_SUFFIX)
     i = 0
-    while len(out) < count and i < count * 60 + 5000:
-        b = bases[i % len(bases)]
-        s = suffix[(i // max(1, len(bases))) % len(suffix)]
-        variant = (i // (max(1, len(bases)) * len(suffix))) % 4
-        if variant == 0:
-            _push("%s %s" % (b, s))
-        elif variant == 1:
-            _push("%s %s online" % (b, s))
-        elif variant == 2:
-            _push("%s %s page" % (b, s))
-        else:
-            _push("buy %s %s" % (b, s))
+    max_iter = count * 200 + 20_000
+    while len(out) < count and i < max_iter:
+        b = bases[i % B]
+        s = _V19_KW_SUFFIX[(i // B) % S]
+        v1 = _V19_KW_V1[(i // (B * S)) % len(_V19_KW_V1)]
+        v2 = _V19_KW_V2[(i // (B * S * len(_V19_KW_V1))) % len(_V19_KW_V2)]
+        v3 = _V19_KW_V3[(i // (B * S * len(_V19_KW_V1) * len(_V19_KW_V2))) % len(_V19_KW_V3)]
+        parts = []
+        if v2:
+            parts.append(v2)
+        parts.append(b)
+        if s and s not in b:
+            parts.append(s)
+        if v1 and v1 not in b:
+            parts.append(v1)
+        if v3:
+            parts.append(v3)
+        if _push(" ".join(parts)):
+            break
         i += 1
     return out[:count]
 
+
+_V19_KW_V1 = ["", "online", "page", "store", "shop", "site", "checkout", "instant"]
+_V19_KW_V2 = ["", "best", "cheap", "new", "pro", "global", "vip", "fast", "secure", "trusted"]
+_V19_KW_V3 = ["", "deals", "offers", "sale", "hub", "zone", "world", "point", "plus"]
 
 _V19_DORK_FILES = ["product.php", "product_detail.php", "item.php", "itemdetail.php", "details.php",
                    "shop.php", "store.php", "cart.php", "checkout.php", "category.php", "listing.php",
@@ -24392,6 +24399,80 @@ def _v191_load_done(uid: int) -> None:
 
 
 logger.info("☠️ V19.1 chain engine loaded (auto_sqli=%s)", _v19_load_cfg().get("auto_sqli"))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  V19.2 — /myid  &  /adminid   (Telegram user-id helper)
+# ═══════════════════════════════════════════════════════════════════════════════
+async def _v192_myid_cmd(update: "Update", context: "ContextTypes.DEFAULT_TYPE") -> None:
+    """Apni Telegram user ID + admin/license status dikhata hai."""
+    try:
+        u = update.effective_user
+        uid = int(u.id)
+        uname = ("@" + u.username) if getattr(u, "username", None) else (getattr(u, "first_name", "") or "—")
+        is_adm = False
+        try:
+            is_adm = bool(is_admin(uid))
+        except Exception:
+            is_adm = uid in ADMIN_IDS
+        lic = "—"
+        try:
+            if uid in authorized_users:
+                exp = authorized_users[uid].get("expires")
+                lic = "✅ Active till `%s`" % exp.strftime("%d %b %Y %H:%M") if exp else "✅ Active"
+            elif is_adm:
+                lic = "👑 Admin (unlimited)"
+            else:
+                st = trial_status(uid)
+                lic = {"active": "🟡 Trial active", "expired": "🔴 Trial expired", "none": "⚪ No license"}.get(st, "—")
+        except Exception:
+            pass
+        txt = (
+            "🪪 <b>YOUR TELEGRAM IDs</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "👤 <b>Name:</b> %s\n"
+            "🆔 <b>User ID:</b> <code>%s</code>\n"
+            "💬 <b>Chat ID:</b> <code>%s</code>\n"
+            "👑 <b>Admin:</b> %s\n"
+            "🎫 <b>License:</b> %s\n\n"
+            "📋 <i>Copy karo:</i> <code>%s</code>\n"
+            "⚙️ Admin banana ho to bot file me:\n"
+            "<code>ADMIN_IDS = [%s]</code>"
+        ) % (
+            uname, uid, int(update.effective_chat.id),
+            "✅ YES" if is_adm else "❌ NO", lic,
+            uid, uid,
+        )
+        await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        logger.warning("V19.2 /myid failed: %s", exc)
+
+
+async def _v192_adminid_cmd(update: "Update", context: "ContextTypes.DEFAULT_TYPE") -> None:
+    """Admin ko poora ADMIN_IDS list dikhata hai; baaki ko sirf apni id."""
+    try:
+        uid = int(update.effective_user.id)
+        if uid in ADMIN_IDS:
+            ids = ", ".join("<code>%s</code>" % x for x in ADMIN_IDS)
+            txt = (
+                "👑 <b>ADMIN_IDS (current)</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n"
+                "%s\n\n"
+                "🔧 Change karne ke liye (Termux):\n"
+                "<code>./setconfig.sh</code>"
+            ) % ids
+        else:
+            txt = (
+                "🔒 Ye command sirf admin ke liye hai.\n\n"
+                "Aapki ID: <code>%s</code>\n"
+                "Isko admin banane ke liye owner se bolo." % uid
+            )
+        await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        logger.warning("V19.2 /adminid failed: %s", exc)
+
+
+logger.info("🪪 V19.2 /myid + /adminid commands loaded")
 
 
 if __name__ == "__main__":
