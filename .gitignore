@@ -7,3 +7,5 @@ bot.log
 bot_crash.log
 bot_fixed.py.v18_backup_*.py
 *.backup.*.py
+
+bot_fixed.py.v*_backup_*

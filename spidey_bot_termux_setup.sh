@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ==============================================================================
-#  SPIDEY TELEGRAM BOT v19-VENOM — TERMUX (ANDROID PHONE) INSTALLER
+#  SPIDEY TELEGRAM BOT — SPIDEY-X ENGINE — TERMUX (ANDROID PHONE) INSTALLER
 #  Ye script ASLI TELEGRAM BOT (bot_fixed.py) install + run karti hai.
 #  VPS ki zaroorat NAHI — sirf phone + internet chahiye.
 #
@@ -13,7 +13,7 @@ REPO_RAW="https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/aren
 INSTALL_DIR="${1:-$HOME/spidey}"
 
 echo "=============================================================="
-echo "  🤖 SPIDEY TELEGRAM BOT  •  v19-VENOM  •  TERMUX INSTALLER"
+echo "  🤖 SPIDEY TELEGRAM BOT  •  SPIDEY-X  •  TERMUX INSTALLER"
 echo "  Install dir : $INSTALL_DIR"
 echo "=============================================================="
 
@@ -68,8 +68,8 @@ if ! curl -fsSL "$REPO_RAW/bot_fixed.py" -o bot_fixed.py; then
   exit 1
 fi
 $PY -m py_compile bot_fixed.py || { echo "❌ bot_fixed.py corrupt — dobara try karo"; exit 1; }
-if grep -q "V19-VENOM" bot_fixed.py; then
-  echo "✅ bot_fixed.py ready ($(wc -l < bot_fixed.py) lines) — V19-VENOM engine included"
+if grep -q "SPIDEY-X" bot_fixed.py; then
+  echo "✅ bot_fixed.py ready ($(wc -l < bot_fixed.py) lines) — SPIDEY-X engine included"
 else
   echo "⚠️  bot_fixed.py downloaded but V19 marker missing — update.sh se dobara lo"
 fi
@@ -159,6 +159,14 @@ cd "$(dirname "$0")" || exit 1
 curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/spidey_setconfig.sh" -o .setconfig.tmp && bash .setconfig.tmp && rm -f .setconfig.tmp
 EOF
 
+cat > doctor.sh <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+# 🩺 Bot jawab nahi de raha? Ye chalao:  ./doctor.sh
+set -u
+cd "$(dirname "$0")" || exit 1
+curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/spidey_doctor.sh" -o .doctor.tmp && bash .doctor.tmp && rm -f .doctor.tmp
+EOF
+
 cat > update.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 set -e
@@ -166,10 +174,22 @@ cd "$(dirname "$0")"
 mkdir -p backups
 cp -f bot_fixed.py "backups/bot_fixed_$(date +%Y%m%d_%H%M%S).py" 2>/dev/null || true
 curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/bot_fixed.py" -o bot_fixed.py
-python3 -m py_compile bot_fixed.py && echo "✅ Updated (backup -> backups/) — ab: ./restart.sh"
+if python3 -m py_compile bot_fixed.py; then
+  echo "✅ Updated (backup -> backups/)"
+  if screen -ls 2>/dev/null | grep -q spidey; then
+    echo "🔄 Bot chal raha tha — auto restart kar raha hoon..."
+    ./restart.sh
+  else
+    echo "👉 Ab: ./start.sh"
+  fi
+else
+  echo "❌ Nayi file me syntax error — purani backup wapas kar raha hoon"
+  cp -f "$(ls -t backups/bot_fixed_*.py 2>/dev/null | head -1)" bot_fixed.py 2>/dev/null || true
+  echo "👉 Manual: cp backups/<file> bot_fixed.py"
+fi
 EOF
 
-chmod +x run.sh start.sh stop.sh restart.sh logs.sh status.sh settoken.sh setconfig.sh update.sh 2>/dev/null || true
+chmod +x run.sh start.sh stop.sh restart.sh logs.sh status.sh settoken.sh setconfig.sh doctor.sh update.sh 2>/dev/null || true
 
 echo ""
 echo "=============================================================="
@@ -178,14 +198,14 @@ echo "=============================================================="
 echo "  cd $INSTALL_DIR"
 echo ""
 echo "  ./start.sh      -> 🤖 Bot BACKGROUND me start (Telegram pe /start karo)"
-echo "  Telegram menu   -> ☠️ V19-VENOM ENGINE button (new!)"
+echo "  Telegram menu   -> 🕷️ SPIDEY-X ENGINE button (new!)"
 echo "  ./status.sh     -> chal raha hai ya nahi"
 echo "  ./logs.sh       -> live log"
 echo "  ./setconfig.sh  -> ⚙️ token / admin id change"
+echo "  ./doctor.sh     -> 🩺 bot jawab nahi de raha? ye chalao"
 echo "  ./stop.sh       -> band"
 echo "  ./restart.sh    -> restart"
-echo "  ./setconfig.sh  -> ⚙️ token + admin id dono change karo"
-echo "  ./update.sh     -> latest version"
+echo "  ./update.sh     -> latest version (auto restart bhi)"
 echo ""
 echo "  💡 Phone ko sona nahi dena: Battery Optimization OFF (Settings > Apps > Termux)"
 echo "  💡 Termux notification me 'Acquire wakelock' ON rakho"
