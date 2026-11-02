@@ -173,7 +173,32 @@ set -e
 cd "$(dirname "$0")"
 mkdir -p backups
 cp -f bot_fixed.py "backups/bot_fixed_$(date +%Y%m%d_%H%M%S).py" 2>/dev/null || true
+cp -f bot_fixed.py .prev_bot.py 2>/dev/null || true
 curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/bot_fixed.py" -o bot_fixed.py
+# 🔐 Aapka token + admin id preserve karo (update se reset na ho!)
+python3 - <<'PYEOF'
+import re, os
+if not os.path.isfile(".prev_bot.py"):
+    raise SystemExit(0)
+def grab(path, pat, flags=re.M):
+    try:
+        s = open(path, encoding="utf-8", errors="ignore").read()
+        m = re.search(pat, s, flags)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+tok = grab(".prev_bot.py", r'^BOT_TOKEN\s*=\s*"([^"]*)"')
+adm = grab(".prev_bot.py", r'^ADMIN_IDS\s*=\s*(\[[^\]]*\])', re.M | re.S)
+if tok and ":" in tok and adm:
+    s = open("bot_fixed.py", encoding="utf-8").read()
+    s = re.sub(r'^BOT_TOKEN\s*=\s*"[^"]*"', 'BOT_TOKEN = "%s"' % tok, s, count=1, flags=re.M)
+    s = re.sub(r'^ADMIN_IDS\s*=\s*\[[^\]]*\]', 'ADMIN_IDS = %s' % " ".join(adm.split()), s, count=1, flags=re.M | re.S)
+    open("bot_fixed.py", "w", encoding="utf-8").write(s)
+    print("🔐 Purana token + admin id preserve kar liye")
+else:
+    print("ℹ️  Token preserve nahi hua — ./setconfig.sh se check kar lo")
+PYEOF
+rm -f .prev_bot.py
 if python3 -m py_compile bot_fixed.py; then
   echo "✅ Updated (backup -> backups/)"
   if screen -ls 2>/dev/null | grep -q spidey; then
