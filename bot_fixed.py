@@ -28971,6 +28971,107 @@ async def button_handler(update, context):   # noqa: F811
     return await _v24_prev_button_handler(update, context)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  PART E — poore bot me plain font (outgoing text/caption ko translate karo)
+# ─────────────────────────────────────────────────────────────────────────────
+import telegram as _v24_tg
+import functools as _v24_ft
+import unicodedata
+
+_V24_SC_FROM = "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡʏᴢ"   # 25 letters (x ka small-cap hota hi nahi)
+_V24_SC_TO = "abcdefghijklmnopqrstuvwyz"          # isi order me, bina x
+assert len(_V24_SC_FROM) == len(_V24_SC_TO) == 25
+_V24_PLAIN_TBL = str.maketrans(_V24_SC_FROM, _V24_SC_TO)
+
+
+def _v24_plain(t):
+    """Purane fancy fonts (small-caps / 𝙗𝙤𝙡𝙙 / 𝘪𝘵𝘢𝘭𝘪𝘤 / ｆｕｌｌｗｉｄｔｈ) ➪ simple ASCII.
+
+    Sirf dikhne wale text pe chalta hai — data, keys, callback_data ko chhua nahi jaata.
+    """
+    if not isinstance(t, str) or not t:
+        return t
+    try:
+        t = t.translate(_V24_PLAIN_TBL)
+        out = []
+        for ch in t:
+            o = ord(ch)
+            if 0x1D400 <= o <= 0x1D7FF or 0xFF21 <= o <= 0xFF3A or 0xFF41 <= o <= 0xFF5A:
+                out.append(unicodedata.normalize("NFKC", ch))
+            else:
+                out.append(ch)
+        return "".join(out)
+    except Exception:
+        return t
+
+
+def _v24_wrap_method(cls, name, text_pos=1):
+    """text/caption ko plain karke original method ko bhejo (data ko chhua nahi)."""
+    orig = getattr(cls, name, None)
+    if orig is None or getattr(orig, "_v24_plain_wrapped", False):
+        return False
+
+    @_v24_ft.wraps(orig)
+    async def wrapper(self, *args, **kwargs):
+        if "text" in kwargs:
+            kwargs["text"] = _v24_plain(kwargs["text"])
+        if "caption" in kwargs:
+            kwargs["caption"] = _v24_plain(kwargs["caption"])
+        if text_pos and len(args) >= text_pos and isinstance(args[text_pos - 1], str):
+            a = list(args)
+            a[text_pos - 1] = _v24_plain(a[text_pos - 1])
+            args = tuple(a)
+        return await orig(self, *args, **kwargs)
+
+    wrapper._v24_plain_wrapped = True
+    try:
+        setattr(cls, name, wrapper)
+        return True
+    except Exception:
+        return False
+
+
+# buttons ke labels bhi plain (har jagah, chahe label variable se bane ho)
+def _v24_wrap_button(cls):
+    orig = getattr(cls, "__init__", None)
+    if orig is None or getattr(orig, "_v24_plain_wrapped", False):
+        return False
+
+    @_v24_ft.wraps(orig)
+    def init(self, text=None, *a, **k):
+        return orig(self, _v24_plain(text), *a, **k)
+
+    init._v24_plain_wrapped = True
+    try:
+        cls.__init__ = init
+        return True
+    except Exception:
+        return False
+
+
+_V24_WRAPPED = 0
+for _bcls in (_v24_tg.InlineKeyboardButton, _v24_tg.KeyboardButton):
+    try:
+        if _v24_wrap_button(_bcls):
+            _V24_WRAPPED += 1
+    except Exception:
+        pass
+
+for _cls, _methods in (
+    (_v24_tg.Message, (("reply_text", 1), ("edit_text", 1), ("reply_markdown", 1),
+                       ("edit_caption", 1), ("reply_photo", 0))),
+    (_v24_tg.CallbackQuery, (("edit_message_text", 1), ("edit_message_caption", 0))),
+    (_v24_tg.Bot, (("send_message", 2), ("edit_message_text", 1), ("send_document", 0),
+                   ("send_photo", 0), ("send_video", 0), ("edit_message_caption", 0))),
+):
+    for _n, _pos in _methods:
+        try:
+            if _v24_wrap_method(_cls, _n, _pos):
+                _V24_WRAPPED += 1
+        except Exception:
+            pass
+
+
 try:
     _v24_init_ok = True
     logger.info("🐍 PYTHON SNAKE %s loaded — plain screens • find/export • full rebrand", _V24_TAG)

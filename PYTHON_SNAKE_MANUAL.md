@@ -34,6 +34,7 @@
 | Plan buttons | `☁️ 30 ᴍɪɴ — $2` (small-caps) | **plain**: `☁️ 30 min — $2`, `🌥️ 1 hour — $3` … |
 | Home menu | plan/expiry nahi dikhta tha | **live line**: `💎 Plan: trial — 96 min bacha` (ya Plan: 7 Days • 6d 4h bacha) |
 | Purane brand ke nishan | kahin `Spidey / 🕸️` reh gaya tha | 21 jagah **Python Snake / 🐍** — user ko purana naam kahin nahi dikhta |
+| Purane screens (Classic ke andar) | bold + small-caps + 𝙞𝙩𝙖𝙡𝙞𝙘 font mix | **poore bot me plain ASCII font** — small-caps / 𝙗𝙤𝙡𝙙 / ｆｕｌｌｗｉｄth sab automatic plain ho jaate hain |
 | Admin — user dhoondo | `/checkuser` ya list me scroll | **🔍 FIND USER** button + `/find 123456789` ya `/find @username` |
 | Admin — user data | vault me file | **📤 EXPORT USERS** button — ek click me poora users CSV/JSON |
 | Admin — proxy | sirf panel se scan | **`/pscan`** (`/scanproxies`) — kabhi bhi proxy scan chalao |
