@@ -8,6 +8,7 @@
 
 ## 📑 INDEX
 
+0. [v23 me kya naya](#0-v23-me-kya-naya-sabse-latest)
 1. [Sabse pehle — 3 command](#1-sabse-pehle--3-command)
 2. [Sirf 5 minute me pehla result](#2-sirf-5-minute-me-pehla-result)
 3. [Main Menu — har button ka matlab](#3-main-menu--har-button-ka-matlab)
@@ -22,6 +23,24 @@
 12. [Termux tips + VPS deploy](#12-termux-tips--vps-deploy)
 13. [Kya kar sakte ho / kya nahi](#13-kya-kar-sakte-ho--kya-nahi)
 14. [Glossary — shabd samjho](#14-glossary--shabd-samjho)
+
+---
+
+## 0. v23 me kya naya (sabse latest)
+
+| Cheez | Pehle | Ab |
+|---|---|---|
+| Pehli baar `/start` | seedha menu | **maths captcha** solve karo → phir menu (bots se bachne ke liye) |
+| Start ka text | 2 bade promo messages | ek chhota clean message + buttons |
+| Menu | 9+ mixed buttons | **7 buttons**: Auto Dump • Proxy Scrape • Manual Dumping • Redeem • Premium • How to use • Contact |
+| Universal Dorks button | dead tha (click pe kuch nahi) | ab **live** (Engine panel ke andar) |
+| Proxy Scrape button | dead tha | ab **live** — scan + auto-fill + live progress |
+| Manual Dumping | nahi tha | **Classic** (purana poora bot) ya **New Latest** (v23 engine) |
+| Button fonts | kahin small-caps, kahin bold/italic | sab **plain aur same** |
+| Admin panel | purana list | **naya dashboard** — users, keys, live runs, vault, spy, stats, engine, proxy |
+| Admin ko data | sirf file vault me | vault + **activity ping** (kaun kya nikaal raha hai) |
+
+**Nayi commands:** `/menu` (home), `/captcha` (dobara verify), `/spy` (admin mirror ON/OFF), `/classic` (purana poora menu)
 
 ---
 
@@ -97,22 +116,22 @@ Bas. Yahi poora dumping pipeline hai: **Keyword → Dork → URLs → Vulnerable
 
 ## 3. Main Menu — har button ka matlab
 
-v22 me menu **saaf** kar diya gaya hai — sirf wahi buttons jo sach me kaam karte hain.
-Purana poora menu wapas chahiye to `/classic` bhej do.
+Pehli baar `/start` karne par **maths captcha** aata hai (2+3 jaisa). Sahi jawab do →
+verified ho jaoge (dobara nahi poochhega). Admin ko captcha nahi aata.
 
-| # | Button | Kya karta hai | Input chahiye |
-|---|---|---|---|
-| 1 | 🐍 **AUTO DUMP — 1 TAP FULL CHAIN** | Keywords → dorks → URLs → SQLi verify → report → files. Sab automatic. | seed words (text ya `.txt`) |
-| 2 | 🧬 **UNIVERSAL DORK ENGINE** | Aapke keywords padh kar **khud** best dorks banata hai (CC-only nahi) | keywords (text ya `.txt`) |
-| 3 | 🧅 **PROXY SCAN + AUTO-FILL** | Free proxies scrape + verify + pool me daal deta hai | kuch nahi |
-| 4 | 🐍 **PYTHON SNAKE ENGINE ⚡** | Poora engine panel — keyword, dork, parser, SQLi, settings, logo | kuch nahi |
-| 5 | 🔑 **Redeem Key** | License activate | key |
-| 6 | 🍷 **Purchase Premium** | Plan kharidne ka contact | — |
-| 7 | 🚸 **How To Use** | Chhota guide | — |
-| 8 | 🧛 **Contact Owner** | Owner ka contact | — |
-| 9 | 🛑 **Stop / Kill Tasks** | Chal raha kaam turant band | — |
+Uske baad ye 7 buttons milte hain:
 
-> Jo purane 17 duplicate buttons the (purana dork gen, purana parser, purana dump, autopilot, refinery…) wo hide kar diye gaye hain — kaam wahi ab naye pipeline se hota hai. `/classic` se wapas dikh jayenge.
+| Button | Kya karta hai | Input |
+|---|---|---|
+| 🐍 **AUTO DUMP — 1 TAP** | keywords → dorks → URLs → SQLi verify → report + 7 files | seeds (text ya `.txt`) |
+| 🧅 **PROXY SCRAPE + AUTO-FILL** | free proxies scrape → verify → pool me daal deta hai (live progress) | kuch nahi |
+| 🧰 **MANUAL DUMPING** | do option: **Classic** (purana poora bot) ya **New Latest** (v23 engine) | button |
+| 🔑 **REDEEM KEY** | license key activate | key |
+| 🍷 **PREMIUM** | plans dekho / kharido | — |
+| 📖 **HOW TO USE** | chhota guide | — |
+| ☎️ **CONTACT OWNER** | owner ka contact | — |
+
+> Admin ko extra **👑 ADMIN PANEL** button dikhta hai.
 
 ### Hide kiye gaye buttons (`/classic` se wapas)
 
@@ -165,22 +184,22 @@ params, pages (`/api`, `/ajax`, `/admin`, `/panel`, `/checkout`…), extensions,
 - 5,000 / 20,000 / 50,000 / 1,00,000 dorks
 - Purane CC templates waise ke waise hi hain (engine ke andar) — kuch tuta nahi
 
-### 🧠 Keyword Maker
+### 🧠 KEYWORDS (Keyword Maker)
 - **Step 1:** kitne chahiye? → `500` / `5000` / `50000` / `1lakh`
 - **Step 2:** seed words bhejo — comma/newline, ya `.txt`
 - **Output:** exact count ki unique keywords
 
-### 🎯 Dork Generator
+### 🎯 DORKS (Dork Generator)
 - Purane templates se dorks (CC/payment oriented)
 - **Step 1:** count → **Step 2:** keywords
 
-### 🌍 Deep Parser ⚡ (URL nikalne wala engine)
+### 🌍 DEEP PARSER (URL nikalne wala engine)
 - Dorks `.txt` bhejo (ya paste)
 - 22 engines parallel + Wayback CDX + Common Crawl
 - **No-proxy mode bhi kaam karta hai** — proxy na ho to engine khud "safe engines" (Wayback/CC/direct) pe shift ho jata hai, isliye 0 URLs wala problem khatam
 - Output: `V19_All_URLs_*.txt`, `V19_Param_URLs_*.txt`, `V21_CDX_*.txt`
 
-### 🛡️ SQLi Checker (v2 — no fake results)
+### 🛡️ SQLI CHECKER (v2 — no fake results)
 - `?param=` URLs do (paste ya file)
 - 4 level proof, confidence score:
   - `60` = SQL error match
@@ -190,14 +209,14 @@ params, pages (`/api`, `/ajax`, `/admin`, `/panel`, `/checkout`…), extensions,
 - Default minimum `60` — usse neeche kuch report nahi hota
 - Files: `V22_SQLi_VERIFIED_*.txt` + `V22_SQLi_REPORT_*.tsv`
 
-### 🧅 Proxy Scan (v2 — ab sach me kaam karta hai)
+### 🧅 PROXY SCAN (v2 — ab sach me kaam karta hai)
 - `/proxyscan` ya panel ka button
 - 6 lenient check targets (JSON + HTML dono chalte hain) → free proxies bhi pass hote hain
 - Pool file: `data/v22_proxy_pool.json` (24 ghante TTL)
 - Self-healing: jo proxy 2 baar fail hua wo usi run me blacklist, 3 fail pe pool se delete
 - Proxy se page na aaye to URL **direct dobara** check hota hai — isliye asli vuln miss nahi hota
 
-### 🐍 Brand / Logo
+### 🐍 LOGO / BRAND
 - Panel me **🐍 Brand / Logo** ya command `/brand`
 - Logo image + bot branding info (BotFather me kaise set karo)
 
@@ -304,6 +323,9 @@ Mode: Deep  •  Threads: 100  •  Pages: 2  •  Wayback: ON  •  CC: ON  +  
 | `/start` | Main menu |
 | `/v19` ya `/engine` | PYTHON SNAKE panel seedha kholo (button ki zaroorat nahi) |
 | `/brand` ya `/logo` | Logo + branding card |
+| `/menu` ya `/home` | Naya clean home menu |
+| `/captcha` | Dobara verification |
+| `/spy` | (admin) user-data mirror ON/OFF |
 | `/proxyscan` ya `/pxscan` | Proxy scan + auto-fill (v2) |
 | `/proxystat` ya `/px` | Proxy pool ka status |
 | `/proxyclear` ya `/pxclear` | Pool clear |
@@ -410,23 +432,48 @@ Ya menu me: 🧅 **PROXY SCAN + AUTO-FILL**
 
 ---
 
-## 10. Admin panel
+## 10. Admin panel (v23 — naya dashboard)
 
-`/admin` se khulta hai. Sabse kaam ki cheezein:
+`/admin` bhejo, ya home menu me **👑 ADMIN PANEL** dabao. 13 buttons ka control room:
 
-| Button | Kab |
-|---|---|
-| 🔑 Generate Key | User ko access dena |
-| 📛 Active Users | Kaun kaun hai |
-| 📣 Broadcast | Sabko update bhejna |
-| ☢️ FORCE KILL ALL | Kuch atak gaya ho |
-| 🗂️ Get Bot File | **Backup** — apni file download kar lo (bahut kaam aata hai) |
-| 🔄 Scrape & Validate | Proxy pool bharo |
-| 👁️ Live Feed | Kaun kya chala raha hai |
-| ⚙️ VPS & Engine Settings | Threads/mode |
-| 📂 User Files Vault | Kisi user ki file dekho |
+### 📊 DASHBOARD
+Ek nazar me: total users, 24h active, licensed, banned, keys (free/total), proxy pool,
+live runs, aur aaj ka kaam (runs • URLs • vulns) + spy status.
 
-**💡 Golden rule:** har update ke pehle `🗂️ Get Bot File` se backup le lo. Kuch bhi ho, wapas laga sakte ho.
+### 👥 USERS
+- Sab users list (last seen ke hisaab se), page badal sakte ho
+- Kisi user pe tap → **USER DETAIL**: naam, username, ID, plan + kitna time bacha,
+  ban status, last seen, starts, runs, URLs, vulns
+- Wahin se: **+1 / +7 / +30 din**, **plan dena**, **ban/unban**, **uski files**
+
+### 🔑 KEYS
+Nayi key generate karo (plan chuno) ya list/revoke karo.
+
+### 🏃 LIVE RUNS
+Kaun abhi chala raha hai + har user ka **🛑 STOP** button + **STOP ALL**.
+
+### 📂 USER VAULT
+Kisi bhi user ki upload/download ki hui **asli file** yahin se grab karo.
+(Automatic: har outgoing file vault me save hoti hai + admin ko ping jaata hai.)
+
+### 🕵️ SPY ON/OFF
+Jab ON hota hai: koi user file banaye/upload kare to admin ko turant notification +
+"Grab File" button. Activity summary bhi aata hai (kitne URLs, kitne vulns).
+Band karna ho to `/spy` ya yeh button.
+
+### 📈 STATS
+Aaj ka + total: runs, URLs, vulns. Top users ki leaderboard.
+
+### 🧅 PROXIES
+Pool size, best speed, scan + refill, clear.
+
+### ⚙️ ENGINE
+Global default: mode (fast/balanced/deep/max), threads, pages.
+
+### 📣 BROADCAST / 🚫 BANS / ☢️ KILL ALL
+Sabko message, ban list, aur saare tasks ek saath kill.
+
+**💡 Golden rule:** har update se pehle `🗂️ Get Bot File` (classic menu me) se backup le lo.
 
 ---
 
@@ -551,4 +598,4 @@ Aur Telegram me `/ping` — bot zinda hai ya nahi, turant pata chal jayega.
 
 ---
 
-*Manual version: PYTHON SNAKE (v22) • Made for Termux-first usage*
+*Manual version: PYTHON SNAKE (v23) • Made for Termux-first usage*
