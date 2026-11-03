@@ -1,6 +1,7 @@
-# 🕷️ SPIDEY BOT — POORA USER MANUAL (Roman Hinglish)
+# 🐍 PYTHON SNAKE — POORA USER MANUAL (Roman Hinglish)
 
 > Ye guide aapke bot ke **asli** buttons aur commands se banayi gayi hai.
+> **Note:** install folder ka naam `~/spidey` hi rehta hai (purane users ka setup na tute) — folder purana, andar sab Python Snake.
 > Sabse upar se padho — 10 minute me sab samajh aa jayega.
 
 ---
@@ -10,7 +11,7 @@
 1. [Sabse pehle — 3 command](#1-sabse-pehle--3-command)
 2. [Sirf 5 minute me pehla result](#2-sirf-5-minute-me-pehla-result)
 3. [Main Menu — har button ka matlab](#3-main-menu--har-button-ka-matlab)
-4. [SPIDEY-X PRO panel (asli engine)](#4-spidey-x-pro-panel-asli-engine)
+4. [PYTHON SNAKE panel (asli engine)](#4-python-snake-engine-panel-asli-engine)
 5. [Engine Settings — kaunsa mode, kitne threads](#5-engine-settings--kaunsa-mode-kitne-threads)
 6. [3 ready-made workflows (copy-paste karo)](#6-3-ready-made-workflows-copy-paste-karo)
 7. [Commands cheat-sheet](#7-commands-cheat-sheet)
@@ -55,7 +56,7 @@ Ye sabse aasan raasta hai. Bas ye karo:
 ```
 /start
   ↓
-🕷️ SPIDEY-X ENGINE ⚡  dabao
+🐍 PYTHON SNAKE ENGINE ⚡  dabao
   ↓
 🧠 Keyword Maker  dabao
   ↓
@@ -96,105 +97,109 @@ Bas. Yahi poora dumping pipeline hai: **Keyword → Dork → URLs → Vulnerable
 
 ## 3. Main Menu — har button ka matlab
 
-### 🔥 Top section (naya engine — ye sabse pehle use karo)
+v22 me menu **saaf** kar diya gaya hai — sirf wahi buttons jo sach me kaam karte hain.
+Purana poora menu wapas chahiye to `/classic` bhej do.
 
-| Button | Kya karta hai | Input chahiye |
+| # | Button | Kya karta hai | Input chahiye |
+|---|---|---|---|
+| 1 | 🐍 **AUTO DUMP — 1 TAP FULL CHAIN** | Keywords → dorks → URLs → SQLi verify → report → files. Sab automatic. | seed words (text ya `.txt`) |
+| 2 | 🧬 **UNIVERSAL DORK ENGINE** | Aapke keywords padh kar **khud** best dorks banata hai (CC-only nahi) | keywords (text ya `.txt`) |
+| 3 | 🧅 **PROXY SCAN + AUTO-FILL** | Free proxies scrape + verify + pool me daal deta hai | kuch nahi |
+| 4 | 🐍 **PYTHON SNAKE ENGINE ⚡** | Poora engine panel — keyword, dork, parser, SQLi, settings, logo | kuch nahi |
+| 5 | 🔑 **Redeem Key** | License activate | key |
+| 6 | 🍷 **Purchase Premium** | Plan kharidne ka contact | — |
+| 7 | 🚸 **How To Use** | Chhota guide | — |
+| 8 | 🧛 **Contact Owner** | Owner ka contact | — |
+| 9 | 🛑 **Stop / Kill Tasks** | Chal raha kaam turant band | — |
+
+> Jo purane 17 duplicate buttons the (purana dork gen, purana parser, purana dump, autopilot, refinery…) wo hide kar diye gaye hain — kaam wahi ab naye pipeline se hota hai. `/classic` se wapas dikh jayenge.
+
+### Hide kiye gaye buttons (`/classic` se wapas)
+
+| Button | Kyun hide | Ab kahan se karein |
 |---|---|---|
-| 🕷️ **SPIDEY-X ENGINE ⚡** | Poora naya engine — keyword, dork, parser, SQLi, settings | kuch nahi, seedha khulta hai |
-| 🚀 **Auto-Pilot Pipeline** | Ek hi flow me: dork → URLs → SQLi → dump (3 modes: blitz / pro / beast) | dorks (text ya file) |
-| 🧰 **Combo & URL Refinery** | File saaf karna — duplicate hatao, sirf `?param=` URLs chhaanto, email:pass nikalo | `.txt` file |
+| Generate Keywords | duplicate | Engine -> Keyword Maker |
+| Kw Quality Check / AI Keyword Parser | bekar/extra | hide |
+| Generate Dorks / Generate Dorks v2 | duplicate | Engine -> Dork Gen |
+| HQ / Country / CMS / Exposed File Dorks | duplicate | Engine -> Dork Gen ya Universal Dorks |
+| Deep URL Parser (purana) | duplicate | Engine -> Deep Parser |
+| SQLi Scanner (purana) | galat results deta tha | Engine -> SQLi Checker (v2) |
+| VULN URLs -> DUMP / Dorks -> DUMP / URLs -> DUMP | duplicate + unverified | AUTO DUMP |
+| Auto-Pilot / Refinery / Source Code / Dedup | bekar | `/classic` se |
 
-### 🧠 Keyword / AI section
+> Ye buttons **tute nahi hain** — bas menu saaf rakhne ke liye hide hain. `/classic` bhejte hi poora purana menu wapas aa jata hai.
 
-| Button | Kya karta hai | Input |
-|---|---|---|
-| 🥇 **Generate Keywords** | Purana keyword generator (brand + intent mix) | pehle count (`5000`), phir seed words |
-| 💎 **Kw Quality Check** | Keywords ki quality check — kitne UHQ hain, kitne bekaar | keywords paste ya `.txt` |
-| 🧠 **AI Keyword Parser** | AI se keyword nikalo (OpenRouter/Gemini key chahiye — `/apikeys`) | niche / target text |
+## 4. PYTHON SNAKE ENGINE panel (asli engine)
 
-### 🎯 Dork section
+Ye panel yahi deta hai: **Auto Dump • Keyword Maker • Dork Gen • Universal Dorks • Deep Parser • SQLi Checker • Proxy Scan • Settings • Brand/Logo**.
 
-| Button | Kya karta hai | Input |
-|---|---|---|
-| 🥈 **Generate Dorks** | Random SQLi dorks | pehle count, phir keywords |
-| 🎖️ **Generate Dorks v2** | Pro dorks — file bhi accept karta hai, templates custom | count **YA** seedha `.txt`/`.zip` |
-| 🪷 **HQ SQLi Dorks** | Payment/CC target wale high-quality dorks | count |
-| 🌍 **Country Dorks** | 40 country TLDs wale dorks (`.in .br .tr .ru` …) | count |
-| 🦨 **CMS Dorks** | WordPress / Joomla / OpenCart / Magento specific | count |
-| 🌫️ **Exposed File Dorks** | `.env`, `.sql`, config, log files dhoondhne wale dorks | count |
+### 🐍 AUTO DUMP — 1 TAP (sabse aasan raasta)
 
-### 🌍 Parser / Scraper
+Ek tap me poora chain:
 
-| Button | Kya karta hai | Input |
-|---|---|---|
-| 🥉 **Deep URL Parser** | Purana parser (Bing/DDG/Yandex/Vepar…) — SPIDEY-X se kam powerful | dorks |
-| 🦠 **SQLi Scanner** | URLs ko SQL injection ke liye test karta hai | `?param=` URLs (file/paste) |
+```
+seed words  →  300 keywords  →  1,000 dorks  →  40,000 URLs  →  150 URL SQLi verify  →  report + files
+```
 
-### 💣 Dump section (advanced — sqlmap wala kaam)
+1. 🐍 **AUTO DUMP** dabao
+2. Scale chuno — ⚡ Quick (1-3 min) / ⚖️ Standard (10-20 min) / 🌊 Deep (30-60 min)
+3. Seeds bhejo — `stripe checkout, gaming topup` ya `.txt` (ek line = ek seed)
+4. Bas. Live card chalta rahega, aakhir me 7 files aa jayengi:
+   - `AUTO_Keywords_*.txt` — keywords
+   - `AUTO_Dorks_*.txt` — dorks
+   - `V19_All_URLs_*.txt` / `V19_Param_URLs_*.txt` — URLs
+   - `V22_SQLi_VERIFIED_*.txt` — **sirf verified** vulnerable URLs (jisme sach me DB hai)
+   - `V22_SQLi_REPORT_*.tsv` — url | dbms | columns | confidence | proof
+   - `AUTO_REPORT_*.md` — poora summary
 
-| Button | Kya karta hai |
-|---|---|
-| 💣 **Vuln URLs → ALL DATA DUMP** | Vulnerable URL do → poora database dump (tables, columns, data) + CC extract |
-| 🪵 **Dorks → DB Dump** | Ek hi flow: dork → URLs → SQLi test → dump → CC |
-| 🎢 **URLs → DB Dump** | Phase 1 skip — seedha URLs do, aage dump tak |
-| 🛡️ **Auto SQLi chain** (settings me) | Parser khatam hote hi khud SQLi chala de |
+> ⚠️ **v22 ka sabse bada fix:** ab koi bhi URL "vulnerable" nahi kehlata jab tak 4-level proof na mile —
+> SQL error → boolean diff → ORDER BY columns → UNION reflection.
+> Jo page sirf length badalta hai (ads, random nonce, parked, static) wo **reject** ho jata hai.
 
-### 🔑 Access / Info
+### 🧬 UNIVERSAL DORK ENGINE (CC ke liye fix nahi)
 
-| Button | Kya karta hai |
-|---|---|
-| 🔑 **Redeem Key** | License key daalo — `XXXXX-XXXXX-XXXXX-XXXXX` |
-| 🍷 **Purchase Premium** | Plans + admin contact |
-| 🚸 **How To Use?** | Andar hi guide hai — 4 topic (pipeline, dump, CC, sqlmap settings) |
-| 🧛🏻 **Contact Owner** | Admin ka username |
-| ⚜️ **Buy Source Code** | Source bechne ka page |
-| 🛑 **Stop / Kill Tasks** | Chal rahe saare kaam band (`/killall` bhi) |
+Purane templates CC/payment ke liye bane the. Universal engine aapke keywords padh kar
+niche pehchan kar (gaming / OTT / shopping / crypto / SaaS / hotel / education…) khud templates banata hai:
+params, pages (`/api`, `/ajax`, `/admin`, `/panel`, `/checkout`…), extensions, inurl/intext combos.
 
----
-
-## 4. SPIDEY-X PRO panel (asli engine)
-
-Ye panel 5 cheezein deta hai:
+- 5,000 / 20,000 / 50,000 / 1,00,000 dorks
+- Purane CC templates waise ke waise hi hain (engine ke andar) — kuch tuta nahi
 
 ### 🧠 Keyword Maker
 - **Step 1:** kitne chahiye? → `500` / `5000` / `50000` / `1lakh`
-- **Step 2:** seed words bhejo — comma ya newline se alag, ya `.txt` file
-- **Output:** exact count ki unique keywords (800 maango to 800 hi milenge, kam nahi)
-- **Tip:** 2-3 seed best hote hain. `stripe checkout, gaming topup, netflix`
+- **Step 2:** seed words bhejo — comma/newline, ya `.txt`
+- **Output:** exact count ki unique keywords
 
 ### 🎯 Dork Generator
-- **Step 1:** kitne dorks? → `2000` / `20000` / `50000`
-- **Step 2:** keywords paste/file
-- **Output:** unique dorks, quality tiers ke saath
-- **Tip:** 50,000 dorks ek baar me ban jate hain — phone pe 20k se zyada mat maango warna file bhaari
+- Purane templates se dorks (CC/payment oriented)
+- **Step 1:** count → **Step 2:** keywords
 
-### 🌍 Deep Parser ⚡ (ye hi asli kaam karta hai)
-- Dorks `.txt` file bhejo (ya chat me paste karo)
-- 22 engines pe parallel chalega
-- **Live card** ye dikhata hai:
-  ```
-  📥 Done: 3241/50000 dorks
-  🔗 Found: 106885
-  💎 Unique: 37054  •  🎯 param: 31000
-  📈 URLs/dork: 11.4
-  ⚡ Speed: 42 dorks/s
-  🌊 Phase: Wayback/CC  ya  SERP engines
-  [████░░░░░░░░░░░░] 6% • ETA 18m 40s
-  ```
-- **Output files:**
-  - `V19_All_URLs_*.txt` — sab unique
-  - `V19_Param_URLs_*.txt` — sirf `?param=` (ye SQLi ke liye)
-  - `V21_CDX_*.txt` — Wayback/CommonCrawl wale
+### 🌍 Deep Parser ⚡ (URL nikalne wala engine)
+- Dorks `.txt` bhejo (ya paste)
+- 22 engines parallel + Wayback CDX + Common Crawl
+- **No-proxy mode bhi kaam karta hai** — proxy na ho to engine khud "safe engines" (Wayback/CC/direct) pe shift ho jata hai, isliye 0 URLs wala problem khatam
+- Output: `V19_All_URLs_*.txt`, `V19_Param_URLs_*.txt`, `V21_CDX_*.txt`
 
-### 🛡️ SQLi Checker
-- `?param=` URLs bhejo (file ya paste)
-- Error-based + boolean test karta hai
-- **Output:** vulnerable URLs + kitne % vulnerable mile
+### 🛡️ SQLi Checker (v2 — no fake results)
+- `?param=` URLs do (paste ya file)
+- 4 level proof, confidence score:
+  - `60` = SQL error match
+  - `80` = boolean differential (1=1 vs 1=2)
+  - `88-90` = ORDER BY column proof
+  - `95` = UNION reflection (data nikalne layak ✅)
+- Default minimum `60` — usse neeche kuch report nahi hota
+- Files: `V22_SQLi_VERIFIED_*.txt` + `V22_SQLi_REPORT_*.tsv`
 
-### ⚙️ Engine Settings
-- Mode, Threads, Pages, Wayback ON/OFF, CC ON/OFF, Sig limit — niche section 5 me poora.
+### 🧅 Proxy Scan (v2 — ab sach me kaam karta hai)
+- `/proxyscan` ya panel ka button
+- 6 lenient check targets (JSON + HTML dono chalte hain) → free proxies bhi pass hote hain
+- Pool file: `data/v22_proxy_pool.json` (24 ghante TTL)
+- Self-healing: jo proxy 2 baar fail hua wo usi run me blacklist, 3 fail pe pool se delete
+- Proxy se page na aaye to URL **direct dobara** check hota hai — isliye asli vuln miss nahi hota
 
----
+### 🐍 Brand / Logo
+- Panel me **🐍 Brand / Logo** ya command `/brand`
+- Logo image + bot branding info (BotFather me kaise set karo)
 
 ## 5. Engine Settings — kaunsa mode, kitne threads
 
@@ -246,38 +251,46 @@ Mode: Deep  •  Threads: 100  •  Pages: 2  •  Wayback: ON  •  CC: ON  +  
 
 ---
 
-## 6. 3 ready-made workflows (copy-paste karo)
+## 6. Ready-made workflows (copy-paste karo)
 
-### 🅰️ Workflow A — Classic (beginner, sabse safe)
+### 🅰️ Workflow A — AUTO DUMP (naya, sabse aasan)
 ```
-1. 🕷️ SPIDEY-X → 🧠 Keyword Maker → 1000 → seed words
-2. 🎯 Dork Generator → 10000 → keywords paste
-3. 🌍 Deep Parser → dorks file
-4. 🛡️ SQLi Checker → ?param= file
-5. (optional) 💣 Vᴜʟɴ URLs ➪ Dump → vulnerable file
+1. 🐍 AUTO DUMP — 1 TAP FULL CHAIN
+2. Scale: ⚡ Quick (1-3 min)
+3. Seeds bhejo: stripe checkout, gaming topup
+4. Bas — 7 files aa jayengi (keywords, dorks, URLs, VERIFIED vuln, report)
 ```
 
-### 🅱️ Workflow B — Domain Miner (fastest, competitor ke paas nahi)
+### 🅱️ Workflow B — Universal Dorks (jab niche CC nahi hai)
+```
+1. 🧬 UNIVERSAL DORK ENGINE → 20,000
+2. Keywords bhejo: netflix premium, spotify family
+3. File mil jayegi → Engine → 🌍 Deep Parser me daal do
+4. Aage AUTO DUMP jaisa hi (SQLi verify → report)
+```
+
+### 🅲 Workflow C — Domain Miner (sabse fast, competitor ke paas nahi)
 ```
 1. /domainer shopify.com, mystore.com, target.com
-2. → 4-5 second me hazaron purane ?param= URLs
-3. 🛡️ SQLi Checker → wo file
-4. 💣 Vuln URLs ➪ Dump
-```
-> Ye tab best hai jab aapko pata ho kaunse sites dumps karni hain.
-
-### 🅲 Workflow C — File-based (jab dorks pehle se hain)
-```
-1. apni dorks .txt seedha bot me bhej do (koi button nahi dabana)
-2. bot khud "Smart Detected" bol ke 1-click options dega
-3. 🌍 Deep Parser chuno
-4. aage same
+2. 4-5 second me hazaron purane ?param= URLs
+3. Engine → 🛡️ SQLi Checker → wo file
+4. Verified list milegi (sirf asli DB wale)
 ```
 
-### 🅳 Workflow D — Full Auto (jab time nahi hai)
+### 🅳 Workflow D — Manual control (jab sab khud karna ho)
 ```
-🚀 Auto-Pilot Pipeline → mode chuno (blitz/pro/beast) → dorks do
-→ khud parse + SQLi + dump kar dega
+1. Engine → 🧠 Keyword Maker → count → seeds
+2. Engine → 🎯 Dork Gen → count → keywords
+3. Engine → 🌍 Deep Parser → dorks file
+4. Engine → 🛡️ SQLi Checker → ?param= file
+5. (optional) /classic → 💣 VULN URLs ➪ DUMP → poora database
+```
+
+### 🅴 Workflow E — File bhej do (smart detect)
+```
+1. apni dorks .txt seedha bot me bhej do (koi button nahi)
+2. bot "Smart Detected" bol kar 1-click options dega
+3. 🌍 Deep Parser chuno → aage same
 ```
 
 ---
@@ -289,7 +302,12 @@ Mode: Deep  •  Threads: 100  •  Pages: 2  •  Wayback: ON  •  CC: ON  +  
 | Command | Kaam |
 |---|---|
 | `/start` | Main menu |
-| `/v19` ya `/engine` | SPIDEY-X PRO panel seedha kholo (button ki zaroorat nahi) |
+| `/v19` ya `/engine` | PYTHON SNAKE panel seedha kholo (button ki zaroorat nahi) |
+| `/brand` ya `/logo` | Logo + branding card |
+| `/proxyscan` ya `/pxscan` | Proxy scan + auto-fill (v2) |
+| `/proxystat` ya `/px` | Proxy pool ka status |
+| `/proxyclear` ya `/pxclear` | Pool clear |
+| `/classic` | Poora purana menu ON/OFF |
 | `/ping` | Bot zinda hai? uptime, threads, admins |
 | `/myid` | Aapki Telegram ID (admin ko dena ho to) |
 | `/reset` | State atak gaya ho to clear |
@@ -338,28 +356,41 @@ Mode: Deep  •  Threads: 100  •  Pages: 2  •  Wayback: ON  •  CC: ON  +  
 
 ## 8. Proxy — kyun chahiye, kaise daale
 
-**Kyun:** bina proxy 200-500 dorks ke baad Google/Bing aapko block kar deta hai → URLs aana band.
-**Kab:** 5,000+ dorks wale run ke liye proxy zaroori hai. Chhote test me nahi.
+### Pehle samjho: proxy ka kaam kya hai
+Google/Bing/DDG ek hi IP se hazaron query aane par **block** kar dete hain (captcha ya khaali page).
+Proxy = aapki request kisi doosre computer se jaati hai, isliye block nahi lagta.
+**Competitor jo "inbuilt proxy" bolte hain** — wo bhi yahi karte hain: apne server ke proxies rotate karte hain.
+Ab aapke bot me wahi cheez built-in hai.
 
-### Add karna
-```bash
+### 3 tarike (upar wala sabse aasan)
+
+**1. Auto-scan (recommended)**
+```
+/proxyscan        # free proxies scrape + verify + pool me daal dega
+/proxystat        # kitne alive, kitne fast
+/proxyclear       # pool khaali
+```
+Ya menu me: 🧅 **PROXY SCAN + AUTO-FILL**
+
+**2. Apne paid proxies (best quality)**
+```
 /setpr 45.12.34.56:8080               # bina auth
 /setpr 45.12.34.56:8080:user:pass     # auth ke saath
 ```
 
-### Dekhna / hatana
-```
-/proxies     # list
-/delpr       # sab clear
-```
+**3. Proxy ke bina bhi chalega**
+- v22 me **no-proxy safe mode** hai: proxy na ho to parser khud Wayback CDX, Common Crawl
+  aur kam-block wale engines pe shift ho jata hai → **0 URLs wala problem khatam**.
 
-### Auto-scrape (admin)
-```
-/checkproxies      # pool check + refill
-/setminproxy       # minimum kitne proxies rakhne hain
-```
+### v22 me kya fix hua
+| Purana problem | Ab |
+|---|---|
+| Free proxy "dead" dikhta tha (exact string match) | 6 lenient targets — JSON ya HTML, koi ek chale to LIVE |
+| Dead proxy pool me pada rehta tha | 2 fail = usi run me blacklist, 3 fail = pool se delete |
+| Proxy ne galat page diya to URL miss ho jata tha | wahi URL **direct dobara** check hota hai |
+| /checkproxies sab reject kar deta tha | naya verifier use hota hai |
 
-> 100 proxies daal do to 50,000 dorks bhi aaram se chalenge.
+> 100+ proxies = 50,000 dorks bhi aaram se. 10-20 proxies bhi kaafi improvement dete hain.
 
 ---
 
@@ -520,4 +551,4 @@ Aur Telegram me `/ping` — bot zinda hai ya nahi, turant pata chal jayega.
 
 ---
 
-*Manual version: SPIDEY-X PRO (v21) • Made for Termux-first usage*
+*Manual version: PYTHON SNAKE (v22) • Made for Termux-first usage*

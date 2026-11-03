@@ -165,12 +165,14 @@ cat > manual.sh <<'EOF'
 set -u
 cd "$(dirname "$0")" || exit 1
 MANUAL_FILE=""
-for f in MANUAL.md SPIDEY_BOT_MANUAL.md manual.md; do
+for f in MANUAL.md PYTHON_SNAKE_MANUAL.md SPIDEY_BOT_MANUAL.md manual.md; do
   [ -f "$f" ] && MANUAL_FILE="$f" && break
 done
 if [ -z "$MANUAL_FILE" ]; then
   echo "⬇️  Manual download kar raha hoon..."
-  if curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/SPIDEY_BOT_MANUAL.md" -o MANUAL.md; then
+  BASE="https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot"
+  if curl -fsSL "$BASE/PYTHON_SNAKE_MANUAL.md" -o MANUAL.md \
+     || curl -fsSL "$BASE/SPIDEY_BOT_MANUAL.md" -o MANUAL.md; then
     MANUAL_FILE="MANUAL.md"
   else
     echo "❌ Download fail — internet check karo"
