@@ -4173,10 +4173,10 @@ PARSER_SPINNER_FRAMES = [
     "🔬︎ *Sᴄᴀɴɴɪɴɢ ᴛʜᴇ ᴡᴇʙ...*\n`🌑 🌒 🌓 🌔 🌕 🌖 🌗`",
 ]
 BOOT_BANNERS = [
-    "```\n✯ 𝙋𝙮𝙩𝙝𝙤𝙣 𝙎𝙣𝙖𝙠𝙚 🐍 — 𝙇𝙤𝙫𝙚𝙙 𝙗𝙮 𝙣𝙤𝙣𝙚..! ✯\n```",
+    "```\n✯ 𝙎𝙥𝙞𝙙𝙚𝙮 🐍 — 𝙇𝙤𝙫𝙚𝙙 𝙗𝙮 𝙣𝙤𝙣𝙚..! ✯\n```",
     "```\n𖣔 𝙋𝙮𝙩𝙝𝙤𝙣 𝙎𝙣𝙖𝙠𝙚 🐍 — 𝙂𝙤𝙙'𝙎 𝘿𝙚𝙫𝙤𝙩𝙚𝙚..! 𖣔\n```",
     "```\n𑁍 𝙋𝙮𝙩𝙝𝙤𝙣 𝙎𝙣𝙖𝙠𝙚 🐍 — 𝙈𝙖𝙨𝙩𝙚𝙧 𝘿𝙪𝙢𝙥𝙚𝙧..! 𑁍\n```",
-    "```\n❁ 𝙋𝙮𝙩𝙝𝙤𝙣 𝙎𝙣𝙖𝙠𝙚 🐍 — 𝙐𝙡𝙩𝙞𝙢𝙖𝙩𝙚 𝙬𝙖𝙧𝙧𝙞𝙤𝙧..! ❁\n```",
+    "```\n❁ 𝙎𝙥𝙞𝙙𝙚𝙮 🐍 — 𝙐𝙡𝙩𝙞𝙢𝙖𝙩𝙚 𝙬𝙖𝙧𝙧𝙞𝙤𝙧..! ❁\n```",
     "```\n❀ 𝙋𝙮𝙩𝙝𝙤𝙣 𝙎𝙣𝙖𝙠𝙚 🐍 — 𝙒𝙞𝙩𝙝 𝙔𝙤𝙪𝙝 𝙁𝙤𝙧 𝙔𝙤𝙪𝙝..! ❀\n```",
 ]
 
@@ -4398,7 +4398,7 @@ def _sqlopts_text(uid: int) -> str:
     bulk_tag   = "✅ ᴏɴ" if o["bulk"] else "❌ ᴏғғ"
     return (
         "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
-        "🐍 𝙋𝙮𝙩𝙝𝙤𝙣 𝙎𝙣𝙖𝙠𝙚 ✦ 𝙐𝙡𝙩𝙞𝙢𝙖𝙩𝙚 𝙎𝙦𝙡-𝙈𝙖𝙥\n"
+        "🐍 𝙎𝙥𝙞𝙙𝙚𝙮 ✦ 𝙐𝙡𝙩𝙞𝙢𝙖𝙩𝙚 𝙎𝙦𝙡-𝙈𝙖𝙥\n"
         "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
         f"🥇  *Lᴇᴠᴇʟ*      ➪  `{o['level']}`  _(1-5, higher=deeper)_.\n"
         f"📈  *Rɪsᴋ*       ➪  `{o['risk']}`   _(1-3, higher=heavier)_.\n"
@@ -4461,7 +4461,7 @@ def access_denied_text():
         "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
         "⛔  𝘼𝙘𝙘𝙚𝙨𝙨 𝘿𝙚𝙣𝙞𝙚𝙙  ⛔\n"
         "✿︎━━━━━━━━━━━━━━━━━━━━✿\n︎\n"
-        "🐍 Pʏᴛʜᴏɴ Sɴᴀᴋᴇ ɪs ᴀ ᴜʟᴛɪᴍᴀᴛᴇ Dᴜᴍᴘᴇʀ.\n"
+        "🐍 Sᴘɪᴅᴇʏ ɪs ᴀ ᴜʟᴛɪᴍᴀᴛᴇ Dᴜᴍᴘᴇʀ.\n"
         "🧛🏻 Cᴏɴᴛᴀᴄᴛ Aᴅᴍɪɴ & Pᴜʀᴄʜᴀsᴇ Lɪᴄᴇɴsᴇ ᴋᴇʏ.\n"
         "✿︎━━━━━━━━━━━━━━━━━━━━✿\n︎"
         "🏖️ Pʟᴀɴs & Pʀɪᴄɪɴɢ:\n"
@@ -4547,7 +4547,7 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
         f"{banner}"
         "✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n"
-        "»» 🐍 Wʜᴀᴛ Cᴀɴ Pʏᴛʜᴏɴ Sɴᴀᴋᴇ Dᴏ?\n\n"
+        "»» 🕸️ Wʜᴀᴛ Cᴀɴ Sᴘɪᴅᴇʏ Dᴏ?\n\n"
         "🥇︎ *Gᴇɴ Kᴇʏᴡᴏʀᴅs*    ➪  Uᴘ Tᴏ *1,000,000* UHQ Kᴇʏᴡᴏʀᴅs.\n"
         "🥈︎ *Gᴇɴ Dᴏʀᴋs*       ➪  Uᴘ Tᴏ *1,000,000* Dᴏʀᴋs.\n"
         "🥉 *Dᴇᴇᴘ Pᴀʀsᴇʀ*    ➪  DDGS + Bɪɴɢ Dᴜᴀʟ-Eɴɢɪɴᴇ.\n"
@@ -4940,7 +4940,7 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     bans  = len(banned_users)
     await update.message.reply_text(
         "︎✿︎━━━━━━━━━━━━━━━━━━━━✿︎︎\n"
-        "🧛🏻 𝘼𝙙𝙢𝙞𝙣 𝙋𝙖𝙣𝙚𝙡 — 𝙋𝙮𝙩𝙝𝙤𝙣 𝙎𝙣𝙖𝙠𝙚 v1.0\n"
+        "🧛🏻 𝘼𝙙𝙢𝙞𝙣 𝙋𝙖𝙣𝙚𝙡 — 𝙎𝙥𝙞𝙙𝙚𝙮 v1.0\n"
         "︎✿︎━━━━━━━━━━━━━━━━━━━━✿︎︎\n\n"
         f"🆔 Yᴏᴜʀ Iᴅ: `{user_id}`\n"
         f"🚻︎ Tᴏᴛᴀʟ Usᴇʀs: `{total_users}` | Aᴄᴛɪᴠᴇ: `{active_users}`\n"
@@ -5198,7 +5198,7 @@ async def genkey_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"🔑 Key: `{key}`\n"
         f"{emoji} Pʟᴀɴ: *{label}*\n"
         f"📅 Cʀᴇᴀᴛᴇᴅ: `{datetime.now().strftime('%Y-%m-%d %H:%M')}`\n\n"
-        f"Eɴᴊᴏʏ Pʏᴛʜᴏɴ Sɴᴀᴋᴇ's 🐍 Aᴜᴛᴏᴍᴀᴛɪᴏɴ",
+        f"Eɴᴊᴏʏ Sᴘɪᴅᴇʏ's 🐍 Aᴜᴛᴏᴍᴀᴛɪᴏɴ",
         parse_mode=ParseMode.MARKDOWN,
     )
     return MENU
@@ -5791,7 +5791,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not is_admin(user_id):
             await query.answer("❌ Uɴᴀᴜᴛʜᴏʀɪᴢᴇᴅ", show_alert=True)
             return MENU
-        lines = ["# Pʏᴛʜᴏɴ Sɴᴀᴋᴇ 🐍 Bot — All Users Export", f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ""]
+        lines = ["# Sᴘɪᴅᴇʏ 🐍 Bot — All Users Export", f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ""]
         lines.append(f"❓ Tᴏᴛᴀʟ Uɴɪǫᴜᴇ Usᴇʀs: {len(all_user_ids)}")
         lines.append(f"🍷 Aᴄᴛɪᴠᴇ Lɪᴄᴇɴsᴇᴅ: {sum(1 for i in authorized_users.values() if datetime.now() < i['expires'])}")
         lines.append(f"🚫 Bᴀɴɴᴇᴅ: {len(banned_users)}")
@@ -6072,7 +6072,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "︎🛰️ 𝙎𝙚𝙧𝙫𝙚𝙧 𝙄𝙣𝙛𝙤\n"
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
             f"🐍 Pʏᴛʜᴏɴ: `{py_ver}`\n"
-            f"🐍 Bᴏᴛ RAM: `{mem_mb:.1f} MB`\n"
+            f"🕸️ Bᴏᴛ RAM: `{mem_mb:.1f} MB`\n"
             f"🖥️ Sʏsᴛᴇᴍ RAM: `{sys_mem_used:.0f} / {sys_mem_total:.0f} MB`\n"
             f"🗄️ CPU: `{cpu_pct:.1f}%`\n"
             f"🧤 Aᴄᴛɪᴠᴇ Tᴀsᴋs: `{active_tasks}`\n"
@@ -6104,7 +6104,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 document=io.BytesIO(content),
                 filename=f"PythonSnake_bot_main_{ts}.py",
                 caption=(
-                    f"🐍 *Pʏᴛʜᴏɴ Sɴᴀᴋᴇ Bᴏᴛ — Pʏᴛʜᴏɴ Sɴᴀᴋᴇ.py*\n"
+                    f"🐍 *Sᴘɪᴅᴇʏ Bᴏᴛ — Sᴘɪᴅᴇʏ.py*\n"
                     f"🖊️ `{lines:,}` lines — `{size} KB`\n"
                     f"⏳ `{datetime.now().strftime('%Y-%m-%d %H:%M')}`"
                 ),
@@ -6274,7 +6274,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         cms_list = ", ".join(CMS_DORKS.keys())
         await query.edit_message_text(
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n"
-            "🐍 𝘾𝙈𝙎-𝙎𝙥𝙚𝙘𝙞𝙛𝙞𝙚𝙙 𝘿𝙤𝙧𝙠𝙨\n"
+            "🕸️ 𝘾𝙈𝙎-𝙎𝙥𝙚𝙘𝙞𝙛𝙞𝙚𝙙 𝘿𝙤𝙧𝙠𝙨\n"
             "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
             f"🎯 CMS Tᴀʀɢᴇᴛʟɪsᴛ: `{cms_list}`\n\n"
             "_Eᴀᴄʜ CMS Hᴀs Uɴɪǫᴜᴇ SQLi-Pʀᴏɴᴇ URL Pᴀᴛᴛᴇʀɴs._\n\n"
@@ -7487,7 +7487,7 @@ async def _run_sqli(update: Update, context: ContextTypes.DEFAULT_TYPE, urls: li
         f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n"
         f"🐊︎ 𝙎𝙌𝙇𝙄 𝙎𝙘𝙖𝙣𝙣𝙚𝙧 — 𝙎𝙩𝙖𝙧𝙩𝙞𝙣𝙜\n"
         f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
-        f"🐍 URLs Tᴏ Tᴇsᴛ: `{total:,}`\n"
+        f"🕸️ URLs Tᴏ Tᴇsᴛ: `{total:,}`\n"
         f"⚙️ Pᴀʏʟᴏᴀᴅs: `{len(SQLI_PAYLOADS)}` (error + UNION)\n\n"
         f"`[░░░░░░░░░░░░░░░░░░░░]` 0%\n\n"
         f"_Tᴇsᴛɪɴɢ Fᴏʀ SQL Eʀʀᴏʀs..._",
@@ -7564,7 +7564,7 @@ async def _run_sqli(update: Update, context: ContextTypes.DEFAULT_TYPE, urls: li
             caption=(
                 f"🎭 `{len(injectable):,}` Vᴜʟɴᴇʀᴀʙʟᴇ URLs\n"
                 f"💥 SQL Iɴᴊᴇᴄᴛɪᴏɴ Cᴏɴғɪʀᴍᴇᴅ\n"
-                "🐍 Pʏᴛʜᴏɴ Sɴᴀᴋᴇ Bᴏᴛ SQLi Sᴄᴀɴɴᴇʀ"
+                "🐍 Sᴘɪᴅᴇʏ Bᴏᴛ SQLi Sᴄᴀɴɴᴇʀ"
             ),
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -7652,7 +7652,7 @@ async def _run_dump_pipeline(
     stop_events[uid] = stop_event
     stop_kb     = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Sᴛᴏᴘ", callback_data="stop_dump")]])
     last_edit   = [0.0]
-    pipe_title  = "🔖 URLs ➪ DB Dᴜᴍᴘ" if prefound_urls else "🐍  Dᴏʀᴋs ➪ DB Dᴜᴍᴘ"
+    pipe_title  = "🔖 URLs ➪ DB Dᴜᴍᴘ" if prefound_urls else "🕸️  Dᴏʀᴋs ➪ DB Dᴜᴍᴘ"
 
     # No dork cap — process ALL dorks; timeout scales automatically
 
@@ -8010,7 +8010,7 @@ async def _run_dump_pipeline(
             caption=(
                 f"💳 `{len(all_cards):,}` CC Hɪᴛs\n"
                 "Format: `number|MM|YY|cvv`\n"
-                "🐍 Pʏᴛʜᴏɴ Sɴᴀᴋᴇ Bᴏᴛ — Sǫʟ-Mᴀᴘ REST API Pɪᴘᴇʟɪɴᴇ"
+                "🐍 Sᴘɪᴅᴇʏ Bᴏᴛ — Sǫʟ-Mᴀᴘ REST API Pɪᴘᴇʟɪɴᴇ"
             ),
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -8832,7 +8832,7 @@ def main():
     from aiohttp import web as _web
 
     async def _health(_req):
-        return _web.Response(text="Pʏᴛʜᴏɴ Sɴᴀᴋᴇ Bᴏᴛ Is Aʟɪᴠᴇ ✅")
+        return _web.Response(text="Sᴘɪᴅᴇʏ Bᴏᴛ Is Aʟɪᴠᴇ ✅")
 
     async def _run_keepalive():
         _runner = _web.AppRunner(_web.Application())
@@ -9261,10 +9261,6 @@ def main():
     app.add_handler(CommandHandler(["menu", "home"], _v23_menu_cmd), group=-1)
     app.add_handler(CommandHandler("captcha", _v23_captcha_cmd), group=-1)
     app.add_handler(CommandHandler("spy", _v23_spy_cmd), group=-1)
-    app.add_handler(CommandHandler("find", _v24_find_cmd), group=-1)
-    app.add_handler(CommandHandler(["pscan", "scanproxies"], _v24_scan_cmd), group=-1)
-    app.add_handler(CommandHandler("myplan", _v25_myplan_cmd), group=-1)
-    app.add_handler(CommandHandler("top", _v25_top_cmd), group=-1)
     app.add_handler(CommandHandler("reset", _v20_reset_cmd), group=-1)
 
     async def _run_bot():
@@ -16872,7 +16868,7 @@ async def _run_dump_pipeline(
     stop_events[uid] = stop_event
     stop_kb     = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Sᴛᴏᴘ", callback_data="stop_dump")]])
     last_edit   = [0.0]
-    pipe_title  = "🔖 URLs ➪ DB Dᴜᴍᴘ" if prefound_urls else "🐍 Dᴏʀᴋs ➪ DB Dᴜᴍᴘ"
+    pipe_title  = "🔖 URLs ➪ DB Dᴜᴍᴘ" if prefound_urls else "🕸️ Dᴏʀᴋs ➪ DB Dᴜᴍᴘ"
     ts          = datetime.now().strftime("%d%m%y_%H%M")
     total_dorks = len(dorks)
 
@@ -17285,7 +17281,7 @@ async def _run_dump_pipeline(
             caption=(
                 f"💳 `{len(all_cards):,}` CC Hɪᴛs\n"
                 "Format: `number|MM|YY|cvv`\n"
-                "🐍 Pʏᴛʜᴏɴ Sɴᴀᴋᴇ 12-Cᴏʀᴇ V6 Pɪᴘᴇʟɪɴᴇ"
+                "🐍 Sᴘɪᴅᴇʏ 12-Cᴏʀᴇ V6 Pɪᴘᴇʟɪɴᴇ"
             ),
             parse_mode=ParseMode.MARKDOWN,
             read_timeout=180.0,
@@ -22428,7 +22424,7 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(f"🔍 Sᴛᴀʀᴛ V18 UHQ Pᴀʀsᴇʀ ({len(lines):,} Dorks)", callback_data="v18_smart_parse")],
-                    [InlineKeyboardButton(f"🐍 Dᴏʀᴋs ➪ Auto SQLi + DB Dᴜᴍᴘ", callback_data="v18_smart_dorkdump")],
+                    [InlineKeyboardButton(f"🕸️ Dᴏʀᴋs ➪ Auto SQLi + DB Dᴜᴍᴘ", callback_data="v18_smart_dorkdump")],
                     [InlineKeyboardButton("🏠 Mᴀɪɴ Mᴇɴᴜ", callback_data="back_to_menu")],
                 ]),
             )
@@ -28552,1008 +28548,6 @@ try:
 except Exception:
     pass
 # ═══ PYTHON SNAKE v23 END ═══
-
-
-# ═══ PYTHON SNAKE v24 START ═══
-# ─────────────────────────────────────────────────────────────────────────────
-#  PART A — plain labels, plan line on home, 4 user screens
-# ─────────────────────────────────────────────────────────────────────────────
-_V24_TAG = "V24-PYTHON-SNAKE"
-_V12_VERSION_TAG = _V24_TAG   # badge / footer / kill-all button bhi V24 dikhe
-_V24_PLAN_TXT = {
-    "30ᴍ": "30 min", "1ʜ": "1 hour", "6ʜ": "6 hours", "1ᴅ": "1 Day",
-    "3ᴅ": "3 Days", "5ᴅ": "5 Days", "10ᴅ": "10 Days", "15ᴅ": "15 Days",
-    "20ᴅ": "20 Days", "30ᴅ": "30 Days",
-}
-
-
-def _v24_prev_back_button(text="back", data="menu_back"):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="menu_back")]])
-
-
-def back_button(text=None, data="menu_back"):   # noqa: F811
-    """Sab jagah plain back button (font mix khatam)."""
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="menu_back")]])
-
-
-def make_purchase_menu():   # noqa: F811
-    rows = []
-    for label, code, emoji, _delta in PLANS:
-        plain = _V24_PLAN_TXT.get(code) or str(label)
-        price = PLAN_PRICES.get(code, "?")
-        rows.append([InlineKeyboardButton("%s %s — %s" % (emoji, plain, price),
-                                          callback_data="buy_%s" % code)])
-    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="v23_home")])
-    return InlineKeyboardMarkup(rows)
-
-
-def _v24_plan_line(uid: int) -> str:
-    try:
-        if is_admin(uid):
-            return "👑 <b>Admin</b> — full access"
-        if uid in authorized_users:
-            info = authorized_users[uid]
-            exp = info.get("expires")
-            if exp and exp > datetime.now():
-                return "💎 <b>%s</b> • %s bache" % (info.get("plan", "plan"), _v23_dur(exp - datetime.now()))
-        if uid in trial_users:
-            st = trial_status(uid)
-            if st == "active":
-                return "🎁 <b>Free trial</b> active"
-            return "⏳ Trial khatam — plan lo"
-    except Exception:
-        pass
-    return "🔒 No plan — Redeem ya Premium dabao"
-
-
-def _v24_home_text(update) -> str:
-    u = getattr(update, "effective_user", None)
-    name = (getattr(u, "first_name", "") or "")
-    uid = getattr(u, "id", 0) or 0
-    hi = ("Hi <b>%s</b>,\n" % name) if name else ""
-    return ("🐍 <b>PYTHON SNAKE</b> 🐍\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            + hi +
-            _v24_plan_line(uid) + "\n\n"
-            "🤖 Auto dorking • Deep parsing • Verified SQLi\n\n"
-            "👇 Neeche se option chuno:")
-
-
-async def _v23_send_home(update, context, edit: bool = False) -> None:   # noqa: F811
-    uid = getattr(getattr(update, "effective_user", None), "id", 0) or 0
-    txt, kb = _v24_home_text(update), _v23_main_kb(uid)
-    if edit:
-        try:
-            await update.callback_query.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-            return
-        except Exception:
-            pass
-    msg = getattr(update, "effective_message", None)
-    if msg is not None:
-        try:
-            await msg.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-            return
-        except Exception:
-            pass
-    try:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=txt,
-                                       reply_markup=kb, parse_mode=ParseMode.HTML)
-    except Exception:
-        pass
-
-
-# ── 4 plain user screens ─────────────────────────────────────────────────────
-def _v24_redeem_card():
-    txt = ("🔑 <b>REDEEM KEY</b>\n"
-           "━━━━━━━━━━━━━━━━━━━━━\n"
-           "Apni license key niche <b>paste</b> kar do (ya seedha chat me bhej do):\n\n"
-           "• Format: <code>XXXXX-XXXXX-XXXXX-XXXXX</code>\n"
-           "• Key mil gayi? Bas bhej do — plan khud lag jayega\n"
-           "• Key nahi hai? 🍷 PREMIUM se plan lo")
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🍷 PREMIUM / PLANS", callback_data="menu_purchase")],
-        [InlineKeyboardButton("⬅️ BACK", callback_data="v23_home")],
-    ])
-    return txt, kb
-
-
-def _v24_purchase_card(uid: int):
-    lines = ["🍷 <b>PREMIUM — PLANS</b>",
-             "━━━━━━━━━━━━━━━━━━━━━"]
-    for label, code, emoji, _d in PLANS:
-        plain = _V24_PLAN_TXT.get(code) or str(label)
-        lines.append("%s <b>%s</b> — <code>%s</code>" % (emoji, plain, PLAN_PRICES.get(code, "?")))
-    lines += ["", "💳 <b>Kaise kharide?</b>",
-              "👉 Owner ko message karo: <code>%s</code>" % ADMIN_USERNAME,
-              "👉 Coupon code: <code>%s</code>" % COUPON_CODE,
-              "👉 Ya key lekar 🔑 REDEEM karo"]
-    try:
-        lines.append("")
-        lines.append(_v24_plan_line(uid))
-    except Exception:
-        pass
-    return "\n".join(lines)
-
-
-def _v24_guide_card():
-    txt = ("📖 <b>HOW TO USE</b>\n"
-           "━━━━━━━━━━━━━━━━━━━━━\n"
-           "<b>Sabse aasan:</b> 🐍 AUTO DUMP dabao → scale chuno → seeds bhejo\n"
-           "Bas — keywords, dorks, URLs, verified SQLi, report sab mil jayega.\n\n"
-           "Thoda control chahiye to niche se topic chuno:")
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📕 Full pipeline (dorks → dump)", callback_data="guide_pipeline")],
-        [InlineKeyboardButton("📗 How to dump database", callback_data="guide_dump")],
-        [InlineKeyboardButton("📘 How to extract CC/data", callback_data="guide_cc")],
-        [InlineKeyboardButton("📙 Sqlmap settings guide", callback_data="guide_sqlopts")],
-        [InlineKeyboardButton("⬅️ BACK", callback_data="v23_home")],
-    ])
-    return txt, kb
-
-
-def _v24_help_card(uid: int):
-    txt = ("☎️ <b>CONTACT OWNER</b>\n"
-           "━━━━━━━━━━━━━━━━━━━━━\n"
-           "🆘 Owner: <code>%s</code>\n"
-           "💳 Plans / key / help — sab ke liye wahi message karo.\n\n"
-           "📌 Apni ID bhi bhej dena: <code>%d</code>" % (ADMIN_USERNAME, uid))
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🍷 PREMIUM / PLANS", callback_data="menu_purchase")],
-        [InlineKeyboardButton("📖 HOW TO USE", callback_data="menu_guide")],
-        [InlineKeyboardButton("⬅️ BACK", callback_data="v23_home")],
-    ])
-    return txt, kb
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  PART B — admin extras: export, find user, scan proxies
-# ─────────────────────────────────────────────────────────────────────────────
-def make_admin_menu():   # noqa: F811
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 DASHBOARD", callback_data="v23a_home")],
-        [InlineKeyboardButton("👥 USERS", callback_data="v23a_users_0"),
-         InlineKeyboardButton("🔑 KEYS", callback_data="v23a_keys")],
-        [InlineKeyboardButton("🏃 LIVE RUNS", callback_data="v23a_live"),
-         InlineKeyboardButton("📂 USER VAULT", callback_data="uv_home_0")],
-        [InlineKeyboardButton("🕵️ SPY ON/OFF", callback_data="admin_spytoggle"),
-         InlineKeyboardButton("📈 STATS", callback_data="v23a_stats")],
-        [InlineKeyboardButton("🧅 PROXIES", callback_data="v23a_proxy"),
-         InlineKeyboardButton("⚙️ ENGINE", callback_data="v23a_engine")],
-        [InlineKeyboardButton("📣 BROADCAST", callback_data="admin_broadcast"),
-         InlineKeyboardButton("🚫 BANS", callback_data="admin_banlist")],
-        [InlineKeyboardButton("📤 EXPORT USERS", callback_data="admin_exportusers"),
-         InlineKeyboardButton("🔍 FIND USER", callback_data="v23a_find")],
-        [InlineKeyboardButton("☢️ KILL ALL TASKS", callback_data="admin_killall")],
-        [InlineKeyboardButton("⬅️ MAIN MENU", callback_data="v23_home")],
-    ])
-
-
-def _v24_user_text(uid: int) -> str:
-    rec = _v23_u_rec(uid)
-    last = rec.get("last")
-    last_s = datetime.fromtimestamp(float(last)).strftime("%d %b %H:%M") if last else "-"
-    return ("👤 <b>USER DETAIL</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            "👤 Name: <b>%s</b>\n"
-            "🔗 Username: %s\n"
-            "🆔 ID: <code>%s</code>\n"
-            "💎 Plan: <b>%s</b>\n"
-            "🚫 Banned: <b>%s</b>\n"
-            "🕒 Last seen: <code>%s</code>\n"
-            "▶️ Starts: <code>%s</code> • Runs: <code>%s</code>\n"
-            "🌍 URLs: <code>%s</code> • 🛡️ Vulns: <code>%s</code>") % (
-        (rec.get("name") or "-")[:32], ("@" + rec["uname"]) if rec.get("uname") else "-",
-        uid, _v23_plan_text(uid), "YES" if uid in banned_users else "no", last_s,
-        format(int(rec.get("starts") or 0), ","), format(int(rec.get("runs") or 0), ","),
-        format(int(rec.get("urls") or 0), ","), format(int(rec.get("vulns") or 0), ","))
-
-
-def _v24_user_kb(uid: int):
-    rows = [
-        [InlineKeyboardButton("➕ 1 DAY", callback_data="v23a_add_%d_1" % uid),
-         InlineKeyboardButton("➕ 7 DAYS", callback_data="v23a_add_%d_7" % uid),
-         InlineKeyboardButton("➕ 30 DAYS", callback_data="v23a_add_%d_30" % uid)],
-        [InlineKeyboardButton("🎁 GIVE PLAN", callback_data="v23a_plan_%d" % uid),
-         InlineKeyboardButton("📂 FILES", callback_data="uv_u_%d_A_0" % uid)],
-    ]
-    if uid in banned_users:
-        rows.append([InlineKeyboardButton("✅ UNBAN", callback_data="v23a_unban_%d" % uid)])
-    else:
-        rows.append([InlineKeyboardButton("🚫 BAN", callback_data="v23a_ban_%d" % uid)])
-    rows.append([InlineKeyboardButton("⬅️ USERS", callback_data="v23a_users_0")])
-    return InlineKeyboardMarkup(rows)
-
-
-async def _v24_find_cmd(update, context) -> None:
-    uid = update.effective_user.id
-    msg = update.effective_message
-    if not is_admin(uid):
-        await msg.reply_text("❌ Admin only")
-        return
-    args = getattr(context, "args", None) or []
-    raw = (args[0] if args else "").strip().lstrip("@")
-    if not raw:
-        await msg.reply_text("Usage: <code>/find 123456789</code> (ya /find @username)",
-                             parse_mode=ParseMode.HTML)
-        return
-    target = None
-    if raw.isdigit():
-        target = int(raw)
-    else:
-        low = raw.lower()
-        for k, v in list(_V23_USERS.items()):
-            if (v.get("uname") or "").lower() == low:
-                try:
-                    target = int(k)
-                except Exception:
-                    target = None
-                break
-    if not target:
-        await msg.reply_text("❌ User nahi mila — ID daalo ya pehle wo /start kare.")
-        return
-    try:
-        ch = await context.bot.get_chat(target)
-        rec = _V23_USERS.setdefault(str(target), {})
-        rec["name"] = ch.full_name or rec.get("name") or ""
-        rec["uname"] = ch.username or rec.get("uname") or ""
-        _v23_flush(force=True)
-    except Exception:
-        pass
-    await msg.reply_text(_v24_user_text(target), reply_markup=_v24_user_kb(target),
-                         parse_mode=ParseMode.HTML)
-
-
-async def _v24_scan_cmd(update, context) -> None:
-    """Admin: proxy scan seedha command se."""
-    uid = update.effective_user.id
-    msg = update.effective_message
-    if not is_admin(uid):
-        await msg.reply_text("❌ Admin only")
-        return
-    note = await msg.reply_text("🧅 Proxy scan chal raha hai… (10-60s)")
-    try:
-        st = await _v22_proxy_scan(want=150, concurrency=220, force=True)
-    except Exception as exc:
-        st = {"scraped": 0, "checked": 0, "alive": 0, "pool": 0, "err": str(exc)}
-    txt = ("🧅 <b>PROXY SCAN DONE</b>\n"
-           "📥 Scraped: <code>%s</code>\n🔍 Checked: <code>%s</code>\n"
-           "✅ Alive: <code>%s</code>\n🗄 Pool: <code>%s</code>"
-           % (format(int(st.get("scraped") or 0), ","), format(int(st.get("checked") or 0), ","),
-              format(int(st.get("alive") or 0), ","), format(int(st.get("pool") or 0), ",")))
-    try:
-        await note.edit_text(txt, parse_mode=ParseMode.HTML)
-    except Exception:
-        await msg.reply_text(txt, parse_mode=ParseMode.HTML)
-
-
-async def _v24_find_hint(update, context) -> None:
-    msg = update.effective_message
-    try:
-        await update.callback_query.edit_message_text(
-            "🔍 <b>FIND USER</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            "Chat me ye bhejo:\n"
-            "<code>/find 123456789</code>  (Telegram ID)\n"
-            "<code>/find @username</code>\n\n"
-            "Ya 👥 USERS list se seedha tap karo.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👥 USERS", callback_data="v23a_users_0")],
-                [InlineKeyboardButton("⬅️ ADMIN PANEL", callback_data="v23a_home")],
-            ]), parse_mode=ParseMode.HTML)
-    except Exception:
-        pass
-
-
-# ── PART B2 — ek click me poora users export (plain CSV) ─────────────────────
-def _v24_csv_safe(v) -> str:
-    t = str(v if v is not None else "")
-    t = t.replace("\n", " ").replace("\r", " ").replace(",", ";").strip()
-    return t
-
-
-def _v24_export_user_rows() -> list:
-    _v23_init()
-    now = datetime.now()
-    ids = set()
-    for x in list(all_user_ids) + list(trial_users.keys()):
-        try:
-            ids.add(int(x))
-        except Exception:
-            pass
-    for k in list(_V23_USERS.keys()):
-        try:
-            ids.add(int(k))
-        except Exception:
-            pass
-    rows = ["uid,name,username,plan,expires,banned,starts,runs,urls,vulns,last_seen"]
-    for uid in sorted(ids):
-        rec = _V23_USERS.get(str(uid)) or {}
-        info = authorized_users.get(uid) or authorized_users.get(str(uid)) or {}
-        if is_admin(uid):
-            plan, exp = "admin", "-"
-        elif isinstance(info, dict) and info.get("expires") and info["expires"] > now:
-            plan, exp = (info.get("plan") or "plan"), info["expires"].strftime("%Y-%m-%d %H:%M")
-        elif uid in trial_users:
-            ends = trial_users[uid] + timedelta(minutes=int(TRIAL_MINUTES or 0))
-            plan = "trial-active" if ends > now else "trial-expired"
-            exp = ends.strftime("%Y-%m-%d %H:%M")
-        else:
-            plan, exp = "free", "-"
-        last = rec.get("last")
-        try:
-            last_s = datetime.fromtimestamp(float(last)).strftime("%Y-%m-%d %H:%M") if last else "-"
-        except Exception:
-            last_s = "-"
-        rows.append(",".join(_v24_csv_safe(x) for x in (
-            uid, rec.get("name") or "-", ("@" + rec["uname"]) if rec.get("uname") else "-",
-            plan, exp, "yes" if uid in banned_users else "no",
-            int(rec.get("starts") or 0), int(rec.get("runs") or 0),
-            int(rec.get("urls") or 0), int(rec.get("vulns") or 0), last_s)))
-    return rows
-
-
-async def _v24_export_users(update, context) -> None:
-    q = update.callback_query
-    rows = _v24_export_user_rows()
-    body = ("# PYTHON SNAKE users export\n"
-            "# generated: %s\n"
-            "# total: %d\n" % (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), len(rows) - 1)) + "\n".join(rows)
-    ts = datetime.now().strftime("%d%m%y_%H%M")
-    await context.bot.send_document(
-        chat_id=q.from_user.id,
-        document=io.BytesIO(body.encode("utf-8")),
-        filename="python_snake_users_%s.csv" % ts,
-        caption="📤 <b>EXPORT USERS</b>\n%d users • CSV (Excel/Sheets me khul jayega)" % (len(rows) - 1),
-        parse_mode=ParseMode.HTML)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  PART C — router (4 user screens + admin extras), commands
-# ─────────────────────────────────────────────────────────────────────────────
-_v24_prev_button_handler = button_handler
-
-
-async def button_handler(update, context):   # noqa: F811
-    q = getattr(update, "callback_query", None)
-    data = (q.data or "") if q is not None else ""
-    if q is not None and data:
-        uid = getattr(getattr(update, "effective_user", None), "id", 0) or 0
-        try:
-            if data == "menu_redeem":
-                await q.answer()
-                txt, kb = _v24_redeem_card()
-                try:
-                    await q.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-                except Exception:
-                    try:
-                        await q.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-                    except Exception:
-                        pass
-                return REDEEM_WAIT_KEY
-            if data == "menu_purchase":
-                await q.answer()
-                txt = _v24_purchase_card(uid)
-                try:
-                    await q.edit_message_text(txt, reply_markup=make_purchase_menu(), parse_mode=ParseMode.HTML)
-                except Exception:
-                    pass
-                return PURCHASE_MENU
-            if data == "menu_guide":
-                await q.answer()
-                txt, kb = _v24_guide_card()
-                try:
-                    await q.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-                except Exception:
-                    pass
-                return MENU
-            if data == "menu_help":
-                await q.answer()
-                txt, kb = _v24_help_card(uid)
-                try:
-                    await q.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-                except Exception:
-                    pass
-                return MENU
-            if data == "admin_exportusers":
-                if not is_admin(uid):
-                    await q.answer("❌ Admin only", show_alert=True)
-                    return MENU
-                await q.answer("📤 Export ban raha hai…")
-                await _v24_export_users(update, context)
-                return MENU
-            if data == "v23a_find":
-                if not is_admin(uid):
-                    await q.answer("❌ Admin only", show_alert=True)
-                    return MENU
-                await q.answer()
-                await _v24_find_hint(update, context)
-                return MENU
-        except Exception as exc:
-            logger.warning("v24 user-screen error [%s]: %s", data, exc)
-    return await _v24_prev_button_handler(update, context)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  PART E — poore bot me plain font (outgoing text/caption ko translate karo)
-# ─────────────────────────────────────────────────────────────────────────────
-import telegram as _v24_tg
-import functools as _v24_ft
-import unicodedata
-
-_V24_SC_FROM = "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡʏᴢ"   # 25 letters (x ka small-cap hota hi nahi)
-_V24_SC_TO = "abcdefghijklmnopqrstuvwyz"          # isi order me, bina x
-assert len(_V24_SC_FROM) == len(_V24_SC_TO) == 25
-_V24_PLAIN_TBL = str.maketrans(_V24_SC_FROM, _V24_SC_TO)
-
-
-def _v24_plain(t):
-    """Purane fancy fonts (small-caps / 𝙗𝙤𝙡𝙙 / 𝘪𝘵𝘢𝘭𝘪𝘤 / ｆｕｌｌｗｉｄｔｈ) ➪ simple ASCII.
-
-    Sirf dikhne wale text pe chalta hai — data, keys, callback_data ko chhua nahi jaata.
-    """
-    if not isinstance(t, str) or not t:
-        return t
-    try:
-        t = t.translate(_V24_PLAIN_TBL)
-        out = []
-        for ch in t:
-            o = ord(ch)
-            if 0x1D400 <= o <= 0x1D7FF or 0xFF21 <= o <= 0xFF3A or 0xFF41 <= o <= 0xFF5A:
-                out.append(unicodedata.normalize("NFKC", ch))
-            else:
-                out.append(ch)
-        return "".join(out)
-    except Exception:
-        return t
-
-
-def _v24_wrap_method(cls, name, text_pos=1):
-    """text/caption ko plain karke original method ko bhejo (data ko chhua nahi)."""
-    orig = getattr(cls, name, None)
-    if orig is None or getattr(orig, "_v24_plain_wrapped", False):
-        return False
-
-    @_v24_ft.wraps(orig)
-    async def wrapper(self, *args, **kwargs):
-        if "text" in kwargs:
-            kwargs["text"] = _v24_plain(kwargs["text"])
-        if "caption" in kwargs:
-            kwargs["caption"] = _v24_plain(kwargs["caption"])
-        if text_pos and len(args) >= text_pos and isinstance(args[text_pos - 1], str):
-            a = list(args)
-            a[text_pos - 1] = _v24_plain(a[text_pos - 1])
-            args = tuple(a)
-        return await orig(self, *args, **kwargs)
-
-    wrapper._v24_plain_wrapped = True
-    try:
-        setattr(cls, name, wrapper)
-        return True
-    except Exception:
-        return False
-
-
-# buttons ke labels bhi plain (har jagah, chahe label variable se bane ho)
-def _v24_wrap_button(cls):
-    orig = getattr(cls, "__init__", None)
-    if orig is None or getattr(orig, "_v24_plain_wrapped", False):
-        return False
-
-    @_v24_ft.wraps(orig)
-    def init(self, text=None, *a, **k):
-        return orig(self, _v24_plain(text), *a, **k)
-
-    init._v24_plain_wrapped = True
-    try:
-        cls.__init__ = init
-        return True
-    except Exception:
-        return False
-
-
-_V24_WRAPPED = 0
-for _bcls in (_v24_tg.InlineKeyboardButton, _v24_tg.KeyboardButton):
-    try:
-        if _v24_wrap_button(_bcls):
-            _V24_WRAPPED += 1
-    except Exception:
-        pass
-
-for _cls, _methods in (
-    (_v24_tg.Message, (("reply_text", 1), ("edit_text", 1), ("reply_markdown", 1),
-                       ("edit_caption", 1), ("reply_photo", 0))),
-    (_v24_tg.CallbackQuery, (("edit_message_text", 1), ("edit_message_caption", 0))),
-    (_v24_tg.Bot, (("send_message", 2), ("edit_message_text", 1), ("send_document", 0),
-                   ("send_photo", 0), ("send_video", 0), ("edit_message_caption", 0))),
-):
-    for _n, _pos in _methods:
-        try:
-            if _v24_wrap_method(_cls, _n, _pos):
-                _V24_WRAPPED += 1
-        except Exception:
-            pass
-
-
-try:
-    _v24_init_ok = True
-    logger.info("🐍 PYTHON SNAKE %s loaded — plain screens • find/export • full rebrand", _V24_TAG)
-except Exception:
-    pass
-# ═══ PYTHON SNAKE v24 END ═══
-
-
-# ═══ PYTHON SNAKE v25 START ═══
-# ─────────────────────────────────────────────────────────────────────────────
-#  v25 — leaderboard, /myplan, plain redeem+buy cards, user ke apne stats
-# ─────────────────────────────────────────────────────────────────────────────
-_V25_TAG = "V25-PYTHON-SNAKE"
-_V12_VERSION_TAG = _V25_TAG
-
-
-# ── chhote helpers ───────────────────────────────────────────────────────────
-def _v25_files_count(uid) -> int:
-    """User ke vault me kitni files hain."""
-    try:
-        base = str(globals().get("_V9_VAULT_DIR") or os.path.join(DATA_DIR, "user_vault"))
-        d = os.path.join(base, str(int(uid)))
-        if not os.path.isdir(d):
-            return 0
-        return sum(1 for f in os.listdir(d) if not f.startswith("."))
-    except Exception:
-        return 0
-
-
-def _v25_my_work(uid) -> str:
-    """User ka apna kaam — home / myplan me dikhta hai."""
-    try:
-        _v23_init()
-        rec = _V23_USERS.get(str(int(uid))) or {}
-        runs = int(rec.get("runs") or 0)
-        urls = int(rec.get("urls") or 0)
-        vulns = int(rec.get("vulns") or 0)
-        if not (runs or urls or vulns):
-            return "📈 Abhi koi run nahi — 🐍 AUTO DUMP se shuru karo"
-        return ("📈 <b>Aapka kaam:</b> %s run%s • %s URLs • %s vulns"
-                % (format(runs, ","), "" if runs == 1 else "s",
-                   format(urls, ","), format(vulns, ",")))
-    except Exception:
-        return ""
-
-
-def _v25_expiry_line(uid) -> str:
-    """Plan/trial ki expiry — din + kitna bacha."""
-    try:
-        now = datetime.now()
-        uid = int(uid)
-        if is_admin(uid):
-            return "📅 <b>Expiry:</b> lifetime (admin)"
-        if uid in authorized_users:
-            info = authorized_users.get(uid) or {}
-            exp = info.get("expires")
-            if exp:
-                left = exp - now
-                if left.total_seconds() > 0:
-                    return ("📅 <b>Expiry:</b> <code>%s</code> • <b>%s</b> bache"
-                            % (exp.strftime("%d %b %H:%M"), _v23_dur(left)))
-                return ("📅 <b>Expiry:</b> <code>%s</code> • <b>khatam</b>"
-                        % exp.strftime("%d %b %H:%M"))
-        if uid in trial_users:
-            ends = trial_users[uid] + timedelta(minutes=int(TRIAL_MINUTES or 0))
-            left = ends - now
-            if left.total_seconds() > 0:
-                return ("📅 <b>Trial ends:</b> <code>%s</code> • <b>%s</b> bache"
-                        % (ends.strftime("%d %b %H:%M"), _v23_dur(left)))
-            return "📅 <b>Trial:</b> khatam — plan lo"
-    except Exception:
-        pass
-    return "📅 <b>Plan:</b> nahi hai — 🔑 REDEEM ya 🍷 PREMIUM"
-
-
-# ── per-user aaj ka data (leaderboard ke AAJ tab ke liye) ────────────────────
-_V25_DAY_FILE = os.path.join(DATA_DIR, "v25_day.json")
-_V25_DAY: dict = {}
-_V25_DAY_READY = {"done": False}
-
-
-def _v25_day_init() -> None:
-    if _V25_DAY_READY["done"]:
-        return
-    _V25_DAY_READY["done"] = True
-    try:
-        d = _v23_lj(_V25_DAY_FILE, {})
-        if isinstance(d, dict):
-            _V25_DAY.update(d)
-    except Exception:
-        pass
-
-
-def _v25_day_save() -> None:
-    try:
-        keep = sorted(_V25_DAY.keys())[-10:]
-        for k in list(_V25_DAY.keys()):
-            if k not in keep:
-                _V25_DAY.pop(k, None)
-        _v23_sj(_V25_DAY_FILE, _V25_DAY)
-    except Exception:
-        pass
-
-
-_v25_prev_note_run = _v23_note_run
-
-
-def _v23_note_run(uid, kind, st):   # noqa: F811
-    """v23 ka counter + v25 ka per-user/day counter (leaderboard AAJ ke liye)."""
-    try:
-        _v25_prev_note_run(uid, kind, st)
-    except Exception:
-        pass
-    try:
-        _v25_day_init()
-        st = st or {}
-        day = _v23_today()
-        box = _V25_DAY.setdefault(day, {}).setdefault(
-            str(int(uid)), {"runs": 0, "urls": 0, "vulns": 0})
-        if kind == "parse":
-            box["urls"] = int(box.get("urls") or 0) + int(st.get("unique") or 0)
-        else:
-            box["runs"] = int(box.get("runs") or 0) + 1
-            box["vulns"] = int(box.get("vulns") or 0) + int(st.get("vulns") or 0)
-        _v25_day_save()
-    except Exception:
-        pass
-
-
-# ── leaderboard ──────────────────────────────────────────────────────────────
-def _v25_bars(val, maxv, width=10) -> str:
-    try:
-        val = int(val or 0)
-        maxv = int(maxv or 0)
-    except Exception:
-        return "░" * width
-    if maxv <= 0 or val <= 0:
-        return "░" * width
-    n = int(round(width * float(val) / float(maxv)))
-    n = max(1, min(width, n))
-    return "▓" * n + "░" * (width - n)
-
-
-def _v25_top_rows(mode="all") -> list:
-    _v23_init()
-    _v25_day_init()
-    src = {}
-    try:
-        if mode == "today":
-            src = dict(_V25_DAY.get(_v23_today(), {}) or {})
-        else:
-            src = dict(_V23_STATS.get("by_user", {}) or {})
-    except Exception:
-        src = {}
-    rows = []
-    for k, v in src.items():
-        try:
-            uid = int(k)
-        except Exception:
-            continue
-        v = v or {}
-        urls = int(v.get("urls") or 0)
-        runs = int(v.get("runs") or 0)
-        vulns = int(v.get("vulns") or 0)
-        if urls or runs or vulns:
-            rows.append((uid, urls, runs, vulns))
-    rows.sort(key=lambda r: (r[1], r[3], r[2]), reverse=True)
-    return rows
-
-
-def _v25_top_card(mode="all"):
-    rows = _v25_top_rows(mode)
-    mode = "today" if mode == "today" else "all"
-    mode_lbl = "AAJ" if mode == "today" else "ALL TIME"
-    maxv = rows[0][1] if rows else 0
-    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-    lines = []
-    for i, (uid, urls, runs, vulns) in enumerate(rows[:10], 1):
-        rec = _V23_USERS.get(str(uid), {}) or {}
-        nm = (rec.get("name") or str(uid))[:16]
-        tag = medals.get(i, "%2d." % i)
-        lines.append("%s <b>%s</b> — <code>%s</code> URLs\n"
-                     "<code>%s</code> %s run%s • %s vuln%s"
-                     % (tag, nm, format(urls, ","), _v25_bars(urls, maxv),
-                        format(runs, ","), "" if runs == 1 else "s",
-                        format(vulns, ","), "" if vulns == 1 else "s"))
-    try:
-        today = (_V23_STATS.get("days", {}) or {}).get(_v23_today(), {}) or {}
-        tot_urls = sum(r[1] for r in rows)
-        txt = ("📊 <b>LEADERBOARD</b> — %s\n"
-               "━━━━━━━━━━━━━━━━━━━━━\n"
-               "👥 Users: <b>%s</b> • 🌍 URLs: <b>%s</b> • 🛡️ Vulns: <b>%s</b>\n"
-               "📅 Aaj (sab): runs <b>%s</b> • URLs <b>%s</b>\n\n"
-               "%s" % (mode_lbl, len(rows), format(tot_urls, ","),
-                       format(sum(r[3] for r in rows), ","),
-                       format(int(today.get("runs") or 0), ","),
-                       format(int(today.get("urls") or 0), ","),
-                       "\n\n".join(lines) if lines else "<i>abhi data nahi — AUTO DUMP chalao</i>"))
-    except Exception:
-        txt = "📊 <b>LEADERBOARD</b>\n<i>data nahi</i>"
-
-    kb_rows = [[
-        InlineKeyboardButton("🏆 ALL TIME" + (" ✅" if mode == "all" else ""), callback_data="v25a_top_all"),
-        InlineKeyboardButton("📅 AAJ" + (" ✅" if mode == "today" else ""), callback_data="v25a_top_today"),
-    ]]
-    for uid, _u, _r, _v in rows[:5]:
-        rec = _V23_USERS.get(str(uid), {}) or {}
-        kb_rows.append([InlineKeyboardButton("👤 %s" % (rec.get("name") or uid)[:20],
-                                             callback_data="v23a_u_%d" % uid)])
-    kb_rows.append([InlineKeyboardButton("🔄 REFRESH", callback_data="v25a_top_%s" % mode)])
-    kb_rows.append([InlineKeyboardButton("⬅️ ADMIN PANEL", callback_data="v23a_home")])
-    return txt, InlineKeyboardMarkup(kb_rows)
-
-
-# ── admin panel me LEADERBOARD tile ──────────────────────────────────────────
-_v25_prev_admin_menu = make_admin_menu
-
-
-def make_admin_menu():   # noqa: F811
-    try:
-        kb = _v25_prev_admin_menu()
-        rows = [list(r) for r in kb.inline_keyboard]
-        out = []
-        for r in rows:
-            out.append(r)
-            if len(r) == 2 and getattr(r[0], "callback_data", "") == "admin_spytoggle":
-                out.append([InlineKeyboardButton("📊 LEADERBOARD", callback_data="v25a_top_all")])
-        return InlineKeyboardMarkup(out)
-    except Exception:
-        return _v25_prev_admin_menu()
-
-
-# ── home: aapka kaam line ────────────────────────────────────────────────────
-_v25_prev_home_text = _v24_home_text
-
-
-def _v24_home_text(update):   # noqa: F811
-    base = _v25_prev_home_text(update)
-    try:
-        uid = getattr(getattr(update, "effective_user", None), "id", 0) or 0
-        line = _v25_my_work(uid)
-        if not line:
-            return base
-        marker = "\n\n🤖 "
-        if marker in base:
-            return base.replace(marker, "\n" + line + marker, 1)
-        return base + "\n" + line
-    except Exception:
-        return base
-
-
-# ── USER DETAIL card me expiry + files ──────────────────────────────────────
-_v25_prev_user_text = _v24_user_text
-
-
-def _v24_user_text(uid):   # noqa: F811
-    base = _v25_prev_user_text(uid)
-    try:
-        extra = [_v25_expiry_line(uid), "📂 Files: <b>%s</b>" % format(_v25_files_count(uid), ",")]
-        return base + "\n" + "\n".join(extra)
-    except Exception:
-        return base
-
-
-# ── /myplan ─────────────────────────────────────────────────────────────────
-def _v25_myplan_card(update):
-    u = getattr(update, "effective_user", None)
-    uid = int(getattr(u, "id", 0) or 0)
-    nm = (getattr(u, "first_name", "") or "boss")[:24]
-    txt = ("💎 <b>MERA PLAN</b>\n"
-           "━━━━━━━━━━━━━━━━━━━━━\n"
-           "👤 <b>%s</b> • <code>%s</code>\n"
-           "%s\n%s\n%s\n"
-           "📂 Files: <b>%s</b> • ▶️ Starts: <b>%s</b>"
-           % (nm, uid, _v24_plan_line(uid), _v25_expiry_line(uid),
-              _v25_my_work(uid), format(_v25_files_count(uid), ","),
-              format(int((_V23_USERS.get(str(uid)) or {}).get("starts") or 0), ",")))
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔑 REDEEM KEY", callback_data="menu_redeem"),
-         InlineKeyboardButton("🍷 PREMIUM", callback_data="menu_purchase")],
-        [InlineKeyboardButton("🏠 MAIN MENU", callback_data="v23_home")],
-    ])
-    return txt, kb
-
-
-async def _v25_myplan_cmd(update, context):
-    try:
-        _v23_touch(update, context)
-    except Exception:
-        pass
-    txt, kb = _v25_myplan_card(update)
-    try:
-        await update.effective_message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-    except Exception:
-        pass
-    return MENU
-
-
-async def _v25_top_cmd(update, context):
-    u = getattr(update, "effective_user", None)
-    uid = int(getattr(u, "id", 0) or 0)
-    if not is_admin(uid):
-        try:
-            await update.effective_message.reply_text("❌ Admin only")
-        except Exception:
-            pass
-        return MENU
-    txt, kb = _v25_top_card("all")
-    try:
-        await update.effective_message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-    except Exception:
-        pass
-    return MENU
-
-
-# ── plain plan card (legacy ✿ card ki jagah) ────────────────────────────────
-def _v25_buy_card(plan_code: str):
-    try:
-        code, label, emoji, _delta = _v10_resolve_plan(plan_code)
-    except Exception:
-        code, label, emoji = plan_code, plan_code, "💎"
-    label = label or plan_code
-    short = (_V24_PLAN_TXT.get(plan_code) or _V24_PLAN_TXT.get(code) or label)
-    price = (PLAN_PRICES.get(plan_code) or PLAN_PRICES.get(code) or "Owner se poochho")
-    txt = ("🍷 <b>PLAN</b>\n"
-           "━━━━━━━━━━━━━━━━━━━━━\n"
-           "%s <b>%s</b>\n"
-           "💰 Price: <b>%s</b>\n"
-           "🧛 Owner: <code>%s</code>\n\n"
-           "Payment ke liye owner ko message karo — key milte hi\n"
-           "🔑 REDEEM dabao aur sab features khul jayenge." % (emoji, short, price, ADMIN_USERNAME))
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🥂 CONTACT OWNER", url="https://t.me/%s" % ADMIN_USERNAME.lstrip("@"))],
-        [InlineKeyboardButton("🔑 REDEEM KEY", callback_data="menu_redeem"),
-         InlineKeyboardButton("⬅️ BACK", callback_data="menu_purchase")],
-    ])
-    return txt, kb
-
-
-# ── plain redeem flow ───────────────────────────────────────────────────────
-async def _v25_redeem_flow(update, context) -> int:
-    msg = getattr(update, "effective_message", None)
-    u = getattr(update, "effective_user", None)
-    uid = int(getattr(u, "id", 0) or 0)
-    try:
-        _v23_touch(update, context)
-    except Exception:
-        pass
-    try:
-        all_user_ids.add(uid)
-    except Exception:
-        pass
-    raw = (getattr(msg, "text", "") or "") if msg is not None else ""
-    try:
-        key = _v10_extract_key_candidate(raw)
-    except Exception:
-        key = (raw or "").strip()
-
-    back_kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🍷 PREMIUM", callback_data="menu_purchase")],
-        [InlineKeyboardButton("⬅️ BACK", callback_data="v23_home")],
-    ])
-
-    if not key or key not in license_keys:
-        if msg is not None:
-            await msg.reply_text(
-                "❌ <b>KEY GALAT HAI</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n"
-                "Format aisa hona chahiye: <code>XXXXX-XXXXX-XXXXX-XXXXX</code>\n\n"
-                "Dhyan se copy karo (space/language check) — ya owner se nayi key lo.",
-                reply_markup=back_kb, parse_mode=ParseMode.HTML)
-        return REDEEM_WAIT_KEY
-
-    try:
-        info = _v10_normalize_key_entry(key, license_keys[key])
-    except Exception:
-        info = license_keys.get(key) or {}
-
-    used_by = info.get("used_by")
-    try:
-        used_by_int = int(used_by) if used_by is not None else None
-    except Exception:
-        used_by_int = None
-    if used_by_int is not None and used_by_int != uid:
-        if msg is not None:
-            await msg.reply_text(
-                "❌ <b>YE KEY PEHLE USE HO CHUKI</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n"
-                "1 key = 1 user. Owner se nayi key lo.",
-                reply_markup=back_kb, parse_mode=ParseMode.HTML)
-        return REDEEM_WAIT_KEY
-
-    now = datetime.now()
-    base = now
-    try:
-        if uid in authorized_users:
-            exp = (authorized_users[uid] or {}).get("expires")
-            if exp and exp > base:
-                base = exp
-    except Exception:
-        pass
-    delta = info.get("delta") or timedelta(0)
-    expires = base + delta
-    authorized_users[uid] = {"plan": info.get("label") or "Plan", "expires": expires, "granted_by": key}
-    info["used_by"] = uid
-    try:
-        _save_auth()
-    except Exception:
-        pass
-    try:
-        _save_users()
-    except Exception:
-        pass
-    try:
-        _v9_log_activity(uid=uid, name=(getattr(u, "full_name", "") or str(uid)),
-                         username=(getattr(u, "username", "") or ""),
-                         module="🔑 Key Redeemed", detail="%s (%s)" % (key, info.get("label") or "plan"))
-    except Exception:
-        pass
-
-    if msg is not None:
-        await msg.reply_text(
-            "✅ <b>KEY REDEEM HO GAYI</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            "🔑 Key: <code>%s</code>\n"
-            "💎 Plan: <b>%s</b>\n"
-            "📅 Valid till: <code>%s</code>\n"
-            "⏳ Bacha: <b>%s</b>\n\n"
-            "🚀 Ab 🐍 AUTO DUMP dabao — saare features khul gaye."
-            % (key, info.get("label") or "Plan", expires.strftime("%d %b %Y %H:%M"),
-               _v23_dur(expires - now)),
-            parse_mode=ParseMode.HTML)
-    await _v23_send_home(update, context)
-    return MENU
-
-
-async def redeem_key(update, context):   # noqa: F811
-    return await _v25_redeem_flow(update, context)
-
-
-# ── router front layer: buy_*, v25a_top_* ───────────────────────────────────
-_v25_prev_button_handler = button_handler
-
-
-async def button_handler(update, context):   # noqa: F811
-    q = getattr(update, "callback_query", None)
-    data = (q.data or "") if q is not None else ""
-    if q is not None and data:
-        uid = int(getattr(getattr(update, "effective_user", None), "id", 0) or 0)
-        try:
-            if data.startswith("buy_"):
-                await q.answer()
-                txt, kb = _v25_buy_card(data[4:])
-                try:
-                    await q.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-                except Exception:
-                    pass
-                return PURCHASE_MENU
-            if data.startswith("v25a_top_"):
-                if not is_admin(uid):
-                    await q.answer("❌ Admin only", show_alert=True)
-                    return MENU
-                mode = "today" if data.endswith("today") else "all"
-                await q.answer("📊 Leaderboard…")
-                txt, kb = _v25_top_card(mode)
-                try:
-                    await q.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-                except Exception:
-                    pass
-                return MENU
-        except Exception as exc:
-            logger.warning("v25 router error [%s]: %s", data, exc)
-    return await _v25_prev_button_handler(update, context)
-
-
-try:
-    logger.info("🐍 PYTHON SNAKE %s loaded — leaderboard • /myplan • plain redeem/buy", _V25_TAG)
-except Exception:
-    pass
-# ═══ PYTHON SNAKE v25 END ═══
 
 
 if __name__ == "__main__":
