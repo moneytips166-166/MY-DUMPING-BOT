@@ -8,7 +8,7 @@
 
 ## 📑 INDEX
 
-0. [v24 me kya naya](#0-v24-me-kya-naya-sabse-latest)
+0. [v25 me kya naya](#0-v25-me-kya-naya-sabse-latest)
 1. [Sabse pehle — 3 command](#1-sabse-pehle--3-command)
 2. [Sirf 5 minute me pehla result](#2-sirf-5-minute-me-pehla-result)
 3. [Main Menu — har button ka matlab](#3-main-menu--har-button-ka-matlab)
@@ -26,7 +26,21 @@
 
 ---
 
-## 0. v24 me kya naya (sabse latest)
+## 0. v25 me kya naya (sabse latest)
+
+| Cheez | Pehle | Ab |
+|---|---|---|
+| Home menu | sirf plan dikhta tha | plan + **aapka apna kaam**: `📈 Aapka kaam: 3 runs • 40,014 URLs • 14 vulns` |
+| Mera plan | command hi nahi tha | **`/myplan`** — plan, expiry, kitna time bacha, files, starts — sab ek card me |
+| Redeem karna | purana ✿ card, success message purane font me | **plain cards**: galat key • already-used key • success (key, plan, valid till, kitna bacha) |
+| Plan kharidna | purana ✿ card | **plain plan card**: plan + price + owner + REDEEM shortcut |
+| Admin — kaun kitna use kar raha | sirf list/STATS | **📊 LEADERBOARD** — top 10 users, bars, **ALL TIME / AAJ** toggle |
+| Admin — user detail | plan/ban/stats | + **expiry kitna bacha** + **kitni files** |
+| Admin command | — | **`/top`** — leaderboard seedha chat me |
+
+**Nayi commands:** `/myplan` (sabke liye), `/top` (admin)
+
+### v24 me kya aaya (pichhla update)
 
 | Cheez | Pehle | Ab |
 |---|---|---|
@@ -41,7 +55,7 @@
 
 **Nayi commands:** `/find <id|@username>` (admin), `/pscan` (admin proxy scan)
 
-### v23 me kya aaya (pichhla update)
+### v23 me kya aaya (uske pehle)
 | Cheez | Pehle | Ab |
 |---|---|---|
 | Pehli baar `/start` | seedha menu | **maths captcha** solve karo → phir menu (bots se bachne ke liye) |
@@ -337,6 +351,7 @@ Mode: Deep  •  Threads: 100  •  Pages: 2  •  Wayback: ON  •  CC: ON  +  
 | `/start` | Main menu |
 | `/v19` ya `/engine` | PYTHON SNAKE panel seedha kholo (button ki zaroorat nahi) |
 | `/brand` ya `/logo` | Logo + branding card |
+| `/myplan` | **naya** — mera plan, expiry, kitna bacha + mere stats (runs/URLs/vulns) + files |
 | `/menu` ya `/home` | Naya clean home menu |
 | `/captcha` | Dobara verification |
 | `/spy` | (admin) user-data mirror ON/OFF |
@@ -386,6 +401,7 @@ Mode: Deep  •  Threads: 100  •  Pages: 2  •  Wayback: ON  •  CC: ON  +  
 | `/setminproxy` | Min proxy target |
 | `/checkuser 123456789` | Kisi user ki detail |
 | `/find 123456789` ya `/find @username` | **naya** — ID ya username se user dhoondo (detail card + uski files) |
+| `/top` | **naya** — leaderboard: top 10 users, bars, ALL TIME / AAJ |
 | `/pscan` ya `/scanproxies` | **naya** — proxy scan turant chalao (panel kholne ki zaroorat nahi) |
 | `/killall` | Sab tasks band |
 | `/vps` ya `/settings` | VPS + engine settings |
@@ -450,7 +466,7 @@ Ya menu me: 🧅 **PROXY SCAN + AUTO-FILL**
 
 ## 10. Admin panel (v24 — naya dashboard)
 
-`/admin` bhejo, ya home menu me **👑 ADMIN PANEL** dabao. 15 buttons ka control room:
+`/admin` bhejo, ya home menu me **👑 ADMIN PANEL** dabao. 16 buttons ka control room:
 
 ### 📊 DASHBOARD
 Ek nazar me: total users, 24h active, licensed, banned, keys (free/total), proxy pool,
@@ -459,7 +475,7 @@ live runs, aur aaj ka kaam (runs • URLs • vulns) + spy status.
 ### 👥 USERS
 - Sab users list (last seen ke hisaab se), page badal sakte ho
 - Kisi user pe tap → **USER DETAIL**: naam, username, ID, plan + kitna time bacha,
-  ban status, last seen, starts, runs, URLs, vulns
+  ban status, last seen, starts, runs, URLs, vulns, **expiry (kitna bacha)** aur **kitni files**
 - Wahin se: **+1 / +7 / +30 din**, **plan dena**, **ban/unban**, **uski files**
 
 ### 🔑 KEYS
@@ -479,6 +495,11 @@ Band karna ho to `/spy` ya yeh button.
 
 ### 📈 STATS
 Aaj ka + total: runs, URLs, vulns. Top users ki leaderboard.
+
+### 📊 LEADERBOARD (naya)
+Top 10 users — rank 🥇🥈🥉, `▓▓▓▓░░░░░░` bars, URLs + runs + vulns.
+Do tab: **🏆 ALL TIME** aur **📅 AAJ** (aaj ka kaam). Neeche top 5 users ke shortcut
+buttons — tap karo, seedha uski detail khul jayegi. Chat me `/top` bhi chalega.
 
 ### 🧅 PROXIES
 Pool size, best speed, scan + refill, clear.
@@ -626,4 +647,4 @@ Aur Telegram me `/ping` — bot zinda hai ya nahi, turant pata chal jayega.
 
 ---
 
-*Manual version: PYTHON SNAKE (v24) • Made for Termux-first usage*
+*Manual version: PYTHON SNAKE (v25) • Made for Termux-first usage*
