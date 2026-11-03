@@ -29113,8 +29113,9 @@ def _v25_my_work(uid) -> str:
         vulns = int(rec.get("vulns") or 0)
         if not (runs or urls or vulns):
             return "📈 Abhi koi run nahi — 🐍 AUTO DUMP se shuru karo"
-        return ("📈 <b>Aapka kaam:</b> %s runs • %s URLs • %s vulns"
-                % (format(runs, ","), format(urls, ","), format(vulns, ",")))
+        return ("📈 <b>Aapka kaam:</b> %s run%s • %s URLs • %s vulns"
+                % (format(runs, ","), "" if runs == 1 else "s",
+                   format(urls, ","), format(vulns, ",")))
     except Exception:
         return ""
 
@@ -29255,9 +29256,10 @@ def _v25_top_card(mode="all"):
         nm = (rec.get("name") or str(uid))[:16]
         tag = medals.get(i, "%2d." % i)
         lines.append("%s <b>%s</b> — <code>%s</code> URLs\n"
-                     "<code>%s</code> %s runs • %s vulns"
-                     % (tag, nm, format(urls, ","),
-                        _v25_bars(urls, maxv), format(runs, ","), format(vulns, ",")))
+                     "<code>%s</code> %s run%s • %s vuln%s"
+                     % (tag, nm, format(urls, ","), _v25_bars(urls, maxv),
+                        format(runs, ","), "" if runs == 1 else "s",
+                        format(vulns, ","), "" if vulns == 1 else "s"))
     try:
         today = (_V23_STATS.get("days", {}) or {}).get(_v23_today(), {}) or {}
         tot_urls = sum(r[1] for r in rows)
