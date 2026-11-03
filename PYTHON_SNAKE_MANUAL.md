@@ -8,7 +8,7 @@
 
 ## 📑 INDEX
 
-0. [v23 me kya naya](#0-v23-me-kya-naya-sabse-latest)
+0. [v24 me kya naya](#0-v24-me-kya-naya-sabse-latest)
 1. [Sabse pehle — 3 command](#1-sabse-pehle--3-command)
 2. [Sirf 5 minute me pehla result](#2-sirf-5-minute-me-pehla-result)
 3. [Main Menu — har button ka matlab](#3-main-menu--har-button-ka-matlab)
@@ -26,8 +26,21 @@
 
 ---
 
-## 0. v23 me kya naya (sabse latest)
+## 0. v24 me kya naya (sabse latest)
 
+| Cheez | Pehle | Ab |
+|---|---|---|
+| Baaki 4 user screens | Redeem / Premium / How-to-use / Contact me purane small-caps font | sab **plain font**, saaf headings, ek jaisa `⬅️ BACK` |
+| Plan buttons | `☁️ 30 ᴍɪɴ — $2` (small-caps) | **plain**: `☁️ 30 min — $2`, `🌥️ 1 hour — $3` … |
+| Home menu | plan/expiry nahi dikhta tha | **live line**: `💎 Plan: trial — 96 min bacha` (ya Plan: 7 Days • 6d 4h bacha) |
+| Purane brand ke nishan | kahin `Spidey / 🕸️` reh gaya tha | 21 jagah **Python Snake / 🐍** — user ko purana naam kahin nahi dikhta |
+| Admin — user dhoondo | `/checkuser` ya list me scroll | **🔍 FIND USER** button + `/find 123456789` ya `/find @username` |
+| Admin — user data | vault me file | **📤 EXPORT USERS** button — ek click me poora users CSV/JSON |
+| Admin — proxy | sirf panel se scan | **`/pscan`** (`/scanproxies`) — kabhi bhi proxy scan chalao |
+
+**Nayi commands:** `/find <id|@username>` (admin), `/pscan` (admin proxy scan)
+
+### v23 me kya aaya (pichhla update)
 | Cheez | Pehle | Ab |
 |---|---|---|
 | Pehli baar `/start` | seedha menu | **maths captcha** solve karo → phir menu (bots se bachne ke liye) |
@@ -125,7 +138,7 @@ Uske baad ye 7 buttons milte hain:
 |---|---|---|
 | 🐍 **AUTO DUMP — 1 TAP** | keywords → dorks → URLs → SQLi verify → report + 7 files | seeds (text ya `.txt`) |
 | 🧅 **PROXY SCRAPE + AUTO-FILL** | free proxies scrape → verify → pool me daal deta hai (live progress) | kuch nahi |
-| 🧰 **MANUAL DUMPING** | do option: **Classic** (purana poora bot) ya **New Latest** (v23 engine) | button |
+| 🧰 **MANUAL DUMPING** | do option: **Classic** (purana poora bot) ya **New Latest** (v24 engine) | button |
 | 🔑 **REDEEM KEY** | license key activate | key |
 | 🍷 **PREMIUM** | plans dekho / kharido | — |
 | 📖 **HOW TO USE** | chhota guide | — |
@@ -371,6 +384,8 @@ Mode: Deep  •  Threads: 100  •  Pages: 2  •  Wayback: ON  •  CC: ON  +  
 | `/checkproxies` | Proxy pool refill/check |
 | `/setminproxy` | Min proxy target |
 | `/checkuser 123456789` | Kisi user ki detail |
+| `/find 123456789` ya `/find @username` | **naya** — ID ya username se user dhoondo (detail card + uski files) |
+| `/pscan` ya `/scanproxies` | **naya** — proxy scan turant chalao (panel kholne ki zaroorat nahi) |
 | `/killall` | Sab tasks band |
 | `/vps` ya `/settings` | VPS + engine settings |
 
@@ -432,9 +447,9 @@ Ya menu me: 🧅 **PROXY SCAN + AUTO-FILL**
 
 ---
 
-## 10. Admin panel (v23 — naya dashboard)
+## 10. Admin panel (v24 — naya dashboard)
 
-`/admin` bhejo, ya home menu me **👑 ADMIN PANEL** dabao. 13 buttons ka control room:
+`/admin` bhejo, ya home menu me **👑 ADMIN PANEL** dabao. 15 buttons ka control room:
 
 ### 📊 DASHBOARD
 Ek nazar me: total users, 24h active, licensed, banned, keys (free/total), proxy pool,
@@ -469,6 +484,18 @@ Pool size, best speed, scan + refill, clear.
 
 ### ⚙️ ENGINE
 Global default: mode (fast/balanced/deep/max), threads, pages.
+
+### 📤 EXPORT USERS
+Ek click me saare users ka backup (CSV/JSON) — naam, ID, plan, expiry, runs,
+URLs, vulns. Naya phone laaya ho ya data shift karna ho to yahi se.
+
+### 🔍 FIND USER
+ID ya `@username` type karo (ya `/find 123456789`) → seedha **USER DETAIL** card:
+plan + bacha time, ban status, starts/runs/URLs/vulns, aur **📂 uski files** ka button.
+Phone pe 300 users ke beech scroll karne se better.
+
+### 🧅 `/pscan`
+Panel kholne ki zaroorat nahi — command se hi proxy scan (10-60s) + auto-fill.
 
 ### 📣 BROADCAST / 🚫 BANS / ☢️ KILL ALL
 Sabko message, ban list, aur saare tasks ek saath kill.
@@ -598,4 +625,4 @@ Aur Telegram me `/ping` — bot zinda hai ya nahi, turant pata chal jayega.
 
 ---
 
-*Manual version: PYTHON SNAKE (v23) • Made for Termux-first usage*
+*Manual version: PYTHON SNAKE (v24) • Made for Termux-first usage*
