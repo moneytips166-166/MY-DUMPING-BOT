@@ -8,7 +8,7 @@
 
 ## 📑 INDEX
 
-0. [v23 me kya naya](#0-v23-me-kya-naya-sabse-latest)
+0. [v23 + CLASSIC look](#0-v23--classic-look-sabse-latest)
 1. [Sabse pehle — 3 command](#1-sabse-pehle--3-command)
 2. [Sirf 5 minute me pehla result](#2-sirf-5-minute-me-pehla-result)
 3. [Main Menu — har button ka matlab](#3-main-menu--har-button-ka-matlab)
@@ -26,7 +26,20 @@
 
 ---
 
-## 0. v23 me kya naya (sabse latest)
+## 0. v23 + CLASSIC look (sabse latest)
+
+> **Latest patch:** `python_snake_v26.py` — purana **classic font** wapas (small-caps + ✿ borders)
+> user panel aur admin panel dono me, aur owner username ab **@Bloody_sweet_baby**.
+> Features bilkul v23 wale — kuch naya add nahi hua.
+
+| Cheez | Pehle | Ab |
+|---|---|---|
+| Font (user + admin) | naye screens plain | **purana classic**: `ᴀᴜᴛᴏ ᴅᴜᴍᴘ`, `✿︎━━━━✿︎` borders |
+| Owner username | `@LUCIFERCOMINGBABY` | **`@Bloody_sweet_baby`** (contact + plan card + sab jagah) |
+| Keys / IDs / URLs / @username | — | **safe** — font unhe nahi badalta (copy-paste ekdum sahi) |
+| Features | v23 | **same v23** — kuch add/remove nahi |
+
+### v23 me kya aaya
 
 | Cheez | Pehle | Ab |
 |---|---|---|
@@ -36,7 +49,7 @@
 | Universal Dorks button | dead tha (click pe kuch nahi) | ab **live** (Engine panel ke andar) |
 | Proxy Scrape button | dead tha | ab **live** — scan + auto-fill + live progress |
 | Manual Dumping | nahi tha | **Classic** (purana poora bot) ya **New Latest** (v23 engine) |
-| Button fonts | kahin small-caps, kahin bold/italic | sab **plain aur same** |
+| Button fonts | naye screens plain the | ab **sab purane classic small-caps (ᴀʙᴄ) me** — user + admin dono, ✿ borders ke saath |
 | Admin panel | purana list | **naya dashboard** — users, keys, live runs, vault, spy, stats, engine, proxy |
 | Admin ko data | sirf file vault me | vault + **activity ping** (kaun kya nikaal raha hai) |
 
