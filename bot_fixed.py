@@ -4472,7 +4472,7 @@ def access_denied_text():
         lines.append(f"  {emoji}  *{label}*  —  `{price}`")
     lines += [
         "✿︎━━━━━━━━━━━━━━━━━━━━✿\n\n︎"
-        "Oʀ Tᴀᴘ 🔑 *Rᴇᴅᴇᴇᴍ Kᴇʏ* Iғ Yᴏᴜʜ Hᴀᴠᴇ Oɴᴇ\n"
+        "Oʀ Tᴀᴘ 🔑 *Rᴇᴅᴇᴇᴍ Kᴇʏ* Iғ Yᴏᴜ Hᴀᴠᴇ Oɴᴇ\n"
     ]
     return "\n".join(lines)
 
@@ -4514,7 +4514,7 @@ def premium_locked_text():
         "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
         f"🆘 Cᴏɴᴛᴀᴄᴛ Aᴅᴍɪɴ: `{ADMIN_USERNAME}`\n"
         f"🎟 Cᴏᴜᴘᴏɴ Cᴏᴅᴇ: `{COUPON_CODE}`\n"
-        "_Oʀ Tᴀᴘ_ 🔑 *Rᴇᴅᴇᴇᴍ Kᴇʏ* _Iғ Yᴏᴜʜ Hᴀᴠᴇ Oɴᴇ._"
+        "_Oʀ Tᴀᴘ_ 🔑 *Rᴇᴅᴇᴇᴍ Kᴇʏ* _Iғ Yᴏᴜ Hᴀᴠᴇ Oɴᴇ._"
     ]
     return "\n".join(lines)
 
@@ -4536,7 +4536,7 @@ def trial_expired_text():
         "✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n\n"
         f"🆘 Cᴏɴᴛᴀᴄᴛ `{ADMIN_USERNAME}` Tᴏ Bᴜʏ\n"
         f"🎟 Usᴇ Cᴏᴜᴘᴏɴ Cᴏᴅᴇ: `{COUPON_CODE}`\n"
-        "_Oʀ Usᴇ_ 🔑 *Rᴇᴅᴇᴇᴍ Kᴇʏ* _Iғ Yᴏᴜʜ Hᴀᴠᴇ Oɴᴇ_"
+        "_Oʀ Usᴇ_ 🔑 *Rᴇᴅᴇᴇᴍ Kᴇʏ* _Iғ Yᴏᴜ Hᴀᴠᴇ Oɴᴇ_"
     ]
     return "\n".join(lines)
 
@@ -4599,7 +4599,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n"
             "💥 𝙁𝙧𝙚𝙚 𝙏𝙧𝙖𝙞𝙡 𝙐𝙣𝙡𝙤𝙘𝙠𝙚𝙙\n"
             f"✿︎━━━━━━━━━━━━━━━━━━━━✿\n︎\n"
-            f"⏳ Yᴏᴜʜ Hᴀᴠᴇ *{mins} Min* Tᴏ Tʀʏ Aʟʟ Fᴇᴀᴛᴜʀᴇs!\n"
+            f"⏳ Yᴏᴜ Hᴀᴠᴇ *{mins} Min* Tᴏ Tʀʏ Aʟʟ Fᴇᴀᴛᴜʀᴇs!\n"
             f"🧤 Tʀʏ Eᴠᴇʀʏ Sɪɴɢʟᴇ Pᴏᴡᴇʀ.\n"
             f"⚠️ *Tʀᴀɪʟ Eɴᴅs Iɴ {mins} Mɪɴ* \n"
             f"✿︎━━━━━━━━━━━━━━━━━━━━✿︎\n"
@@ -4799,7 +4799,7 @@ async def setpr_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     uid = update.effective_user.id
     if not is_admin(uid) and not has_access(uid):
-        await update.message.reply_text("❌ Yᴏᴜʜ Aʀᴇ Nᴏᴛ Aᴜᴛʜᴏʀɪᴢᴇᴅ.")
+        await update.message.reply_text("❌ Yᴏᴜ Aʀᴇ Nᴏᴛ Aᴜᴛʜᴏʀɪᴢᴇᴅ.")
         return MENU
 
     text = update.message.text.strip()
@@ -4932,7 +4932,7 @@ async def setpr_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     if not is_admin(user_id):
-        await update.message.reply_text("❌ Yᴏᴜʜ Aʀᴇ Nᴏᴛ Aᴜᴛʜᴏʀɪᴢᴇᴅ.")
+        await update.message.reply_text("❌ Yᴏᴜ Aʀᴇ Nᴏᴛ Aᴜᴛʜᴏʀɪᴢᴇᴅ.")
         return MENU
     total_users = len(all_user_ids)
     active_users = sum(1 for info in authorized_users.values() if datetime.now() < info["expires"])
@@ -28699,6 +28699,41 @@ try:
 except Exception:
     pass
 # ═══ PYTHON SNAKE v26 CLASSIC LOOK END ═══
+
+
+# ═══ PYTHON SNAKE v27 START ═══
+# ─────────────────────────────────────────────────────────────────────────────
+#  Home menu se admin button hatao — admin panel sirf /admin se
+# ─────────────────────────────────────────────────────────────────────────────
+def _v23_main_kb(uid: int = 0):   # noqa: F811
+    """User home keyboard — sirf 7 user buttons. Admin panel ka button nahi."""
+    return InlineKeyboardMarkup(_v23_kb_rows())
+
+
+_v27_prev_admin_cmd = admin_cmd
+
+
+async def admin_cmd(update, context):   # noqa: F811
+    """/admin — sirf admin ke liye naya dashboard (home me button nahi)."""
+    uid = getattr(getattr(update, "effective_user", None), "id", 0) or 0
+    if not is_admin(uid):
+        if not _v27_prev_admin_cmd:
+            return MENU
+        return await _v27_prev_admin_cmd(update, context)
+    msg = getattr(update, "effective_message", None)
+    try:
+        await msg.reply_text(_v23_dash_text(), reply_markup=make_admin_menu(),
+                             parse_mode=ParseMode.HTML)
+        return MENU
+    except Exception:
+        pass
+    return await _v27_prev_admin_cmd(update, context)
+
+try:
+    logger.info("🐍 v27 — home se admin button hata • /admin se panel")
+except Exception:
+    pass
+# ═══ PYTHON SNAKE v27 END ═══
 
 
 if __name__ == "__main__":
