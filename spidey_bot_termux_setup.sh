@@ -159,6 +159,32 @@ cd "$(dirname "$0")" || exit 1
 curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/spidey_setconfig.sh" -o .setconfig.tmp && bash .setconfig.tmp && rm -f .setconfig.tmp
 EOF
 
+cat > manual.sh <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+# 📖 Poora manual padho (phone pe hi)
+set -u
+cd "$(dirname "$0")" || exit 1
+MANUAL_FILE=""
+for f in MANUAL.md SPIDEY_BOT_MANUAL.md manual.md; do
+  [ -f "$f" ] && MANUAL_FILE="$f" && break
+done
+if [ -z "$MANUAL_FILE" ]; then
+  echo "⬇️  Manual download kar raha hoon..."
+  if curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/SPIDEY_BOT_MANUAL.md" -o MANUAL.md; then
+    MANUAL_FILE="MANUAL.md"
+  else
+    echo "❌ Download fail — internet check karo"
+    exit 1
+  fi
+fi
+echo ""
+if command -v less >/dev/null 2>&1; then
+  less -R -f "$MANUAL_FILE"
+else
+  cat "$MANUAL_FILE"
+fi
+EOF
+
 cat > doctor.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 # 🩺 Bot jawab nahi de raha? Ye chalao:  ./doctor.sh
@@ -175,7 +201,7 @@ cd "$(dirname "$0")" || exit 1
 curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/spidey_update.sh" -o .update.tmp && bash .update.tmp && rm -f .update.tmp
 EOF
 
-chmod +x run.sh start.sh stop.sh restart.sh logs.sh status.sh settoken.sh setconfig.sh doctor.sh update.sh 2>/dev/null || true
+chmod +x run.sh start.sh stop.sh restart.sh logs.sh status.sh settoken.sh setconfig.sh doctor.sh manual.sh update.sh 2>/dev/null || true
 
 echo ""
 echo "=============================================================="
@@ -189,6 +215,7 @@ echo "  ./status.sh     -> chal raha hai ya nahi"
 echo "  ./logs.sh       -> live log"
 echo "  ./setconfig.sh  -> ⚙️ token / admin id change"
 echo "  ./doctor.sh     -> 🩺 bot jawab nahi de raha? ye chalao"
+echo "  ./manual.sh     -> 📖 poora user manual (phone pe hi padho)"
 echo "  ./stop.sh       -> band"
 echo "  ./restart.sh    -> restart"
 echo "  ./update.sh     -> 🔄 latest version (token/admin safe + auto restart)"
