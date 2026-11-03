@@ -12,6 +12,7 @@
 1. [Sabse pehle — 3 command](#1-sabse-pehle--3-command)
 2. [Sirf 5 minute me pehla result](#2-sirf-5-minute-me-pehla-result)
 3. [Main Menu — har button ka matlab](#3-main-menu--har-button-ka-matlab)
+3.5. [CLASSIC vs NEW LATEST — kya farak hai](#35-classic-vs-new-latest--kya-farak-hai)
 4. [PYTHON SNAKE panel (asli engine)](#4-python-snake-engine-panel-asli-engine)
 5. [Engine Settings — kaunsa mode, kitne threads](#5-engine-settings--kaunsa-mode-kitne-threads)
 6. [3 ready-made workflows (copy-paste karo)](#6-3-ready-made-workflows-copy-paste-karo)
@@ -28,9 +29,10 @@
 
 ## 0. v23 + CLASSIC look (sabse latest)
 
-> **Latest patch:** `python_snake_v26.py` — purana **classic font** wapas (small-caps + ✿ borders)
-> user panel aur admin panel dono me, aur owner username ab **@Bloody_sweet_baby**.
-> Features bilkul v23 wale — kuch naya add nahi hua.
+> **Latest patch:** `python_snake_v27.py` — home menu se **👑 ADMIN PANEL button hata diya**.
+> Admin panel ab sirf **`/admin`** command se khulega (admin ko bhi home me button nahi dikhega).
+> `python_snake_v26.py` — purana **classic font** wapas (small-caps + ✿ borders) user + admin dono me,
+> owner username **@Bloody_sweet_baby**. Features bilkul v23 wale — kuch naya add nahi hua.
 
 | Cheez | Pehle | Ab |
 |---|---|---|
@@ -160,6 +162,60 @@ Uske baad ye 7 buttons milte hain:
 | Auto-Pilot / Refinery / Source Code / Dedup | bekar | `/classic` se |
 
 > Ye buttons **tute nahi hain** — bas menu saaf rakhne ke liye hide hain. `/classic` bhejte hi poora purana menu wapas aa jata hai.
+
+## 3.5 CLASSIC vs NEW LATEST — kya farak hai
+
+Do jagah se bot chalta hai:
+- **NEW LATEST** — naya engine panel (`/engine` ya Manual Dumping → NEW LATEST)
+- **CLASSIC** — purana poora menu (`/classic`, ya Manual Dumping → CLASSIC)
+
+### NEW LATEST panel (9 buttons) — fast raasta
+
+| Button | Kaam |
+|---|---|
+| 🐍 AUTO DUMP — 1 TAP | 4 phase: keywords → universal dorks → deep parse → SQLi verify → 7 files |
+| 🧠 KEYWORDS | keyword maker (step-by-step) |
+| 🎯 DORKS | random dork generator |
+| 🧬 UNIVERSAL DORKS | 150+ template, niche auto-detect (CC/wine/shop…) |
+| 🌍 DEEP PARSER | 60 threads, Wayback + CommonCrawl |
+| 🛡️ SQLI CHECKER | real verify, 0 fake positive |
+| 🧅 PROXY SCAN | scrape + auto-fill |
+| ⚙️ SETTINGS | threads / pages / mode |
+| 🐍 LOGO / BRAND | logo card |
+
+### CLASSIC menu (23 buttons) — jisme ye EXTRA hai (naye panel me nahi)
+
+| Classic me | Kya karta hai | Naye panel me status |
+|---|---|---|
+| 🚀 **AUTO-PILOT PIPELINE** | pura chain apne aap (kw→dork→parse→scan→dump) | ⚠️ AUTO DUMP **aadha** karta hai (dump nahi) |
+| 🧰 **COMBO & URL REFINERY** | `user:pass` combo banata hai, URL clean/dedup | ❌ nahi hai |
+| 💎 **KW QUALITY CHECK** | keywords ko HQ/MQ/LQ score, bekaar hata deta hai | ❌ nahi hai |
+| 🧠 **AI KEYWORD PARSER** | Gemini/Claude se naye keywords | ❌ nahi hai |
+| 🎖️ **GENERATE DORKS v2 (UHQ)** | pro-level dorks, zyada templates | ⚠️ UNIVERSAL DORKS thoda cover karta hai |
+| 🪷 **HQ SQLI DORKS** | sirf SQLi ke best dorks | ❌ nahi hai |
+| 🌍 **COUNTRY DORKS** | pk / in / ru… country target | ❌ nahi hai |
+| 🦨 **CMS DORKS** | WordPress / Joomla / Drupal | ❌ nahi hai |
+| 🌫️ **EXPOSED FILE DORKS** | `.sql` / `.env` / `.zip` exposed | ❌ nahi hai |
+| 💣 **VULN URLS ➪ ALL DATA DUMP** | vuln list → poora DB dump (sqlmap) | ❌ nahi hai |
+| 🪵 **DORKS ➪ DB DUMP** | dorks → dump | ❌ nahi hai |
+| 🎢 **URLS ➪ DB DUMP** | URLs → dump | ❌ nahi hai |
+| ⚜️ **BUY SOURCE CODE** | source bechne ka page | ❌ nahi hai |
+| 🛑 **STOP / KILL RUNNING TASKS** | sab kaam band | ⚠️ AUTO DUMP ke andar 🛑 Sᴛᴏᴘ button hai |
+
+### Jo CLASSIC me bhi nahi hai (naya hi hai)
+
+| Naya | Fayda |
+|---|---|
+| 🐍 AUTO DUMP — 1 TAP | ek click, seedha result |
+| 🧬 UNIVERSAL DORKS | niche auto-detect |
+| 🛡️ SQLI CHECKER (v2) | 0 fake positive — classic wala purana scanner galat batata tha |
+| 🧅 PROXY SCRAPE + AUTO-FILL | classic me proxy manual tha |
+| 🧰 MANUAL DUMPING | Classic / New Latest — dono ek jagah |
+
+**Short me:** naya panel **tez + saaf** hai (jo roz chahiye wahi), classic me **extra power tools** hain
+(AI keywords, dump engines, dork tiers, refinery). Dono ek hi bot me hain — `/classic` se purana khul jata hai.
+
+---
 
 ## 4. PYTHON SNAKE ENGINE panel (asli engine)
 
@@ -447,7 +503,8 @@ Ya menu me: 🧅 **PROXY SCAN + AUTO-FILL**
 
 ## 10. Admin panel (v23 — naya dashboard)
 
-`/admin` bhejo, ya home menu me **👑 ADMIN PANEL** dabao. 13 buttons ka control room:
+**Sirf `/admin` command se** (home menu me ab admin ka button nahi hai — screenshot jaisa saaf rehta hai).
+13 buttons ka control room:
 
 ### 📊 DASHBOARD
 Ek nazar me: total users, 24h active, licensed, banned, keys (free/total), proxy pool,
