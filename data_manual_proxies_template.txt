@@ -1,0 +1,13 @@
+# PYTHON SNAKE — manual proxies file
+# Is file ko yahan rakho:  data/manual_proxies.txt
+# Ek line me ek proxy. Ye formats chalte hain:
+#
+#   1.2.3.4:8080
+#   1.2.3.4 8080
+#   1.2.3.4,8080
+#   http://1.2.3.4:8080
+#   socks5://1.2.3.4:1080
+#   http://user:pass@1.2.3.4:8080
+#
+# '#' se shuru hone wali lines ignore hoti hain.
+# Bot inhe pool me daal dega jab free sources fail ho.
