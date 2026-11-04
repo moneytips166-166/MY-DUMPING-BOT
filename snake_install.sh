@@ -99,61 +99,14 @@ else
   echo "  ℹ️  Purana bot nahi mila — token baad me ./setconfig.sh se daalo"
 fi
 
-# ---------- 6. helper scripts ----------
-cat > start.sh <<'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-cd "$(dirname "$0")" || exit 1
-if screen -ls 2>/dev/null | grep -q "\.snake"; then
-  echo "⚠️  Bot pehle se chal raha hai. Restart ke liye: ./restart.sh"
-  exit 0
-fi
-screen -dmS snake bash -c 'python3 snake_core.py 2>&1 | tee -a bot.log'
-sleep 2
-echo "🚀 Started. Logs: ./logs.sh"
-EOF
-cat > stop.sh <<'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-cd "$(dirname "$0")" || exit 1
-pkill -f "python3 snake_core.py" 2>/dev/null
-screen -S snake -X quit 2>/dev/null
-echo "🛑 Stopped."
-EOF
-cat > restart.sh <<'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-cd "$(dirname "$0")" || exit 1
-./stop.sh >/dev/null 2>&1
-sleep 1
-./start.sh
-EOF
-cat > logs.sh <<'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-cd "$(dirname "$0")" || exit 1
-tail -n 40 bot.log 2>/dev/null || echo "(log khali)"
-EOF
-cat > status.sh <<'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-cd "$(dirname "$0")" || exit 1
-if screen -ls 2>/dev/null | grep -q "\.snake"; then
-  echo "✅ Bot CHAL RAHA hai"
+# ---------- 6. helper scripts (repo se, ek hi source) ----------
+echo ""
+echo "  🔧 Helper scripts (start/stop/logs/...)…"
+if curl -fsSL --retry 2 --max-time 60 "$REPO_RAW/snake_helpers.sh" -o .helpers.tmp 2>/dev/null; then
+  bash .helpers.tmp && rm -f .helpers.tmp
 else
-  echo "❌ Bot BAND hai"
+  echo "  ⚠️  helpers download fail — start/stop scripts purane rahenge"
 fi
-echo "── last 5 log lines ──"
-tail -n 5 bot.log 2>/dev/null || echo "(log khali)"
-EOF
-cat > update.sh <<'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-set -u
-cd "$(dirname "$0")" || exit 1
-curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/snake_update.sh" -o .upd.tmp && bash .upd.tmp && rm -f .upd.tmp
-EOF
-cat > setconfig.sh <<'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-set -u
-cd "$(dirname "$0")" || exit 1
-curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/snake_setconfig.sh" -o .cfg.tmp && bash .cfg.tmp && rm -f .cfg.tmp
-EOF
-chmod +x start.sh stop.sh restart.sh logs.sh status.sh update.sh setconfig.sh 2>/dev/null
 
 # ---------- 7. syntax check ----------
 echo ""

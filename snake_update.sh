@@ -92,6 +92,15 @@ mv -f "$NEW" "$BOT"
 rm -rf __pycache__
 echo "  ✅ $BOT update ho gaya"
 
+# ---------- helpers refresh ----------
+echo ""
+echo "  🔧 Helper scripts refresh…"
+if curl -fsSL --retry 2 --max-time 60 "$REPO_RAW/snake_helpers.sh" -o .helpers.tmp 2>/dev/null; then
+  bash .helpers.tmp && rm -f .helpers.tmp
+else
+  echo "  ⚠️  helpers refresh skip (net issue)"
+fi
+
 WAS_RUNNING=0
 screen -ls 2>/dev/null | grep -q "\.snake" && WAS_RUNNING=1
 if [ "$WAS_RUNNING" = "1" ]; then

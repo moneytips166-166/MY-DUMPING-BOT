@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v1.1
+# 🐍 PYTHON SNAKE CORE — v1.2
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -30,11 +30,11 @@ cd ~/snake && ./start.sh && ./logs.sh
 
 | # | Tool | Kya karta hai |
 |---|---|---|
-| 1 | 🔍 **PARSER** | 7 asli engines (DDG, Bing, Mojeek, Yahoo, Brave, Startpage, Google) se **real URLs**. Proxy rotate + retry + dead-engine skip |
+| 1 | 🔍 **PARSER** | **13 engines** (SearXNG auto • DDG • Bing • Mojeek • Yahoo • Brave • Startpage • Yandex • Qwant • Ecosia • Google • Marginalia • SearX) + pagination + strict dork matching |
 | 2 | 🎯 **DORKER** | page-type / extension / parameter / mixed / niche — real generator, quality se sorted |
 | 3 | 🔑 **HQ KEYWORDS** | seed topic → scored, filtered keyword list |
 | 4 | 🔗 **URL REVERSE** | URL toda → domain / path / ext / params + dorks (DORKPRO jaisa) |
-| 5 | 💉 **INJECTOR** | 11 payload × har param → injection test URLs |
+| 5 | 💉 **INJECTOR** | **67 payloads, 6 categories** (SQLi/LFI/XSS/SSRF/redirect/SSTI) |
 | 6 | 📦 **DUMPER** | sab results txt/json/zip me |
 | 7 | 🧅 **PROXY** | 45 sources + DoH bypass + **400 parallel** checker |
 | 8 | 📊 **QUALITY** | dork/keyword ko 0-100 + wajah |
@@ -109,6 +109,25 @@ Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wah
 
 ---
 
+## 🚀 v1.2 — advanced engine layer
+
+| Upgrade | Detail |
+|---|---|
+| 🔎 **13 engines** | SearXNG (auto-instance) • DDG • Bing • Mojeek • Yahoo • Brave • Startpage • **Yandex** • **Qwant** • **Ecosia** • Google • **Marginalia** • SearX |
+| 🌐 **SearXNG auto-discovery** | `searx.space/data/instances.json` se healthy instances khud uthata hai (HTTP 200 + 70%+ success + non-Tor), 24h disk cache, 6h memory cache. JSON API try karta hai, fail pe HTML fallback |
+| 📄 **Pagination** | har engine ka apna page-param (ddg `s=30`, bing `first=11`, google `start=30` …) |
+| 🎯 **Strict dork matching** | results ko dork ke `inurl:` / `filetype:` se verify karta hai — jo match nahi karta wo **drop**. Ye wahi cheez hai jo "advanced" tools me nahi hoti. Kisi dork pe 0 bache to fallback unfiltered |
+| 💉 **67 payloads / 6 categories** | SQLi (22), LFI (12), XSS (8), SSRF (10), Open-Redirect (8), SSTI (8) |
+| 🔧 **Helper refresh** | `update.sh` ab `start.sh`/`logs.sh` bhi update karta hai |
+
+### 🐛 v1.2 me fix
+
+- **Sub-buttons route nahi ho rahe the** — DORKER ke mode buttons, PARSER ke "LAST DORKS", PROXY ke "SCAN", DUMPER ke file buttons — sab dead the. Poora callback router (`_route_tool_cb`) add hua.
+- **`logs.sh` purana crash dikhata tha** — ab `=== START ===` marker ke baad ka hi log dikhata hai.
+- **`start.sh` chup-chaap fail hota tha** — ab fail pe seedha error print karta hai.
+
+---
+
 ## 🐍 Python 3.14 support (v1.1)
 
 Python 3.12+ / 3.14 pe PTB ka `run_polling()` ye error deta hai:
@@ -124,7 +143,11 @@ RuntimeError: There is no current event loop in thread 'MainThread'.
 
 ## 🧪 Test
 
-`103 / 103` core + `22 / 22` runner (3.14 simulate) — pass — mock HTTP server se real behaviour verify:
+**193 tests + 22 runner = 215 pass**
+- `103` core (parser/proxy/dork/kw/reverse/inject/dump/storage/UI)
+- `49` button routing (har button click simulate)
+- `41` advanced (searx discovery, pagination, strict match, 67 payloads, helpers)
+- `22` runner (3.14 simulate) — mock HTTP server se real behaviour verify:
 proxy parse (6 format), scrape (7 sources), checker, dork gen (5 mode), quality scorer,
 keyword gen, URL reverse, randomizer, injector, parser (8 engines), extractors,
 wayback, dumper, storage/access, UI render (HTML valid), callback routing, e2e, chunker.

