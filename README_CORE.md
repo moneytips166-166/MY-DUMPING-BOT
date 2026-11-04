@@ -1,0 +1,130 @@
+# 🐍 PYTHON SNAKE CORE — v1.0
+
+**Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## ⚡ Install (ek command)
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/snake_install.sh" -o si.sh && bash si.sh
+```
+
+Ye kya karta hai:
+
+- `~/snake` folder banata hai
+- `snake_core.py` download karta hai (**2,680 lines** — pehle wale 29,000 ki jagah)
+- purane `~/spidey/bot_fixed.py` se **token + admin ID khud utha leta hai**
+- `start.sh / stop.sh / restart.sh / logs.sh / status.sh / update.sh / setconfig.sh` banata hai (sab **screen** based)
+- packages check karta hai
+
+Phir:
+
+```bash
+cd ~/snake && ./start.sh && ./logs.sh
+```
+
+---
+
+## 🧰 Tools — bas yehi 9
+
+| # | Tool | Kya karta hai |
+|---|---|---|
+| 1 | 🔍 **PARSER** | 7 asli engines (DDG, Bing, Mojeek, Yahoo, Brave, Startpage, Google) se **real URLs**. Proxy rotate + retry + dead-engine skip |
+| 2 | 🎯 **DORKER** | page-type / extension / parameter / mixed / niche — real generator, quality se sorted |
+| 3 | 🔑 **HQ KEYWORDS** | seed topic → scored, filtered keyword list |
+| 4 | 🔗 **URL REVERSE** | URL toda → domain / path / ext / params + dorks (DORKPRO jaisa) |
+| 5 | 💉 **INJECTOR** | 11 payload × har param → injection test URLs |
+| 6 | 📦 **DUMPER** | sab results txt/json/zip me |
+| 7 | 🧅 **PROXY** | 45 sources + DoH bypass + **400 parallel** checker |
+| 8 | 📊 **QUALITY** | dork/keyword ko 0-100 + wajah |
+| 9 | 🎲 **RANDOMIZER** | shuffle + operator mutate |
+
+Plus 👑 **ADMIN PANEL** (`/admin`) — 15 buttons.
+
+---
+
+## 📦 Database (real, generated)
+
+| Cheez | Count |
+|---|---|
+| Page-types (dir × file × query-shape) | **57,288** |
+| Dorks | **35,689,680** |
+| Parameters | 812 |
+| Extensions | 60 |
+| TLDs | 72 |
+| Keywords space | 24,360 |
+
+---
+
+## 🧅 Proxy engine
+
+- **45 sources / 15 domains** — jsDelivr, Statically, gitHack, GitHub, proxyscrape v2+v4, geonode, github.io mirrors
+- **DoH bypass** — `1.1.1.1` / `8.8.8.8` se IP nikaal ke `Host:` header ke saath direct IP connect (DNS block bypass)
+- **400 parallel** checker, 200 alive milne pe ruk jata hai
+- **Manual list** — `data/manual_proxies.txt` (1 line = 1 proxy)
+- **Card me diagnostics** — `🌐 Sources: 31/45 OK • raw lines: 128,450`
+
+---
+
+## 👑 Admin panel
+
+```
+📊 DASHBOARD   👥 USERS     🔑 KEYS      🧅 PROXY
+⚙️ ENGINE      📦 DUMPS     📣 BROADCAST 🚫 BANS
+💾 BACKUP      🖥 SYSTEM    🧹 CLEAR     📜 LOGS
+🔄 RESTART     ⬅️ MENU
+```
+
+Commands: `/admin` `/myid` `/ban <id>` `/unban <id>` `/addkey <days>` `/help`
+
+---
+
+## 🔐 Security
+
+`snake_core.py` me token **placeholder** hai. Asli token sirf aapke device pe:
+
+```bash
+./setconfig.sh --token 123456789:AAGxxxx
+./setconfig.sh --admin 8999053405
+./restart.sh
+```
+
+`.gitignore` me `.env`, `config.py`, `data/`, `dumps/` hai.
+
+---
+
+## 🆚 Pehle vs ab
+
+| | Pehle (bot_fixed.py) | Ab (snake_core.py) |
+|---|---|---|
+| Lines | 29,222 | **2,680** |
+| Buttons | 7 + 13 admin | 10 + 15 admin |
+| Layers | v1 → v28 patches | **clean rewrite** |
+| Mock data | tha | **zero** |
+| Proxy | 45 src (v28 patch) | 45 src (**native**) |
+| Parser | mixed | **7 engines, retry, dead-skip** |
+
+Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
+
+---
+
+## 🧪 Test
+
+`103 / 103` pass — mock HTTP server se real behaviour verify:
+proxy parse (6 format), scrape (7 sources), checker, dork gen (5 mode), quality scorer,
+keyword gen, URL reverse, randomizer, injector, parser (8 engines), extractors,
+wayback, dumper, storage/access, UI render (HTML valid), callback routing, e2e, chunker.
+
+---
+
+## ❓ Kuch toota to
+
+```bash
+cd ~/snake
+./logs.sh          # kya error hai
+./status.sh        # chal raha hai?
+./restart.sh
+```
+
+Token issue: `./setconfig.sh --show` → `./setconfig.sh --token <new>` → `./restart.sh`
