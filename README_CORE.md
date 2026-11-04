@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v1.0
+# 🐍 PYTHON SNAKE CORE — v1.1
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -109,9 +109,22 @@ Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wah
 
 ---
 
+## 🐍 Python 3.14 support (v1.1)
+
+Python 3.12+ / 3.14 pe PTB ka `run_polling()` ye error deta hai:
+
+```
+RuntimeError: There is no current event loop in thread 'MainThread'.
+```
+
+**Fix ho gaya.** Ab bot apna event loop khud banata hai (`_run_loop` + `_serve`) —
+`asyncio.get_event_loop()` bilkul use nahi hota. Clean shutdown SIGINT/SIGTERM pe.
+
+---
+
 ## 🧪 Test
 
-`103 / 103` pass — mock HTTP server se real behaviour verify:
+`103 / 103` core + `22 / 22` runner (3.14 simulate) — pass — mock HTTP server se real behaviour verify:
 proxy parse (6 format), scrape (7 sources), checker, dork gen (5 mode), quality scorer,
 keyword gen, URL reverse, randomizer, injector, parser (8 engines), extractors,
 wayback, dumper, storage/access, UI render (HTML valid), callback routing, e2e, chunker.

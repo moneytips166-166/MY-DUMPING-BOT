@@ -25,6 +25,8 @@ import os
 import re
 import sys
 import json
+import signal
+import platform
 import time
 import math
 import random
@@ -61,7 +63,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "CORE-1.0"
+VERSION = "v1.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -1245,7 +1247,7 @@ async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list 
     found = []
     seen = set()
     # chhoti dork list = zyada engines (depth), badi list = kam engines (speed)
-    eng_cap = 6 if len(dorks) <= 10 else 3
+    eng_cap = len(engines) if len(dorks) <= 10 else 3
     stats = {"queries": 0, "engine_hits": defaultdict(int), "errors": 0, "blocked": 0}
     conn = aiohttp.TCPConnector(limit=60, ssl=False, ttl_dns_cache=600)
     async with aiohttp.ClientSession(connector=conn) as session:
@@ -1264,7 +1266,8 @@ async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list 
                 # jo engine 3+ baar khaali/blocked nikla, use peeche bhejo
                 order.sort(key=lambda e: ENGINE_MISS.get(e, 0) >= 3)
                 for eng in order:
-                    if tried >= eng_cap:
+                    # 0-1 result pe kabhi give-up nahi — saare engines try karo
+                    if tried >= eng_cap and got >= 2:
                         break
                     tried += 1
                     proxy = _pick_proxy() if use_proxy else None
@@ -1364,7 +1367,7 @@ def kb_back(to: str = "m:home") -> InlineKeyboardMarkup:
 def main_text(name: str = "") -> str:
     c = db_counts()
     hi = "Hi <b>%s</b>,\n" % esc(name) if name else ""
-    return (H("PYTHON SNAKE", "CORE v%s • sirf kaam ka" % VERSION) + "\n"
+    return (H("PYTHON SNAKE", "CORE %s • sirf kaam ka" % VERSION) + "\n"
             + hi + "\n"
             "📦 <b>Database</b>\n"
             "• Page-types : <code>%s</code>\n"
@@ -2359,7 +2362,7 @@ def admin_dash() -> str:
         upt = "%dh %dm" % (up // 3600, (up % 3600) // 60)
     except Exception:
         upt = "—"
-    return (H("ADMIN DASHBOARD", "CORE v%s" % VERSION) + "\n\n"
+    return (H("ADMIN DASHBOARD", "CORE %s" % VERSION) + "\n\n"
             "👥 Users    : <code>%s</code> (active <b>%d</b>, banned <b>%d</b>)\n"
             "🔑 Keys     : <code>%d</code> (unused <b>%d</b>)\n"
             "🧅 Proxies  : <code>%d</code> alive\n"
@@ -2568,7 +2571,7 @@ async def admin_callback(update, context, action: str):
         try:
             import platform
             txt = (H("ADMIN — SYSTEM") + "\n\n"
-                   "🐍 %s v%s\n🖥 %s\n🐍 Python %s\n"
+                   "🐍 %s %s\n🖥 %s\n🐍 Python %s\n"
                    "📁 %s\n🧵 PID %d\n📊 Lines %d"
                    % (BRAND, VERSION, esc(platform.platform()[:48]),
                       esc(platform.python_version()), esc(BASE_DIR), os.getpid(),
@@ -2652,8 +2655,7 @@ async def on_error(update, context):
     logger.error("handler error: %s", context.error, exc_info=context.error)
 
 
-def main():
-    logger.info("🐍 %s CORE v%s starting…", BRAND, VERSION)
+def build_app() -> Application:
     app = ApplicationBuilder().token(TOKEN).concurrent_updates(True).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_start))
@@ -2666,14 +2668,132 @@ def main():
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_error_handler(on_error)
+    return app
 
+
+def _install_signals(stop_event) -> None:
+    """SIGINT / SIGTERM pe clean shutdown."""
+    def _stop(*_a):
+        try:
+            stop_event.set()
+        except Exception:
+            pass
+    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            asyncio.get_running_loop().add_signal_handler(sig, _stop)
+        except (NotImplementedError, RuntimeError, ValueError):
+            try:
+                signal.signal(sig, _stop)
+            except Exception:
+                pass
+
+
+async def _serve(app, stop_ev=None) -> None:
+    """Apna polling loop — asyncio.get_event_loop() use NAHI karta.
+
+    PTB ka run_polling() Python 3.12+ / 3.14 pe 'There is no current event
+    loop' deta hai, isliye yahan manually initialize/start/poll karte hain.
+    """
+    if stop_ev is None:
+        stop_ev = asyncio.Event()
+    _install_signals(stop_ev)
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+        poll_interval=0.5,
+        timeout=30,
+    )
+    logger.info("✅ Polling chalu — bot zinda hai. (Ctrl+C ya ./stop.sh se band)")
+    try:
+        await stop_ev.wait()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        logger.info("⏹ Band ho raha hai…")
+        try:
+            await app.updater.stop()
+        except Exception:
+            pass
+        try:
+            await app.stop()
+        except Exception:
+            pass
+        try:
+            await app.shutdown()
+        except Exception:
+            pass
+        logger.info("👋 Band ho gaya.")
+
+
+def _run_loop(app, stop_ev=None) -> None:
+    """Naya event loop bana ke chalata hai (3.14 safe)."""
+    try:
+        loop = asyncio.new_event_loop()
+    except Exception:
+        loop = None
+    if loop is None:
+        asyncio.run(_serve(app, stop_ev))
+        return
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_serve(app, stop_ev))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            pending = asyncio.all_tasks(loop)
+            for t in pending:
+                t.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except Exception:
+            pass
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
+        try:
+            asyncio.set_event_loop(None)
+        except Exception:
+            pass
+        try:
+            loop.close()
+        except Exception:
+            pass
+
+
+def main():
+    logger.info("🐍 %s CORE %s starting… (Python %s • PTB %s)",
+                BRAND, VERSION, platform.python_version(),
+                getattr(__import__("telegram"), "__version__", "?"))
     try:
         load_proxy_pool()
     except Exception:
         pass
-    logger.info("✅ %s CORE ready — %d sources • %d dorks space",
-                BRAND, len(PROXY_SOURCES), db_counts()["dorks"])
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    logger.info("✅ %s CORE ready — %d sources • %s dorks space",
+                BRAND, len(PROXY_SOURCES), fmt(db_counts()["dorks"]))
+    app = build_app()
+    try:
+        _run_loop(app)
+    except KeyboardInterrupt:
+        print("\n👋 Band kiya.")
+    except Exception as exc:
+        logger.exception("Bot crash: %s", exc)
+        print("\n" + "=" * 62)
+        print("  ❌ BOT CRASH: %s" % str(exc)[:200])
+        print("=" * 62)
+        print("  Jaanch ke points:")
+        print("   • Token galat/revoke?     → ./setconfig.sh --token <naya>")
+        print("   • 2 bot chal rahe?        → ./stop.sh && ./start.sh")
+        print("   • Internet band?          → ping google.com")
+        print("   • Purani file pe wapas    → ls backups/ ; cp backups/<file> snake_core.py")
+        print("=" * 62 + "\n")
+        raise
 
 
 if __name__ == "__main__":
