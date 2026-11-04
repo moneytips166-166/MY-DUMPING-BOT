@@ -11,3 +11,9 @@ bot_fixed.py.v18_backup_*.py
 bot_fixed.py.v*_backup_*
 bot_fixed.py.v*bak_*
 bot_fixed.py.*.bak
+
+# 🔐 secrets — kabhi commit na karo
+.env
+config.py
+.bot_new.py
+bot_fixed.local.py

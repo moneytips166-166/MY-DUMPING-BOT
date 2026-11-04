@@ -65,7 +65,10 @@ async def _scrape_fresh_proxies() -> list:
 
 API_ID    = 37023086
 API_HASH ="2d8a7977da9141ec783ed27f4753f32e"
-BOT_TOKEN = "8952703561:AAGEEJRj0ZIBIsBp7Ke04ibA69-_7UWNHmo"
+# ⚠️ SECURITY: token repo me kabhi na rakho. Local set karo:
+#    ./setconfig.sh        (ya: ./settoken.sh 123456:ABC...)
+#    ./update.sh aapka local token khud preserve karta hai.
+BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"   # SPIDEY-X
 ADMIN_IDS      = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 TRIAL_MINUTES  = 100
@@ -3812,6 +3815,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TOKEN = BOT_TOKEN  # hardcoded
+
+# ── token guard: placeholder / khaali token ho to saaf message ───────────────
+_V_TOKEN_BAD = (not TOKEN) or ("PUT_YOUR_BOT_TOKEN_HERE" in str(TOKEN)) or (":" not in str(TOKEN))
+if _V_TOKEN_BAD and __name__ == "__main__":
+    _msg = (
+        "\n" + "=" * 62 + "\n"
+        "  ❌ BOT TOKEN SET NAHI HAI\n"
+        + "=" * 62 + "\n"
+        "  Bot chalane ke liye pehle token daalo (BotFather se):\n\n"
+        "      ./setconfig.sh\n\n"
+        "  ya seedha:\n\n"
+        "      ./settoken.sh 123456789:AAxxxxxxxxxxxxxxxxxxxxxxx\n\n"
+        "  Phir:  ./restart.sh\n"
+        + "=" * 62 + "\n"
+    )
+    print(_msg, flush=True)
+    try:
+        logger.error("BOT_TOKEN set nahi hai — ./setconfig.sh chalao")
+    except Exception:
+        pass
+    raise SystemExit(2)
 
 # ── CONVERSATION STATES ───────────────────────────────────────────────────────
 MENU               = 0
