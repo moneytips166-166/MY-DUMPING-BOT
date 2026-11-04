@@ -9,3 +9,5 @@ bot_fixed.py.v18_backup_*.py
 *.backup.*.py
 
 bot_fixed.py.v*_backup_*
+bot_fixed.py.v*bak_*
+bot_fixed.py.*.bak
