@@ -511,6 +511,109 @@ Ya menu me: 🧅 **PROXY SCAN + AUTO-FILL**
 
 ---
 
+### 🆕 v28 — PROXY ENGINE v3 (0 proxy problem ka asli fix)
+
+#### Pehle kya galat tha
+Purane ~58 feeds (proxyscrape v2/v3, geonode p1-4, raw.githubusercontent lists) **teen saal purane**
+ho chuke the — ya dead the, ya aapke net pe block the. Result: scan **0.9 second** me khatam ho jata
+tha with **0 scraped / 0 checked / 0 alive**, aur card sirf "koi proxy alive nahi mila" dikhata tha.
+Diagnosis hi nahi ho pata tha ki galti kahan hai.
+
+#### Ab kya hai
+
+**1. 45 sources / 15 domains** — sab CDN-hosted ya multi-mirror:
+
+| Family | Kaam |
+|---|---|
+| `cdn.jsdelivr.net` | GitHub repos ko CDN se serve karta hai — raw.githubusercontent block ho to bhi chalta hai |
+| `cdn.statically.io` | dusra GitHub→CDN proxy, backup |
+| `raw.githack.com` | teesra mirror |
+| `raw.githubusercontent.com` | direct (jahan khula ho) |
+| `api.proxyscrape.com` | v2 + v4 endpoints |
+| `proxy-list.download` | plain + base64 |
+| `openproxylist.xyz`, `proxyspace.pro` | plain text |
+| `proxylist.geonode.com` | JSON API |
+| `sunny9577/proxies` | `proxies.json` |
+| 4× `*.github.io` mirrors | static pages |
+
+**2. DNS-over-HTTPS bypass 🔥** — sabse bada fix.
+Agar sirf **DNS block** hai (domain resolve nahi hota, par IP pe pahunch jaate ho) to bot:
+1. `https://1.1.1.1/dns-query` (ya `8.8.8.8/resolve`) se **IP nikaalta hai** — ye endpoints IP-based hain, DNS chahiye hi nahi
+2. Fir us **IP pe direct connect** karta hai, `Host: <asli domain>` header ke saath
+3. Source ka data aa jata hai — bilkul normal jaise domain khula ho
+
+Iska matlab: Jio/Airtel/VI pe jo domain-level block lagta hai, wo bypass ho jata hai (jab tak poora
+IP-level block na ho).
+
+**3. Smart parser** — ek hi function 6 format kha jata hai:
+```
+1.2.3.4:8080                 ← ip:port
+1.2.3.4 8080                 ← space
+1.2.3.4,8080                 ← comma
+http://1.2.3.4:8080          ← protocol URL
+socks5://1.2.3.4:1080        ← socks
+{"data":[{"ip":"1.2.3.4","port":8080}]}   ← JSON (data / proxies / results)
+[{"ip":"1.2.3.4","port":8080}]            ← JSON list
+```
+Invalid IP (999.1.1.1), port 0, port > 65535 — sab **reject**. Duplicate apne aap had jaate hain.
+
+**4. Manual fallback file** — free sources poore fail ho jayein to bhi pool khaali nahi:
+```bash
+mkdir -p ~/spidey/data
+nano ~/spidey/data/manual_proxies.txt
+```
+Ek line = ek proxy. Formats wahi 6 upar wale. `#` se comment. Bot automatic padh lega.
+Template repo me: `data_manual_proxies_template.txt`
+
+**5. Card me ab diagnostics dikhti hai** — sabse zaroori cheez:
+
+```
+🧅 PROXY SCAN — DONE
+━━━━━━━━━━━━━━━━━━━━━
+📥 Scraped: 3,842
+🔍 Checked: 3,842
+✅ Alive (naye): 27
+🗄 Pool total: 27
+⚡ Best speed: 412 ms
+⏱ Time: 38.4s
+
+🌐 Sources: 31/45 OK • raw lines: 128,450
+✅ cdn.jsdelivr.net, api.proxyscrape.com
+```
+
+Ab **kya karna hai** ye numbers bolte hain:
+
+| Card me kya | Matlab | Kya karo |
+|---|---|---|
+| `Sources: 31/45`, Scraped > 0 | Sab theek — bas verify me proxy dead nikle | 🔁 SCAN AGAIN (5-10 min baad) |
+| `Sources: 0/45`, Scraped 0 | **Poora network block / DNS dead** | WiFi ↔ mobile data switch karo, phir scan |
+| `Sources: 0/45` baar baar | Free sources aapke net pe band hain | `data/manual_proxies.txt` banao ya `/setpr` |
+| Scraped > 0 par Alive 0 | Sources chal rahe, proxies purane/dead hain | SCAN AGAIN, ya paid proxies |
+
+**6. Live card me source counter** — scan chalte waqt hi `🌐 Sources: 12/45` dikhta rehta hai,
+isliye pata chalta hai kaam ho raha hai ya hang hai.
+
+**7. 120-second cache** — same 2 minute me dobara scan dabao to purana result turant aata hai,
+feeds ko baar baar nahi maarta.
+
+#### v28 ko test kaise karo
+```
+1. Home → 🧅 PROXY SCRAPE + AUTO-FILL
+2. Live card me 🌐 Sources counter badhta dekho
+3. DONE card me Sources line padho (upar table se match karo)
+4. Alive > 0 aaye to 🌐 AUTO DUMP chala ke dekho — url count badhna chahiye
+```
+
+#### Rollback (kuch bhi galat lage to)
+```bash
+cd ~/spidey
+ls -t backups/bot_fixed_*.py | head -1        # sabse naya backup
+cp "$(ls -t backups/bot_fixed_*.py | head -1)" bot_fixed.py
+./restart.sh
+```
+
+---
+
 ## 9. License / Access
 
 - **Admin** = full access, kuch nahi chahiye
@@ -583,6 +686,11 @@ Sabko message, ban list, aur saare tasks ek saath kill.
 | "Conflict: terminated by other getUpdates" | 2 bot chal rahe | `pkill -f bot_fixed.py ; ./start.sh` |
 | Token invalid | Token revoke ho gaya | BotFather → `/revoke` → `./setconfig.sh` |
 | Parser 0 URLs | Proxies dead / blocked | Mode `Fast` karo, proxy add karo, thodi der baad try |
+| Proxy scan me **Sources 0/45** | Aapke net pe feeds ka DNS block | WiFi ↔ mobile data switch karo, phir 🔁 SCAN AGAIN |
+| Proxy scan me **Sources 0/45** baar baar | Free feeds aapke network pe band | `data/manual_proxies.txt` me apne proxies daalo ya `/setpr` |
+| Proxy scan me **Scraped > 0, Alive 0** | Sources chal rahe, proxies purane/dead | 🔁 SCAN AGAIN (5-10 min baad), ya paid proxies |
+| Proxy scan 1 second me khatam | Sab fetch fail (v27 tak ka bug) | v28+ pe update karo: `cd ~/spidey && ./update.sh` |
+| DoH bypass bhi fail | IP-level block (network level) | Manual proxies file hi solution hai |
 | Parser bahut slow | Mode Max + bina proxy | `Balanced` + `40 threads` |
 | URLs kam aa rahe | Wayback OFF, sig limit tight | Wayback ON, sig `14`+, pages 2 |
 | File download nahi hui | Network blip | `/ping` chalao, phir dobara try |
