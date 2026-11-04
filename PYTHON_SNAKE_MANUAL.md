@@ -13,6 +13,7 @@
 2. [Sirf 5 minute me pehla result](#2-sirf-5-minute-me-pehla-result)
 3. [Main Menu — har button ka matlab](#3-main-menu--har-button-ka-matlab)
 3.5. [CLASSIC vs NEW LATEST — kya farak hai](#35-classic-vs-new-latest--kya-farak-hai)
+3.6. [Dork Pack (ZIP) — saare templates](#36-dork-pack-zip--saare-templates-bahar-nikaal-lo)
 4. [PYTHON SNAKE panel (asli engine)](#4-python-snake-engine-panel-asli-engine)
 5. [Engine Settings — kaunsa mode, kitne threads](#5-engine-settings--kaunsa-mode-kitne-threads)
 6. [3 ready-made workflows (copy-paste karo)](#6-3-ready-made-workflows-copy-paste-karo)
@@ -214,6 +215,31 @@ Do jagah se bot chalta hai:
 
 **Short me:** naya panel **tez + saaf** hai (jo roz chahiye wahi), classic me **extra power tools** hain
 (AI keywords, dump engines, dork tiers, refinery). Dono ek hi bot me hain — `/classic` se purana khul jata hai.
+
+---
+
+## 3.6 Dork Pack (ZIP) — saare templates bahar nikaal lo
+
+Bot ke andar ka **saara** dork/template/keyword data ek ZIP me:
+
+`PYTHON_SNAKE_DORK_PACK.zip` (repo root me) — 54 files
+
+| Folder | Kya |
+|---|---|
+| `01_DORK_GEN_V2_UHQ_PRO/` | Dork Gen v2 (UHQ Pro) ke **10 templates** + variable pools + 1000 sample dorks |
+| `02_CLASSIC_DORK_TEMPLATES/` | **223** purane templates, **12 category** me banthe + filled list |
+| `03_UNIVERSAL_DORKS/` | Universal engine ke 7 families + niche table + samples |
+| `04_CMS_DORKS/` | WordPress / Joomla / Drupal / Magento / OpenCart / PrestaShop / Laravel / CodeIgniter |
+| `05_KEYWORD_PACK/` | 34 payment seeds + 57 keyword templates + niche words |
+| `06_SQLI_PACK/` | payloads + gold params + sensitive field names |
+| `07_PARAMS_EXTS_TLDS/` | 132 PHP params, 33 ASPX params, TLDs, pages, file names |
+| `08_ALL_IN_ONE/` | sab ek file me + **5,220 ready-to-use dorks** |
+
+Dobara banana ho (bot update ke baad):
+
+```bash
+cd ~/spidey && python3 build_dork_pack.py
+```
 
 ---
 
