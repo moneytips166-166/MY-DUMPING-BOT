@@ -40,7 +40,7 @@ cd ~/snake && ./start.sh && ./logs.sh
 | 8 | 📊 **QUALITY** | dork/keyword ko 0-100 + wajah |
 | 9 | 🎲 **RANDOMIZER** | shuffle + operator mutate |
 
-Plus 👑 **ADMIN PANEL** (`/admin`) — 15 buttons.
+Plus 👑 **ADMIN PANEL** (`/admin`) — 14 buttons.
 
 ---
 
@@ -50,10 +50,10 @@ Plus 👑 **ADMIN PANEL** (`/admin`) — 15 buttons.
 |---|---|
 | Page-types (dir × file × query-shape) | **57,288** |
 | Dorks | **35,689,680** |
-| Parameters | 812 |
-| Extensions | 60 |
-| TLDs | 72 |
-| Keywords space | 24,360 |
+| Parameters | 615 |
+| Extensions | 62 |
+| TLDs | 73 |
+| Keywords space | 23,664 |
 
 ---
 
@@ -99,7 +99,7 @@ Commands: `/admin` `/myid` `/ban <id>` `/unban <id>` `/addkey <days>` `/help`
 | | Pehle (bot_fixed.py) | Ab (snake_core.py) |
 |---|---|---|
 | Lines | 29,222 | **2,680** |
-| Buttons | 7 + 13 admin | 10 + 15 admin |
+| Buttons | 7 + 13 admin | 10 + 14 admin |
 | Layers | v1 → v28 patches | **clean rewrite** |
 | Mock data | tha | **zero** |
 | Proxy | 45 src (v28 patch) | 45 src (**native**) |
