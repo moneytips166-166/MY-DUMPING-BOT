@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v1.2
+# 🐍 PYTHON SNAKE CORE — v1.3
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -76,7 +76,7 @@ Plus 👑 **ADMIN PANEL** (`/admin`) — 14 buttons.
 🔄 RESTART     ⬅️ MENU
 ```
 
-Commands: `/admin` `/myid` `/ban <id>` `/unban <id>` `/addkey <days>` `/help`
+Commands: `/admin` `/theme` `/myid` `/ban <id>` `/unban <id>` `/addkey <days>` `/help`
 
 ---
 
@@ -106,6 +106,33 @@ Commands: `/admin` `/myid` `/ban <id>` `/unban <id>` `/addkey <days>` `/help`
 | Parser | mixed | **7 engines, retry, dead-skip** |
 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
+
+---
+
+## 🎨 v1.3 — THEME / FONT ENGINE (8 looks)
+
+Poora bot ka look badalne ke liye ek command: **`/theme`** (admin) ya admin panel → **🎨 THEME / FONT**
+
+Har theme 3 cheez badalta hai: **heading font**, **button font**, **divider + icon**.
+
+| Theme | Heading | Buttons | Divider |
+|---|---|---|---|
+| ✿︎ **CLASSIC** | `ᴘʏᴛʜᴏɴ ꜱɴᴀᴋᴇ` | small caps | `✿︎━━━━━━━✿︎` |
+| ❤︎ **CURSIVE** | `𝓟𝓨𝓣𝓗𝓞𝓝` | script | `❤︎﹌﹌﹌﹌❤︎` |
+| ﹌ **POPPINS** | `𝗣𝗬𝗧𝗛𝗢𝗡` | bold sans | `﹌﹌﹌﹌﹌﹌` |
+| ಄ **ITALIC** | `𝑷𝒀𝑻𝑯𝑶𝑵` | bold italic | `಄──────಄` |
+| ♛ **ROYAL** | `𝔓𝔜𝔗ℌ𝔒𝔑` | double-struck | `♛﹌﹌﹌♛` |
+| ◆ **ROBOTO** | `𝖯𝖸𝖳𝖧𝖮𝖭` | sans | `◆▬▬▬▬◆` |
+| 𝗕 **BOLD** | `𝐏𝐘𝐓𝐇𝐎𝐍` | bold serif | `❰❰❰❰❰❰❱` |
+| ▚ **MONO** | `𝙿𝚈𝚃𝙷𝙾𝙽` | monospace | `▚▚▚▚▚▚` |
+
+**16 unicode fonts** available: bold, italic, bold-italic, script, bold-script,
+fraktur, double-struck, sans, sans-bold, sans-italic, sans-bold-italic, mono,
+wide, small-caps, circled, plain.
+
+> Font automatically sirf **text** pe lagta hai — emoji/icon waise hi rehte hain
+> (`🔍 PARSER` → `🔍 ᴘᴀʀꜱᴇʀ`). Har button, heading, aur section tag themed hai.
+> Setting `data/settings.json` me save hoti hai — restart ke baad bhi rehti hai.
 
 ---
 
@@ -143,11 +170,11 @@ RuntimeError: There is no current event loop in thread 'MainThread'.
 
 ## 🧪 Test
 
-**193 tests + 22 runner = 215 pass**
-- `103` core (parser/proxy/dork/kw/reverse/inject/dump/storage/UI)
-- `49` button routing (har button click simulate)
-- `41` advanced (searx discovery, pagination, strict match, 67 payloads, helpers)
-- `22` runner (3.14 simulate) — mock HTTP server se real behaviour verify:
+**137 tests pass**
+- **16 font maps** — koi invalid/box glyph nahi (unicodedata se verify)
+- **8 themes** — header, divider, icon, buttons, HTML validity
+- **button routing** — main menu, dorker, parser, injector, randomizer, dumper, theme, admin
+- **persistence** — theme disk se wapas load — mock HTTP server se real behaviour verify:
 proxy parse (6 format), scrape (7 sources), checker, dork gen (5 mode), quality scorer,
 keyword gen, URL reverse, randomizer, injector, parser (8 engines), extractors,
 wayback, dumper, storage/access, UI render (HTML valid), callback routing, e2e, chunker.

@@ -63,7 +63,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v1.2"
+VERSION = "v1.3"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -225,13 +225,200 @@ def chunk_lines(text: str, limit: int = 3900):
     return out
 
 
+# (H() theme engine me define hota hai — neeche)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎨 THEME ENGINE — unicode fonts, dividers, icons
+# ═══════════════════════════════════════════════════════════════════════════════
+import unicodedata as _ud
+
+
+def _font_map(caps=None, low=None, digs=None, exc=None) -> dict:
+    """Unicode math range -> dict. Hole (unassigned) codepoint = original char."""
+    d = {}
+    if caps:
+        for i, ch in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+            d[ch] = chr(ord(caps) + i)
+    if low:
+        for i, ch in enumerate("abcdefghijklmnopqrstuvwxyz"):
+            d[ch] = chr(ord(low) + i)
+    if digs:
+        for i in range(10):
+            d[str(i)] = chr(ord(digs) + i)
+    if exc:
+        d.update(exc)
+    for k, v in list(d.items()):
+        try:
+            if _ud.category(v) in ("Cn", "Cs", "Co"):
+                d[k] = k
+        except Exception:
+            d[k] = k
+    return d
+
+
+_SMALL = dict(zip(
+    "abcdefghijklmnopqrstuvwxyz",
+    "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢ"))
+_SMALL.update({k.upper(): v for k, v in list(_SMALL.items()) if k.isalpha() and v != k})
+_SMALL["X"] = "x"   # small-cap X exist nahi karta — consistency ke liye lowercase
+
+_CIRCLE = {}
+for _i, _ch in enumerate("abcdefghijklmnopqrstuvwxyz"):
+    _CIRCLE[_ch] = chr(0x24D0 + _i)
+    _CIRCLE[_ch.upper()] = chr(0x24B6 + _i)
+for _i in range(10):
+    _CIRCLE[str(_i)] = chr(0x2460 + _i)
+
+FONTS = {
+    "plain":       {},
+    "bold":        _font_map("\U0001D400", "\U0001D41A", "\U0001D7CE"),
+    "italic":      _font_map("\U0001D434", "\U0001D44E", None, {"h": "\u210E"}),
+    "bi":          _font_map("\U0001D468", "\U0001D482"),
+    "script":      _font_map("\U0001D49C", "\U0001D4B6", None, {
+                       "B": "\u212C", "E": "\u2130", "F": "\u2131", "H": "\u210B",
+                       "I": "\u2110", "L": "\u2112", "M": "\u2133", "R": "\u211B",
+                       "e": "\u212F", "g": "\u210A", "o": "\u2134"}),
+    "bold_script": _font_map("\U0001D4D0", "\U0001D4EA"),
+    "fraktur":     _font_map("\U0001D504", "\U0001D51E", None, {
+                       "C": "\u212D", "H": "\u210C", "I": "\u2111",
+                       "R": "\u211C", "Z": "\u2128"}),
+    "double":      _font_map("\U0001D538", "\U0001D552", "\U0001D7D8", {
+                       "C": "\u2102", "H": "\u210D", "N": "\u2115", "P": "\u2119",
+                       "Q": "\u211A", "R": "\u211D", "Z": "\u2124"}),
+    "sans":        _font_map("\U0001D5A0", "\U0001D5BA", "\U0001D7E2"),
+    "sans_bold":   _font_map("\U0001D5D4", "\U0001D5EE", "\U0001D7EC"),
+    "sans_italic": _font_map("\U0001D608", "\U0001D622"),
+    "sans_bi":     _font_map("\U0001D63C", "\U0001D656"),
+    "mono":        _font_map("\U0001D670", "\U0001D68A", "\U0001D7F6"),
+    "wide":        _font_map("\uFF21", "\uFF41", "\uFF10"),
+    "small":       _SMALL,
+    "circle":      _CIRCLE,
+}
+
+
+def F(text, font: str = "plain") -> str:
+    """Text ko diye font me badlo. Unknown chars waise hi rehte hain."""
+    m = FONTS.get(font)
+    if not m:
+        return str(text)
+    return "".join(m.get(c, c) for c in str(text))
+
+
+# ── THEMES ───────────────────────────────────────────────────────────────────
+# head = heading font • btn = button font • sub = subtitle font
+# div = divider • icon = logo icon • tag = chhota accent
+THEMES = OrderedDict([
+    ("classic", {
+        "label": "✿︎ CLASSIC", "head": "small", "btn": "small", "sub": "italic",
+        "div": "✿︎━━━━━━━━━━━━━━━━━━━━━✿︎",
+        "icon": "🐍", "tag": "✿︎",
+    }),
+    ("cursive", {
+        "label": "❤︎ CURSIVE", "head": "bold_script", "btn": "script", "sub": "italic",
+        "div": "❤︎﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌❤︎",
+        "icon": "🌸", "tag": "❤︎",
+    }),
+    ("poppins", {
+        "label": "﹌ POPPINS", "head": "sans_bold", "btn": "sans_bold", "sub": "sans_italic",
+        "div": "﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌",
+        "icon": "🐍", "tag": "﹌",
+    }),
+    ("italic", {
+        "label": "಄ ITALIC", "head": "bi", "btn": "bi", "sub": "italic",
+        "div": "಄───────────────────಄",
+        "icon": "✦", "tag": "಄",
+    }),
+    ("royal", {
+        "label": "♛ ROYAL", "head": "fraktur", "btn": "double", "sub": "italic",
+        "div": "♛﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌﹌♛",
+        "icon": "♛", "tag": "✦",
+    }),
+    ("roboto", {
+        "label": "◆ ROBOTO", "head": "sans", "btn": "sans", "sub": "sans_italic",
+        "div": "◆▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬◆",
+        "icon": "◆", "tag": "▸",
+    }),
+    ("bold", {
+        "label": "𝗕 BOLD", "head": "bold", "btn": "bold", "sub": "italic",
+        "div": "❰❰❰❰❰❰❰❰❰❰❰❰❰❰❰❰❰❰❰❱",
+        "icon": "🔥", "tag": "❰",
+    }),
+    ("mono", {
+        "label": "▚ MONO", "head": "mono", "btn": "mono", "sub": "mono",
+        "div": "▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚",
+        "icon": "▚", "tag": "▚",
+    }),
+])
+DEFAULT_THEME = "classic"
+
+_EMOJI_HEAD = re.compile(r"^([\U0001F000-\U0001FAFF\u2190-\u2BFF\u2600-\u27BF"
+                         r"\uFF00-\uFFEF\u3000-\u303F\u0E00-\u0E7F\u0C80-\u0CFF"
+                         r"\u0900-\u097F\s]+)")
+
+
+def theme_name() -> str:
+    """Abhi kaun sa theme chalu hai."""
+    t = str(sget("theme") or DEFAULT_THEME)
+    return t if t in THEMES else DEFAULT_THEME
+
+
+def T() -> dict:
+    return THEMES[theme_name()]
+
+
+def style(text: str, role: str = "btn") -> str:
+    """Emoji/icon ko chhod ke sirf text ko theme font me badlo."""
+    s2 = str(text or "")
+    if not s2:
+        return s2
+    m = _EMOJI_HEAD.match(s2)
+    pre = m.group(1) if m else ""
+    rest = s2[len(pre):]
+    if not rest:
+        return s2
+    font = T().get(role) or "plain"
+    return pre + F(rest, font)
+
+
 def H(title: str, sub: str = "") -> str:
-    """Classic header."""
-    head = "✿︎━━━━━━━━━━━━━━━━━━━━━✿︎"
-    body = "🐍 <b>%s</b>" % title
+    """Theme header — divider + icon + heading font."""
+    th = T()
+    d = th["div"]
+    body = "%s %s" % (th["icon"], F(title, th["head"]))
     if sub:
-        body += "\n<i>%s</i>" % sub
-    return "%s\n%s\n%s" % (head, body, head)
+        body += "\n%s" % F(sub, th["sub"])
+    return "%s\n%s\n%s" % (d, body, d)
+
+
+def tag(text: str = "") -> str:
+    """Chhota accent — body me headings ke liye."""
+    th = T()
+    t = F(text, th["head"]) if text else ""
+    return ("%s %s %s" % (th["tag"], t, th["tag"])).strip()
+
+
+def RK(rows, **kw):
+    """InlineKeyboardMarkup + har button label pe theme font."""
+    out = []
+    for row in (rows or []):
+        nr = []
+        for b in row:
+            try:
+                label = style(b.text, "btn")
+                data = getattr(b, "callback_data", None)
+                url = getattr(b, "url", None)
+                if data:
+                    nr.append(InlineKeyboardButton(label[:64], callback_data=data))
+                elif url:
+                    nr.append(InlineKeyboardButton(label[:64], url=url))
+                else:
+                    nr.append(b)
+            except Exception:
+                nr.append(b)
+        if nr:
+            out.append(nr)
+    return InlineKeyboardMarkup(out, **kw)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1567,7 +1754,7 @@ async def send_file(update, path: str, caption: str = ""):
 #  KEYBOARDS
 # ═══════════════════════════════════════════════════════════════════════════════
 def kb_main() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+    return RK([
         [InlineKeyboardButton("🔍 PARSER", callback_data="m:parse"),
          InlineKeyboardButton("🎯 DORKER", callback_data="m:dork")],
         [InlineKeyboardButton("🔑 HQ KEYWORDS", callback_data="m:kw"),
@@ -1582,23 +1769,21 @@ def kb_main() -> InlineKeyboardMarkup:
 
 
 def kb_back(to: str = "m:home") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data=to)]])
+    return RK([[InlineKeyboardButton("⬅️ BACK", callback_data=to)]])
 
 
 def main_text(name: str = "") -> str:
     c = db_counts()
-    hi = "Hi <b>%s</b>,\n" % esc(name) if name else ""
-    return (H("PYTHON SNAKE", "CORE %s • sirf kaam ka" % VERSION) + "\n"
+    hi = ("✨ Hi <b>%s</b>,\n" % esc(name)) if name else ""
+    return (H("PYTHON SNAKE", "%s • %s" % (VERSION, "sirf kaam ka")) + "\n"
             + hi + "\n"
-            "📦 <b>Database</b>\n"
-            "• Page-types : <code>%s</code>\n"
-            "• Parameters : <code>%s</code>\n"
-            "• Extensions : <code>%s</code>\n"
-            "• Dorks      : <code>%s</code>\n"
-            "• Keywords   : <code>%s</code>\n\n"
-            "👇 Tool chuno"
-            % (fmt(c["page_types"]), fmt(c["parameters"]), fmt(c["extensions"]),
-               fmt(c["dorks"]), fmt(c["keywords"])))
+            + tag("DATABASE") + "\n"
+            + "◆ %s : <code>%s</code>\n" % (style("PAGE-TYPES", "btn"), fmt(c["page_types"]))
+            + "◆ %s : <code>%s</code>\n" % (style("PARAMETERS", "btn"), fmt(c["parameters"]))
+            + "◆ %s : <code>%s</code>\n" % (style("EXTENSIONS", "btn"), fmt(c["extensions"]))
+            + "◆ %s      : <code>%s</code>\n" % (style("DORKS", "btn"), fmt(c["dorks"]))
+            + "◆ %s   : <code>%s</code>\n\n" % (style("KEYWORDS", "btn"), fmt(c["keywords"]))
+            + "👇 %s" % style("Tool chuno", "sub"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1624,7 +1809,7 @@ def captcha_new(context):
     rows = [[InlineKeyboardButton(str(o), callback_data="cap:%d" % o) for o in opts[:2]],
             [InlineKeyboardButton(str(o), callback_data="cap:%d" % o) for o in opts[2:]]]
     rows.append([InlineKeyboardButton("🔄 Naya sawaal", callback_data="cap:new")])
-    return q, InlineKeyboardMarkup(rows)
+    return q, RK(rows)
 
 
 def access_ok(uid) -> bool:
@@ -1640,7 +1825,7 @@ def need_key_text(uid) -> str:
 
 
 def kb_needkey() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+    return RK([
         [InlineKeyboardButton("🔑 REDEEM KEY", callback_data="m:redeem")],
         [InlineKeyboardButton("☎️ CONTACT OWNER", url="https://t.me/%s" % ADMIN_USERNAME.lstrip("@"))],
     ])
@@ -1689,7 +1874,7 @@ async def cmd_myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = u.id
     adm = "👑 Admin (unlimited)" if is_admin(uid) else (
         "✅ Licensed" if has_access(uid) else "⚪ No license — 🔑 REDEEM KEY dabao")
-    txt = ("🪪 <b>YOUR ID</b>\n" + "─" * 26 + "\n"
+    txt = ("🪪 <b>%s</b>\n" % F("YOUR ID", T()["head"]) + T()["div"] + "\n"
            "ID       : <code>%d</code>\n"
            "Username : %s\n"
            "Status   : %s" % (uid, esc("@" + u.username if u.username else (u.first_name or "—")), adm))
@@ -1702,21 +1887,27 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def help_text() -> str:
+    th = T()
+    items = [
+        ("🔍", "PARSER", "dork do, 13 asli search engines se REAL URLs. Proxy rotate + strict match."),
+        ("🎯", "DORKER", "page-type / extension / parameter / mixed / niche dorks, quality score ke saath."),
+        ("🔑", "HQ KEYWORDS", "seed topic do, scored + filtered high-quality keyword list."),
+        ("🔗", "URL REVERSE", "URL paste karo → domain, path, extension, parameters + uske dorks."),
+        ("💉", "INJECTOR", "67 payloads (SQLi/LFI/XSS/SSRF/redirect/SSTI) × har param."),
+        ("📦", "DUMPER", "saari bani hui files — txt / json / zip."),
+        ("🧅", "PROXY", "45 sources + DoH bypass + 400 parallel checker."),
+        ("📊", "QUALITY", "dork/keyword ko 0-100 score + wajah."),
+        ("🎲", "RANDOMIZER", "dorks shuffle + operator mutate."),
+    ]
+    body = []
+    for emoji, name, desc in items:
+        body.append("%s <b>%s</b>\n   <i>%s</i>" % (emoji, style(name, "btn"), desc))
     return (H("HELP", "kaun sa tool kya karta hai") + "\n\n"
-            "🔍 <b>PARSER</b> — dork do, asli search engines (DDG/Bing/Mojeek/Yahoo/"
-            "Brave/Startpage/Google) se <b>real URLs</b> nikaalta hai. Proxy rotate hota hai.\n\n"
-            "🎯 <b>DORKER</b> — page-type / extension / parameter / mixed dork banata hai, "
-            "quality score ke saath.\n\n"
-            "🔑 <b>HQ KEYWORDS</b> — seed topic do, high-quality keyword list milti hai "
-            "(scored, filtered).\n\n"
-            "🔗 <b>URL REVERSE</b> — URL paste karo → domain, path, extension, parameters "
-            "nikalte hain + usse banaye ja sakne wale dorks.\n\n"
-            "💉 <b>INJECTOR</b> — URLs + payload → injection test URLs.\n\n"
-            "📦 <b>DUMPER</b> — pichhli saari files download karo.\n\n"
-            "🧅 <b>PROXY</b> — 45 sources scrape + super-fast check.\n\n"
-            "📊 <b>QUALITY</b> — dork/keyword ko 0-100 score + wajah.\n\n"
-            "🎲 <b>RANDOMIZER</b> — dorks ko shuffle + operator mutate.\n\n"
-            "👑 Admin: <code>/admin</code> — panel sirf admins ko.")
+            + ("\n\n".join(body)) + "\n\n"
+            + tag("THEME") + "\n"
+            + "Admin <code>/theme</code> se font + divider + icon badal sakta hai "
+              "(%d themes).\n\n" % len(THEMES)
+            + "%s <b>%s</b> — panel sirf admins ko." % (th["icon"], style("ADMIN", "btn")))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1756,6 +1947,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         return
+
+    # ── theme ──
+    if data.startswith("th:set:"):
+        return await cb_theme_set(update, context, data[7:])
 
     # ── admin ──
     if data.startswith("a:"):
@@ -1873,7 +2068,7 @@ async def tool_dork(update, context):
            "\n".join("%s — <i>%s</i>" % (label, desc) for label, desc in DORK_MODES.values()) +
            "\n\n<b>Count</b> agla step me poochhunga (1-5000).")
     try:
-        await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows),
+        await q.edit_message_text(txt, reply_markup=RK(rows),
                                   parse_mode=ParseMode.HTML)
     except Exception:
         pass
@@ -2043,7 +2238,7 @@ async def tool_inj(update, context):
            "<code>https://target.com/product.php?id=1</code>"
            % (CAT_LABEL.get(cat, cat), len(payloads_for(cat))))
     try:
-        await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(rows),
+        await q.edit_message_text(txt, reply_markup=RK(rows),
                                   parse_mode=ParseMode.HTML)
     except Exception:
         pass
@@ -2116,7 +2311,7 @@ async def _run_inject(update, context, urls):
 async def tool_parse(update, context):
     q = update.callback_query
     last = context.user_data.get("last_dorks") or []
-    kb = InlineKeyboardMarkup([
+    kb = RK([
         [InlineKeyboardButton("📥 USE LAST %d DORKS" % len(last), callback_data="pr:last")],
         [InlineKeyboardButton("✍️ MANUAL DORK", callback_data="pr:manual")],
         [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
@@ -2194,7 +2389,7 @@ async def input_parse_max(update, context, text: str):
         last["t"] = time.time()
         try:
             await msg.edit_text(
-                "🔍 <b>PARSING — LIVE</b>\n" + "─" * 26 +
+                "🔍 <b>%s</b>\n" % F("PARSING — LIVE", T()["head"]) + T()["div"] +
                 "\n🎯 Dorks   : <code>%d/%d</code> %s\n🔗 URLs    : <code>%s</code>\n"
                 "⏱ Time    : <code>%.0fs</code>"
                 % (st["dorks"], st["total"],
@@ -2255,7 +2450,7 @@ async def tool_proxy(update, context):
            "🧅 Pool abhi : <code>%d</code> proxies\n"
            "📄 Manual    : <code>%d</code> (data/manual_proxies.txt)\n\n"
            "Scan chalu karein?" % (len(pool), len(manual_proxies())))
-    kb = InlineKeyboardMarkup([
+    kb = RK([
         [InlineKeyboardButton("🚀 SCRAPE + CHECK", callback_data="px:run")],
         [InlineKeyboardButton("📊 POOL STATUS", callback_data="px:stat")],
         [InlineKeyboardButton("🗑 CLEAR", callback_data="px:clear")],
@@ -2276,7 +2471,7 @@ async def cb_proxy_run(update, context):
     async def src_prog(st):
         try:
             await q.edit_message_text(
-                "🧅 <b>SCRAPING</b>\n" + "─" * 26 +
+                "🧅 <b>%s</b>\n" % F("SCRAPING", T()["head"]) + T()["div"] +
                 "\n📡 Sources : <code>%d/%d</code> %s\n✅ OK      : <code>%d</code>\n"
                 "🔢 Mila    : <code>%s</code>"
                 % (st["done"], st["total"], bar(st["done"] / max(1, st["total"]) * 100),
@@ -2306,7 +2501,7 @@ async def cb_proxy_run(update, context):
     async def chk_prog(st):
         try:
             await q.edit_message_text(
-                "🔍 <b>CHECKING</b>\n" + "─" * 26 +
+                "🔍 <b>%s</b>\n" % F("CHECKING", T()["head"]) + T()["div"] +
                 "\n📥 Total   : <code>%s</code>\n🔍 Checked : <code>%s/%s</code> %s\n"
                 "✅ Alive   : <code>%d</code>"
                 % (fmt(st["total"]), fmt(st["done"]), fmt(st["total"]),
@@ -2340,7 +2535,7 @@ async def cb_proxy_run(update, context):
     else:
         txt += ("\n\n⚠️ Sources khule par koi proxy alive nahi.\n"
                 "👉 Thodi der baad dobara scan karo.")
-    kb = InlineKeyboardMarkup([
+    kb = RK([
         [InlineKeyboardButton("🔁 SCAN AGAIN", callback_data="px:run")],
         [InlineKeyboardButton("⬅️ BACK", callback_data="m:proxy")],
     ])
@@ -2418,7 +2613,7 @@ async def input_qa(update, context, text: str):
 async def tool_rand(update, context):
     q = update.callback_query
     last = context.user_data.get("last_dorks") or []
-    kb = InlineKeyboardMarkup([
+    kb = RK([
         [InlineKeyboardButton("📥 LAST %d DORKS" % len(last), callback_data="rd:last")],
         [InlineKeyboardButton("✍️ MANUAL", callback_data="rd:manual")],
         [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
@@ -2493,7 +2688,7 @@ async def tool_dump(update, context):
     rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
     try:
         await q.edit_message_text(H("DUMPER", "%d files" % len(files)) + "\n\nKaun si file?",
-                                  reply_markup=InlineKeyboardMarkup(rows), parse_mode=ParseMode.HTML)
+                                  reply_markup=RK(rows), parse_mode=ParseMode.HTML)
     except Exception:
         pass
 
@@ -2636,13 +2831,14 @@ async def input_redeem(update, context, text: str):
 #  ADMIN PANEL
 # ═══════════════════════════════════════════════════════════════════════════════
 def kb_admin() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+    return RK([
         [InlineKeyboardButton("📊 DASHBOARD", callback_data="a:dash"),
          InlineKeyboardButton("👥 USERS", callback_data="a:users")],
         [InlineKeyboardButton("🔑 KEYS", callback_data="a:keys"),
          InlineKeyboardButton("🧅 PROXY", callback_data="a:proxy")],
         [InlineKeyboardButton("⚙️ ENGINE", callback_data="a:eng"),
          InlineKeyboardButton("📦 DUMPS", callback_data="a:dumps")],
+        [InlineKeyboardButton("🎨 THEME / FONT", callback_data="a:theme")],
         [InlineKeyboardButton("📣 BROADCAST", callback_data="a:bc"),
          InlineKeyboardButton("🚫 BANS", callback_data="a:bans")],
         [InlineKeyboardButton("💾 BACKUP", callback_data="a:backup"),
@@ -2675,6 +2871,75 @@ def admin_dash() -> str:
             % (fmt(total), active, banned, len(KEYS),
                sum(1 for k in KEYS.values() if not k.get("used_by")),
                len(pool), len(dumps_list(999)), fmt(c["dorks"]), fmt(c["parameters"]), upt))
+
+
+def theme_preview(keys) -> str:
+    """Saare themes ka live preview."""
+    lines = [H("THEME PICKER", "font + divider + icon"), ""]
+    for k in keys:
+        th = THEMES[k]
+        mark = "✅ " if k == theme_name() else "▫️ "
+        lines.append("%s<b>%s</b>" % (mark, F(th["label"], th["head"])))
+        lines.append("   %s" % th["div"][:24])
+        lines.append("   <code>%s</code>  •  %s"
+                     % (F("Buttons", th["btn"]), F("subtitle text", th["sub"])))
+        lines.append("")
+    lines.append("👇 ek chuno — poora bot usi look me badal jayega")
+    return "\n".join(lines)
+
+
+def kb_themes(cb_prefix: str = "th:set:") -> InlineKeyboardMarkup:
+    keys = list(THEMES.keys())
+    rows, row = [], []
+    for k in keys:
+        th = THEMES[k]
+        row.append(InlineKeyboardButton(F(th["label"], th["btn"])[:60],
+                                        callback_data=cb_prefix + k))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(style("🔄 Reset (classic)", "btn"),
+                                      callback_data=cb_prefix + DEFAULT_THEME)])
+    return RK(rows)
+
+
+async def cmd_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.effective_message.reply_text(
+            "%s\n\nSirf admin theme badal sakta hai.\nAbhi chalu: <b>%s</b>"
+            % (H("THEME"), F(THEMES[theme_name()]["label"], T()["head"])),
+            parse_mode=ParseMode.HTML)
+        return
+    await update.effective_message.reply_text(
+        theme_preview(list(THEMES.keys())), parse_mode=ParseMode.HTML,
+        reply_markup=kb_themes())
+
+
+async def cb_theme_set(update, context, name: str):
+    q = update.callback_query
+    if not is_admin(update.effective_user.id):
+        try:
+            await q.answer("Admin only", show_alert=True)
+        except Exception:
+            pass
+        return
+    if name not in THEMES:
+        name = DEFAULT_THEME
+    sset("theme", name)
+    try:
+        await q.edit_message_text(
+            (H("THEME SET", THEMES[name]["label"]) + "\n\n"
+             "✅ Poora bot ab <b>%s</b> look me hai.\n\n"
+             "%s\n"
+             "⏱ Restart ki zaroorat nahi — turant apply.\n\n"
+             "<i>Badalna hai? /theme dobara bhejo.</i>"
+             % (F(THEMES[name]["label"], THEMES[name]["head"]), THEMES[name]["div"])),
+            parse_mode=ParseMode.HTML, reply_markup=kb_themes())
+    except Exception:
+        pass
 
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2717,7 +2982,7 @@ async def admin_callback(update, context, action: str):
             "🚫" if r.get("banned") else ("✅" if (r.get("expires") or "") > datetime.now().isoformat() else "⚪"))
             for u, r in lst) or "—"
         return await ed(H("ADMIN — USERS", "%d total" % len(USERS)) + "\n\n" + body,
-                       InlineKeyboardMarkup(rows))
+                       RK(rows))
 
     if action == "userscsv":
         path = dump_json(USERS, "users")
@@ -2726,7 +2991,7 @@ async def admin_callback(update, context, action: str):
 
     if action == "keys":
         unused = sum(1 for k in KEYS.values() if not k.get("used_by"))
-        kb = InlineKeyboardMarkup([
+        kb = RK([
             [InlineKeyboardButton("➕ 7 DIN", callback_data="a:genkey:7"),
              InlineKeyboardButton("➕ 30 DIN", callback_data="a:genkey:30")],
             [InlineKeyboardButton("➕ 90 DIN", callback_data="a:genkey:90"),
@@ -2743,7 +3008,7 @@ async def admin_callback(update, context, action: str):
               "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
         KEYS[key] = {"days": days, "created": datetime.now().isoformat(timespec="seconds")}
         save_all()
-        kb = InlineKeyboardMarkup([
+        kb = RK([
             [InlineKeyboardButton("➕ AUR 7D", callback_data="a:genkey:7")],
             [InlineKeyboardButton("⬅️ BACK", callback_data="a:keys")],
         ])
@@ -2759,7 +3024,7 @@ async def admin_callback(update, context, action: str):
 
     if action == "proxy":
         pool = PROXIES or load_proxy_pool()
-        kb = InlineKeyboardMarkup([
+        kb = RK([
             [InlineKeyboardButton("🚀 SCAN NOW", callback_data="a:pxscan")],
             [InlineKeyboardButton("🗑 CLEAR", callback_data="a:pxclear")],
             [InlineKeyboardButton("⬅️ BACK", callback_data="a:home")],
@@ -2777,14 +3042,14 @@ async def admin_callback(update, context, action: str):
         return await ed(H("ADMIN — PROXY") + "\n\nScraped: <code>%s</code>\nAlive: <code>%d</code>\n"
                         "Sources: <code>%d/%d</code>"
                         % (fmt(len(px)), len(good), PSTATS.get("sources_ok", 0), len(PROXY_SOURCES)),
-                        InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
+                        RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
 
     if action == "pxclear":
         save_proxy_pool([])
-        return await ed("🗑 Pool clear.", InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
+        return await ed("🗑 Pool clear.", RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
 
     if action == "eng":
-        kb = InlineKeyboardMarkup([
+        kb = RK([
             [InlineKeyboardButton("Pages: %s" % sget("parse_pages", 1), callback_data="a:setpages")],
             [InlineKeyboardButton("Check timeout: %ss" % sget("check_timeout", 6), callback_data="a:setto")],
             [InlineKeyboardButton("Concurrency: %s" % sget("concurrency", 400), callback_data="a:setconc")],
@@ -2823,14 +3088,14 @@ async def admin_callback(update, context, action: str):
                 n += 1
             except Exception:
                 pass
-        return await ed("🧹 %d files delete." % n, InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="a:home")]]))
+        return await ed("🧹 %d files delete." % n, RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:home")]]))
 
     if action == "bc":
         context.user_data["await"] = "bc_text"
         context.user_data["await_admin"] = True
         return await ed(H("ADMIN — BROADCAST") + "\n\nAb message bhejo — sab users ko jayega.\n"
                         "<i>Cancel: /admin</i>",
-                        InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="a:home")]]))
+                        RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:home")]]))
     if action == "bans":
         lst = [(u, r) for u, r in USERS.items() if r.get("banned")]
         body = "\n".join("• <code>%s</code> %s" % (u, esc((r.get("name") or "?")[:18])) for u, r in lst) or "—"
@@ -2845,6 +3110,30 @@ async def admin_callback(update, context, action: str):
                     zf.write(p, arcname=f)
         await send_file(update, name, "💾 backup")
         return
+    if action == "theme":
+        try:
+            await q.edit_message_text(theme_preview(list(THEMES.keys())),
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_themes("a:themeset:"))
+        except Exception:
+            pass
+        return
+
+    if action.startswith("themeset:"):
+        name = action.split(":", 1)[1]
+        if name not in THEMES:
+            name = DEFAULT_THEME
+        sset("theme", name)
+        try:
+            await q.edit_message_text(
+                (H("THEME SET", THEMES[name]["label"]) + "\n\n"
+                 "✅ Poora bot ab <b>%s</b> look me hai.\n\n%s"
+                 % (F(THEMES[name]["label"], THEMES[name]["head"]), THEMES[name]["div"])),
+                parse_mode=ParseMode.HTML, reply_markup=kb_themes("a:themeset:"))
+        except Exception:
+            pass
+        return
+
     if action == "logs":
         p = os.path.join(BASE_DIR, "bot.log")
         tail = "—"
@@ -2965,6 +3254,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("myid", cmd_myid))
     app.add_handler(CommandHandler("admin", cmd_admin))
+    app.add_handler(CommandHandler("theme", cmd_theme))
     app.add_handler(CommandHandler("ban", cmd_ban))
     app.add_handler(CommandHandler("unban", cmd_unban))
     app.add_handler(CommandHandler("addkey", cmd_addkey))
