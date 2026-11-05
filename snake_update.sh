@@ -101,8 +101,11 @@ else
   echo "  ⚠️  helpers refresh skip (net issue)"
 fi
 
+# dead session saaf karo, phir ASLI process dekho (text nahi)
+screen -wipe >/dev/null 2>&1 || true
 WAS_RUNNING=0
-screen -ls 2>/dev/null | grep -q "\.snake" && WAS_RUNNING=1
+if pgrep -f "python3 -u snake_core\.py" >/dev/null 2>&1 || pgrep -f "python3 snake_core\.py" >/dev/null 2>&1; then WAS_RUNNING=1; fi
+[ "$WAS_RUNNING" = "0" ] && screen -ls 2>/dev/null | grep -q "\.[Ss]nake" && WAS_RUNNING=1
 if [ "$WAS_RUNNING" = "1" ]; then
   echo "  🔄 Bot chal raha tha — restart kar rahe hain…"
   [ -x ./restart.sh ] && ./restart.sh
