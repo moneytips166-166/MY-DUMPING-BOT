@@ -2137,6 +2137,9 @@ def help_text() -> str:
         body.append("%s <b>%s</b>\n   <i>%s</i>" % (emoji, style(name, "btn"), desc))
     return (H("HELP", "kaun sa tool kya karta hai") + "\n\n"
             + ("\n\n".join(body)) + "\n\n"
+            + tag("FILE UPLOAD") + "\n"
+            + "Koi .txt bhejo (dorks / URLs / keywords) — bot khud pehchan ke "
+              "Deep Scan, Reverse, Inject, Clean sab dega.\n\n"
             + tag("THEME") + "\n"
             + "Admin <code>/theme</code> se font + divider + icon badal sakta hai "
               "(%d themes).\n\n" % len(THEMES)
@@ -2180,6 +2183,26 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         return
+
+    # ── file actions ──
+    if data.startswith("f:"):
+        if not access_ok(uid):
+            try:
+                await q.edit_message_text(need_key_text(uid), reply_markup=kb_needkey(),
+                                          parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            return
+        try:
+            return await cb_file(update, context, data[2:])
+        except Exception as exc:
+            logger.exception("file action %s fail: %s", data, exc)
+            try:
+                await q.edit_message_text("❌ Error: <code>%s</code>" % esc(str(exc)[:200]),
+                                          parse_mode=ParseMode.HTML, reply_markup=kb_back())
+            except Exception:
+                pass
+            return
 
     # ── theme ──
     if data.startswith("th:set:"):
@@ -3066,6 +3089,266 @@ async def cb_dump_file(update, context):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  📂 FILE UPLOAD — dork / URL / keyword .txt bhejo
+# ═══════════════════════════════════════════════════════════════════════════════
+FILE_MAX = 8 * 1024 * 1024          # 8 MB
+FILE_MAX_LINES = 20000
+DORK_OP = re.compile(r"(inurl|intitle|intext|allinurl|allintitle|site|filetype|ext|"
+                     r"inanchor|allintext)\s*:", re.I)
+
+
+def classify_lines(lines: list) -> str:
+    """dorks / urls / keywords — auto detect."""
+    n = max(1, len(lines))
+    urls = sum(1 for l in lines if l.lower().startswith(("http://", "https://")))
+    dorks = sum(1 for l in lines if DORK_OP.search(l))
+    if urls / n > 0.5:
+        return "urls"
+    if dorks / n > 0.25:
+        return "dorks"
+    return "keywords"
+
+
+def read_lines(raw: bytes) -> list:
+    txt = raw.decode("utf-8", "ignore")
+    out = []
+    for line in txt.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        out.append(line)
+        if len(out) >= FILE_MAX_LINES:
+            break
+    return out
+
+
+def kb_file(kind: str) -> InlineKeyboardMarkup:
+    if kind == "dorks":
+        rows = [[InlineKeyboardButton("🚀 DEEP SCAN", callback_data="f:deep")],
+                [InlineKeyboardButton("📊 ANALYZE", callback_data="f:ana"),
+                 InlineKeyboardButton("🎲 RANDOMIZE", callback_data="f:rnd")],
+                [InlineKeyboardButton("💉 INJECTOR", callback_data="f:inj")],
+                [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]]
+    elif kind == "urls":
+        rows = [[InlineKeyboardButton("🔗 URL REVERSE", callback_data="f:rev")],
+                [InlineKeyboardButton("💉 INJECTOR", callback_data="f:inj"),
+                 InlineKeyboardButton("🧹 CLEAN + DEDUPE", callback_data="f:clean")],
+                [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]]
+    else:
+        rows = [[InlineKeyboardButton("🎯 KEYWORDS ➪ DORKS", callback_data="f:kw2dork")],
+                [InlineKeyboardButton("💉 INJECTOR", callback_data="f:inj")],
+                [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]]
+    return RK(rows)
+
+
+async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User .txt bheje — dorks / URLs / keywords — auto detect + actions."""
+    uid = update.effective_user.id
+    doc = getattr(update.message, "document", None)
+    if not doc:
+        return
+    if not context.user_data.get("verified"):
+        q, kb = captcha_new(context)
+        await update.message.reply_text(q, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+    if not access_ok(uid):
+        await update.message.reply_text(need_key_text(uid), parse_mode=ParseMode.HTML,
+                                        reply_markup=kb_needkey())
+        return
+    name = doc.file_name or "file.txt"
+    size = int(doc.file_size or 0)
+    if size > FILE_MAX:
+        await update.message.reply_text(
+            "❌ File bahut badi hai (%.1f MB). Max 8 MB." % (size / 1024 / 1024))
+        return
+    if not re.search(r"\.(txt|csv|list|dork|urls?|lst)$", name, re.I):
+        await update.message.reply_text(
+            "❌ Sirf <code>.txt</code> / <code>.csv</code> / <code>.list</code> bhejo.\n"
+            "<i>Word/PDF support nahi hai.</i>", parse_mode=ParseMode.HTML)
+        return
+    msg = await update.message.reply_text("📂 File padh raha hoon…")
+    try:
+        tg_file = await doc.get_file()
+        raw = bytes(await tg_file.download_as_bytearray())
+    except Exception as exc:
+        try:
+            await msg.edit_text("❌ File download fail: <code>%s</code>" % esc(str(exc)[:120]),
+                                parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+        return
+    lines = read_lines(raw)
+    if not lines:
+        try:
+            await msg.edit_text("❌ File khaali hai (ya sirf comments).")
+        except Exception:
+            pass
+        return
+    kind = classify_lines(lines)
+    context.user_data["file_items"] = lines
+    context.user_data["file_kind"] = kind
+    context.user_data["file_name"] = name
+    if kind == "dorks":
+        context.user_data["last_dorks"] = lines
+    elif kind == "urls":
+        context.user_data["last_urls"] = lines
+
+    label = {"dorks": "🎯 DORKS", "urls": "🔗 URLs", "keywords": "🔑 KEYWORDS"}[kind]
+    ops = sum(1 for l in lines if DORK_OP.search(l))
+    doms = domains_from_dorks(lines)
+    extra = ""
+    if doms:
+        extra = "\n🌐 site: domains: <code>%d</code> (Common Crawl use hoga)" % len(doms)
+    card = (H("FILE LOADED", "%s • %s" % (label, esc(name)[:40])) + "\n\n"
+            "📄 Lines   : <code>%s</code>\n"
+            "📦 Size    : <code>%.1f KB</code>\n"
+            "🏷 Type    : <b>%s</b>\n"
+            "⚙️ Operators: <code>%d</code>%s\n\n"
+            "<b>Preview:</b>\n%s\n\n"
+            "👇 Kya karna hai?"
+            % (fmt(len(lines)), size / 1024, label, ops, extra,
+               short_list(lines[:6], 6)))
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    await update.message.reply_text(card, parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
+
+
+async def cb_file(update, context, action: str):
+    q = update.callback_query
+    items = context.user_data.get("file_items") or []
+    kind = context.user_data.get("file_kind") or "dorks"
+    if not items:
+        try:
+            await q.answer("Pehle file bhejo", show_alert=True)
+        except Exception:
+            pass
+        return
+
+    if action == "deep":
+        context.user_data["parse_dorks"] = items[:1000]
+        doms = domains_from_dorks(items)
+        try:
+            await q.edit_message_text(
+                H("DEEP SCAN", "%d dorks" % len(items)) + "\n\n"
+                "Max URLs kitne chahiye? <b>Number bhejo</b>\n"
+                "<i>Recommended: 5000</i>%s"
+                % (("\n\n🌐 <b>%d domain</b> — Common Crawl se bhi aayenge" % len(doms)) if doms else ""),
+                parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
+        except Exception:
+            pass
+        context.user_data["await"] = "deep_max"
+        return
+
+    if action == "ana":
+        scores = [(score_dork(x)[0] if DORK_OP.search(x) else score_keyword(x)[0]) for x in items]
+        avg = sum(scores) / len(scores) if scores else 0
+        buckets = {"🔥 80+": 0, "✅ 65-79": 0, "🟡 45-64": 0, "🟠 25-44": 0, "🔴 <25": 0}
+        for sc in scores:
+            if sc >= 80: buckets["🔥 80+"] += 1
+            elif sc >= 65: buckets["✅ 65-79"] += 1
+            elif sc >= 45: buckets["🟡 45-64"] += 1
+            elif sc >= 25: buckets["🟠 25-44"] += 1
+            else: buckets["🔴 <25"] += 1
+        best = sorted(zip(scores, items), key=lambda z: -z[0])[:8]
+        txt = (H("FILE ANALYZE", "%d items" % len(items)) + "\n\n"
+               "⭐ Average: <code>%.0f/100</code>\n\n"
+               + "\n".join("%s : <code>%s</code>" % (kk, fmt(vv)) for kk, vv in buckets.items())
+               + "\n\n<b>Top 8:</b>\n" + short_list([b for _, b in best], 8))
+        try:
+            await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
+        except Exception:
+            pass
+        path, cnt = dump_text(["%3d  %s" % (sco, it) for sco, it in zip(scores, items)],
+                              "file_analyze", "PYTHON SNAKE — file analyze")
+        await send_file(update, path, "📊 %d scored" % cnt)
+        return
+
+    if action == "rnd":
+        out = randomize_dorks(items, n=min(len(items) * 2, 2000))
+        context.user_data["last_dorks"] = out
+        path, cnt = dump_text(out, "random", "PYTHON SNAKE — randomized")
+        try:
+            await q.edit_message_text(
+                H("RANDOMIZED", "%d → %d" % (len(items), len(out))) + "\n\n"
+                + short_list(out[:10], 10), parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
+        except Exception:
+            pass
+        await send_file(update, path, "🎲 %d randomized" % cnt)
+        return
+
+    if action == "rev":
+        infos = [url_reverse(u) for u in items[:20]]
+        infos = [i for i in infos if i]
+        dorks = []
+        for i in infos:
+            dorks += url_reverse_dorks(i, n=12)
+        dorks = _uniq(dorks)
+        context.user_data["last_dorks"] = dorks
+        path, cnt = dump_text(dorks, "url_reverse", "PYTHON SNAKE — reverse dorks")
+        try:
+            await q.edit_message_text(
+                H("URL REVERSE", "%d URLs → %d dorks" % (len(infos), cnt)) + "\n\n"
+                + short_list(dorks[:10], 10), parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
+        except Exception:
+            pass
+        await send_file(update, path, "🔗 %d dorks" % cnt)
+        return
+
+    if action == "clean":
+        seen, clean = set(), []
+        for u in items:
+            cu = _clean_url(u)
+            if not cu:
+                continue
+            k = cu.split("#")[0].rstrip("/")
+            if k in seen:
+                continue
+            seen.add(k)
+            clean.append(cu)
+        context.user_data["last_urls"] = clean
+        path, cnt = dump_text(clean, "clean_urls", "PYTHON SNAKE — cleaned URLs")
+        try:
+            await q.edit_message_text(
+                H("CLEAN + DEDUPE", "%.0f%% bache" % (len(clean) / max(1, len(items)) * 100)) + "\n\n"
+                "📥 Input : <code>%s</code>\n"
+                "🧹 Junk  : <code>%s</code>\n"
+                "✅ Clean : <code>%s</code>\n\n%s"
+                % (fmt(len(items)), fmt(len(items) - len(clean)), fmt(cnt),
+                   short_list(clean[:8], 8)),
+                parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
+        except Exception:
+            pass
+        await send_file(update, path, "🧹 %d clean URLs" % cnt)
+        return
+
+    if action == "kw2dork":
+        kws = [x for x in items if len(x) <= 60][:200]
+        dorks = []
+        for kw in kws:
+            dorks += make_dork("param", n=2)
+            dorks.append("intitle:%s" % kw)
+            dorks.append("intext:%s inurl:=" % kw)
+        dorks = _uniq(dorks)
+        context.user_data["last_dorks"] = dorks
+        path, cnt = dump_text(dorks, "kw_dorks", "PYTHON SNAKE — keywords to dorks")
+        try:
+            await q.edit_message_text(
+                H("KEYWORDS ➪ DORKS", "%d → %d" % (len(kws), cnt)) + "\n\n"
+                + short_list(dorks[:10], 10), parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
+        except Exception:
+            pass
+        await send_file(update, path, "🎯 %d dorks" % cnt)
+        return
+
+    if action == "inj":
+        await _run_inject(update, context, [x for x in items if x.startswith("http")][:200]
+                          or items[:200])
+        return
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  TEXT ROUTER
 # ═══════════════════════════════════════════════════════════════════════════════
 AWAIT_HANDLERS = {
@@ -3618,6 +3901,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("unban", cmd_unban))
     app.add_handler(CommandHandler("addkey", cmd_addkey))
     app.add_handler(CallbackQueryHandler(on_callback))
+    app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_error_handler(on_error)
     return app

@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v1.4
+# 🐍 PYTHON SNAKE CORE — v1.5
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -13,7 +13,7 @@ curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/ar
 Ye kya karta hai:
 
 - `~/snake` folder banata hai
-- `snake_core.py` download karta hai (**2,680 lines** — pehle wale 29,000 ki jagah)
+- `snake_core.py` download karta hai (**3,9xx lines** — pehle wale 29,000 ki jagah)
 - purane `~/spidey/bot_fixed.py` se **token + admin ID khud utha leta hai**
 - `start.sh / stop.sh / restart.sh / logs.sh / status.sh / update.sh / setconfig.sh` banata hai (sab **screen** based)
 - packages check karta hai
@@ -108,6 +108,43 @@ Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
 
 ---
+
+## 🆕 v1.5 — DEAD SCREEN FIX + FILE UPLOAD
+
+### 🩺 "Bot pehle se chal raha hai" par bot chup? — FIXED
+Asli wajah: **dead screen session** (`26134.snake (Dead ???)`). Purana `start.sh`
+sirf `screen -ls` ka text dekhta tha aur maan leta tha ki bot chal raha hai —
+jabki wo session mar chuka tha. Ab:
+
+- `screen -wipe` pehle chalta hai (dead session saaf)
+- `pgrep -f snake_core.py` se **asli process** check hota hai (text nahi)
+- dead session mile to auto-quit + fresh start
+- 8 sec wait, phir bhi na utha to **log tail** dikhata hai
+- `stop.sh` / `status.sh` bhi same logic
+
+```bash
+cd ~/snake && ./update.sh && ./start.sh && ./doctor.sh
+```
+
+### 📂 FILE UPLOAD — `.txt` bhejo, bot khud samajh jayega
+Ab bot ko **document** bhej sakte ho — dorks / URLs / keywords ka `.txt`.
+Bot **auto-detect** karta hai (dork operators %, URL %, warna keywords) aur
+uske hisaab se buttons deta hai:
+
+| File type | Buttons |
+|---|---|
+| 🎯 **DORKS** | 🚀 Deep Scan · 📊 Analyze · 🎲 Randomize · 💉 Injector |
+| 🔗 **URLs** | 🔗 URL Reverse · 💉 Injector · 🧹 Clean + Dedupe |
+| 🔑 **KEYWORDS** | 🎯 Keywords ➪ Dorks · 💉 Injector |
+
+- **8 MB** / **20,000 lines** tak, `.txt/.csv/.list/.dork/.urls/.lst`
+- `#` comments aur blank lines skip
+- `site:` domains se Common Crawl **automatic** use hota hai
+- Analyze → har line ka score + bucket (🔥80+ … 🔴<25) + txt dump
+- Clean+Dedupe → tracking params, fragments hata ke unique URLs
+- Sab results `.txt` file me download
+
+> File bhejne ke liye bas chat me document attach karo — koi command nahi.
 
 ## 🩺 v1.4 — bot chup kyun hai + Deep Parser + free APIs
 

@@ -10,6 +10,9 @@ cd "$(dirname "$0")" || exit 1
 
 PY="$(command -v python3 || echo python3)"
 BOT="snake_core.py"
+TMPD="${TMPDIR:-$PWD}"
+SYN="$TMPD/.snake_syn"
+num() { echo "${1:-0}" | tr -dc '0-9' | head -c 9 | sed 's/^$/0/'; }
 OK=0; WARN=0; BAD=0
 
 say()  { echo "$@"; }
@@ -33,14 +36,15 @@ say "── 1. FILES ───────────────────�
 # ---------- 2. syntax ----------
 say ""
 say "── 2. SYNTAX ─────────────────────────────"
-if $PY -m py_compile "$BOT" 2>/tmp/.snake_syn; then
+if $PY -m py_compile "$BOT" 2>"$SYN"; then
   ok "File compile OK"
 else
   bad "SYNTAX ERROR — file kharab hai:"
-  sed -n '1,12p' /tmp/.snake_syn | sed 's/^/      /'
+  sed -n "1,12p" "$SYN" 2>/dev/null | sed "s/^/      /"
   say "      👉 Rollback: cp backups/<purani> $BOT && ./restart.sh"
 fi
 rm -rf __pycache__ 2>/dev/null
+rm -f "$SYN" 2>/dev/null
 
 # ---------- 3. token ----------
 say ""
@@ -69,11 +73,17 @@ fi
 say ""
 say "── 4. PROCESS ────────────────────────────"
 SNAKE_PIDS="$(pgrep -f "python3 -u snake_core.py" 2>/dev/null; pgrep -f "python3 snake_core.py" 2>/dev/null | head -5)"
-SNAKE_N="$(echo "$SNAKE_PIDS" | grep -c . 2>/dev/null || echo 0)"
+SNAKE_N="$(num "$(echo "$SNAKE_PIDS" | grep -c . 2>/dev/null)")"
 if screen -ls 2>/dev/null | grep -q "\.snake"; then
-  ok "screen session 'snake' chal raha hai"
+  if screen -ls 2>/dev/null | grep "\.snake" | grep -qi "dead"; then
+    bad "screen session 'snake' DEAD hai (bot mar chuka, screen bacha hua)"
+    say "      👉 Ye hi wajah hai ki start.sh 'pehle se chal raha hai' bolta tha"
+    say "      👉 FIX: screen -wipe   (naya start.sh khud kar deta hai)"
+  else
+    ok "screen session 'snake' chal raha hai (alive)"
+  fi
 else
-  warn "screen session 'snake' NAHI hai (bot screen ke bahar chal raha ho sakta hai)"
+  warn "screen session 'snake' NAHI hai"
 fi
 if [ "$SNAKE_N" -ge 1 ]; then
   ok "snake_core.py process zinda (PID: $(echo $SNAKE_PIDS | tr '\n' ' '))"
@@ -83,7 +93,7 @@ fi
 
 # ⚠️ SABSE BADA PROBLEM: purana bot same token pe
 OLD_PIDS="$(pgrep -f "bot_fixed.py" 2>/dev/null | head -5)"
-OLD_N="$(echo "$OLD_PIDS" | grep -c . 2>/dev/null || echo 0)"
+OLD_N="$(num "$(echo "$OLD_PIDS" | grep -c . 2>/dev/null)")"
 if [ "$OLD_N" -ge 1 ]; then
   bad "PURANA BOT abhi bhi chal raha hai (bot_fixed.py, PID: $(echo $OLD_PIDS | tr '\n' ' '))"
   say "      👉 SAME TOKEN pe 2 bot = jawab NAHI aayega (Telegram 409 Conflict)"

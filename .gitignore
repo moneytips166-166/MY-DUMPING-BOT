@@ -17,3 +17,4 @@ bot_fixed.py.*.bak
 config.py
 .bot_new.py
 bot_fixed.local.py
+dumps/

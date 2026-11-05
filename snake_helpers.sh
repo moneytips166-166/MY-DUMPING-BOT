@@ -10,19 +10,53 @@ echo "  🔧 helper scripts bana rahe hain…"
 cat > start.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 cd "$(dirname "$0")" || exit 1
-if screen -ls 2>/dev/null | grep -q "\.snake"; then
-  echo "⚠️  Bot pehle se chal raha hai (screen: snake)."
+
+# process zinda hai?
+alive() {
+  pgrep -f "python3 -u snake_core.py" >/dev/null 2>&1 && return 0
+  pgrep -f "python3 snake_core.py"   >/dev/null 2>&1 && return 0
+  return 1
+}
+
+screen -wipe >/dev/null 2>&1
+
+if alive; then
+  echo "⚠️  Bot pehle se chal raha hai (PID: $(pgrep -f snake_core.py 2>/dev/null | tr '\n' ' '))"
   echo "    Restart: ./restart.sh"
   exit 0
 fi
-echo "=== START $(date '+%Y-%m-%d %H:%M:%S') ===" >> bot.log
-screen -dmS snake bash -c 'cd "'"$(pwd)"'" && python3 -u snake_core.py >> bot.log 2>&1'
-sleep 3
+
+# DEAD screen session (bot mar chuka par screen bacha hua) — hata do
 if screen -ls 2>/dev/null | grep -q "\.snake"; then
-  echo "🚀 Started — logs: ./logs.sh"
+  if screen -ls 2>/dev/null | grep "\.snake" | grep -qi "dead"; then
+    echo "🧹 Dead screen session mila — saaf kar rahe hain…"
+  else
+    echo "🧹 Purana screen session mila — saaf kar rahe hain…"
+  fi
+  screen -S snake -X quit >/dev/null 2>&1
+  screen -wipe >/dev/null 2>&1
+  sleep 1
+fi
+
+echo "=== START $(date '+%Y-%m-%d %H:%M:%S') ===" >> bot.log
+screen -wipe >/dev/null 2>&1
+screen -dmS snake bash -c 'cd "'"$(pwd)"'" && exec python3 -u snake_core.py >> bot.log 2>&1'
+
+for i in 1 2 3 4 5 6 7 8; do
+  sleep 1
+  alive && break
+done
+
+if alive; then
+  echo "🚀 Started (PID: $(pgrep -f snake_core.py 2>/dev/null | tr '\n' ' ')) — logs: ./logs.sh"
 else
-  echo "❌ Start fail — neeche error:"
-  sed -n '/=== START/,$p' bot.log | tail -n 25
+  echo "❌ Start fail (8 sec me bot nahi utha) — error:"
+  echo "──────────────────────────────────────────"
+  sed -n '/=== START/,$p' bot.log 2>/dev/null | tail -n 25
+  echo "──────────────────────────────────────────"
+  echo "👉 ./doctor.sh chalao"
+  screen -S snake -X quit >/dev/null 2>&1
+  screen -wipe >/dev/null 2>&1
 fi
 EOF
 cat > stop.sh <<'EOF'
@@ -30,9 +64,10 @@ cat > stop.sh <<'EOF'
 cd "$(dirname "$0")" || exit 1
 pkill -f "python3 -u snake_core.py" 2>/dev/null
 pkill -f "python3 snake_core.py" 2>/dev/null
-screen -S snake -X quit 2>/dev/null
+screen -S snake -X quit >/dev/null 2>&1
 sleep 1
-echo "🛑 Stopped."
+screen -wipe >/dev/null 2>&1
+echo "🛑 Stopped (screen bhi saaf)."
 EOF
 cat > restart.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
@@ -56,13 +91,17 @@ EOF
 cat > status.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 cd "$(dirname "$0")" || exit 1
-if screen -ls 2>/dev/null | grep -q "\.snake"; then
-  echo "✅ Bot CHAL RAHA hai"
+PIDS="$(pgrep -f snake_core.py 2>/dev/null | tr '\n' ' ')"
+if [ -n "${PIDS:-}" ]; then
+  echo "✅ Bot CHAL RAHA hai (PID: $PIDS)"
 else
   echo "❌ Bot BAND hai"
+  if screen -ls 2>/dev/null | grep "\.snake" | grep -qi "dead"; then
+    echo "   ⚠️  Dead screen session pada hai — ./start.sh khud saaf kar dega"
+  fi
 fi
 echo "── last start ke baad ka log ──"
-./logs.sh | tail -n 8
+./logs.sh 2>/dev/null | tail -n 8
 EOF
 cat > update.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
