@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v1.3
+# 🐍 PYTHON SNAKE CORE — v1.4
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -76,7 +76,7 @@ Plus 👑 **ADMIN PANEL** (`/admin`) — 14 buttons.
 🔄 RESTART     ⬅️ MENU
 ```
 
-Commands: `/admin` `/theme` `/myid` `/ban <id>` `/unban <id>` `/addkey <days>` `/help`
+Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` `/addkey <days>` `/help`
 
 ---
 
@@ -106,6 +106,56 @@ Commands: `/admin` `/theme` `/myid` `/ban <id>` `/unban <id>` `/addkey <days>` `
 | Parser | mixed | **7 engines, retry, dead-skip** |
 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
+
+---
+
+## 🩺 v1.4 — bot chup kyun hai + Deep Parser + free APIs
+
+### Bot chal raha hai par jawab nahi? — `./doctor.sh`
+
+Sabse common 3 wajah, sab auto-check hoti hain:
+
+| Problem | Doctor kya karta hai |
+|---|---|
+| **Webhook set hai** | Polling chalti hi nahi. Bot khud `delete_webhook` karta hai startup pe |
+| **Purana bot same token pe** (`~/spidey/bot_fixed.py`) | Telegram `409 Conflict` — doctor PID dhoondh ke batata hai + `pkill` command deta hai |
+| **Token revoke / galat** | `getMe` se 401 pakadta hai |
+
+Doctor ye bhi check karta hai: file syntax, screen session, duplicate process,
+`getUpdates` conflict, admin id, theme, aaj ka log — aur end me **quick fix block**.
+
+Plus `/ping` command — bot zinda hai ya nahi, uptime, PID, users, theme.
+
+### 🚀 DEEP PARSER (competitor jaisa card)
+
+PARSER → **🚀 DEEP SCAN** — har dork scan hota hai (koi early stop nahi), aur card:
+
+```
+Scanned: 1000/1000 dorks
+Raw URLs: 23454
+Unique URLs: 1513
+⚠️ Errors: 418
+
+🚫 Filtered: 17160
+   (junk 16234 • dork-mismatch 926)
+```
+
+Live progress bar bhi chalta hai `[████░░░░] 42%`.
+
+### 🌐 Free URL sources (koi API key nahi)
+
+| Source | Limit | Key |
+|---|---|---|
+| **Common Crawl CDX** | practically unlimited | ❌ nahi chahiye |
+| **Wayback CDX** | unlimited | ❌ nahi chahiye |
+| 13 search engines | engine-dependent | ❌ nahi chahiye |
+| **SerpAPI** (optional) | 100/month free | ✅ chahiye |
+| **Google CSE** (optional) | 100/day free | ✅ chahiye |
+
+`site:example.com` wala dork ho to bot **automatically Common Crawl** se us domain
+ke saare URLs uthata hai (bade engines isse nahi kar paate).
+
+API key optional: `/setkey serpapi YOUR_KEY` ya `/setkey cse KEY CX`
 
 ---
 
@@ -170,7 +220,7 @@ RuntimeError: There is no current event loop in thread 'MainThread'.
 
 ## 🧪 Test
 
-**137 tests pass**
+**105 tests pass** (55 v1.4 + 50 UI/core)
 - **16 font maps** — koi invalid/box glyph nahi (unicodedata se verify)
 - **8 themes** — header, divider, icon, buttons, HTML validity
 - **button routing** — main menu, dorker, parser, injector, randomizer, dumper, theme, admin

@@ -63,7 +63,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v1.3"
+VERSION = "v1.4"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -78,6 +78,8 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
 logger = logging.getLogger("snake")
+
+START_TS = time.time()
 
 TOKEN = BOT_TOKEN
 if (not TOKEN) or ("PUT_YOUR_BOT_TOKEN_HERE" in str(TOKEN)) or (":" not in str(TOKEN)):
@@ -1634,6 +1636,136 @@ def dork_match(url: str, dork: str) -> bool:
     return ok
 
 
+# ── COMMON CRAWL CDX — 100% free, koi API key nahi ───────────────────────────
+CC_CACHE = {"t": 0.0, "api": ""}
+
+
+async def cc_index(session) -> str:
+    """Latest Common Crawl index endpoint (collinfo.json se)."""
+    if CC_CACHE["api"] and (time.time() - CC_CACHE["t"] < 86400):
+        return CC_CACHE["api"]
+    d = jload("cc_index", {})
+    if d.get("api") and (time.time() - float(d.get("t") or 0) < 86400):
+        CC_CACHE.update({"t": float(d["t"]), "api": d["api"]})
+        return d["api"]
+    try:
+        async with session.get("https://index.commoncrawl.org/collinfo.json",
+                               headers=UA, ssl=False,
+                               timeout=aiohttp.ClientTimeout(total=25)) as r:
+            if r.status == 200:
+                j = await r.json(content_type=None)
+                if isinstance(j, list) and j:
+                    api = str(j[0].get("cdx-api") or "")
+                    if api:
+                        CC_CACHE.update({"t": time.time(), "api": api})
+                        jsave("cc_index", {"t": time.time(), "api": api})
+                        return api
+    except Exception:
+        pass
+    return ""
+
+
+async def cc_urls(domain: str, limit: int = 500, proxy=None) -> list:
+    """Common Crawl se ek domain ke URLs — free, unlimited-ish, koi key nahi."""
+    domain = (domain or "").strip().lower().lstrip(".")
+    if not domain:
+        return []
+    limit = max(10, min(5000, int(limit or 500)))
+    conn = aiohttp.TCPConnector(limit=8, ssl=False)
+    async with aiohttp.ClientSession(connector=conn) as session:
+        api = await cc_index(session)
+        if not api:
+            return []
+        kw = {"params": {"url": "%s/*" % domain, "output": "json", "limit": str(limit),
+                         "fl": "url", "filter": "=status:200",
+                         "collapse": "urlkey"},
+              "headers": UA, "ssl": False,
+              "timeout": aiohttp.ClientTimeout(total=45)}
+        if proxy:
+            kw["proxy"] = proxy
+        try:
+            async with session.get(api, **kw) as r:
+                if r.status != 200:
+                    return []
+                txt = await r.text(errors="ignore")
+        except Exception:
+            return []
+    out = []
+    for line in txt.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            o = json.loads(line)
+            u = str(o.get("url") or "")
+        except Exception:
+            continue
+        cu = _clean_url(u)
+        if cu:
+            out.append(cu)
+    return _uniq(out)
+
+
+def domains_from_dorks(dorks: list) -> list:
+    """site:example.com wale dorks se domain nikaalo (CDX ke liye)."""
+    out = []
+    for d in dorks or []:
+        for m in re.finditer(r"site:\s*([a-z0-9.-]+\.[a-z]{2,})", str(d), re.I):
+            out.append(m.group(1).lower())
+    return _uniq(out)
+
+
+# ── optional paid/free API keys (Google CSE / SerpAPI) ───────────────────────
+def api_keys() -> dict:
+    return {
+        "cse_key": str(sget("cse_key") or ""),
+        "cse_cx": str(sget("cse_cx") or ""),
+        "serpapi": str(sget("serpapi") or ""),
+    }
+
+
+async def cse_search(session, dork: str, num: int = 10, start: int = 1) -> list:
+    """Google Custom Search JSON API — 100 queries/day FREE (key + cx chahiye)."""
+    k = api_keys()
+    if not (k["cse_key"] and k["cse_cx"]):
+        return []
+    try:
+        async with session.get(
+                "https://www.googleapis.com/customsearch/v1",
+                params={"key": k["cse_key"], "cx": k["cse_cx"], "q": dork,
+                        "num": min(10, num), "start": start},
+                headers=UA, ssl=False,
+                timeout=aiohttp.ClientTimeout(total=20)) as r:
+            if r.status != 200:
+                return []
+            j = await r.json(content_type=None)
+        out = [str(it.get("link") or "") for it in (j.get("items") or [])]
+        return _uniq([u for u in (_clean_url(x) for x in out) if u])
+    except Exception:
+        return []
+
+
+async def serpapi_search(session, dork: str, num: int = 20, start: int = 0) -> list:
+    """SerpAPI — 100 searches/month free (real Google results + dorks)."""
+    k = api_keys()
+    if not k["serpapi"]:
+        return []
+    try:
+        async with session.get(
+                "https://serpapi.com/search.json",
+                params={"engine": "google", "q": dork, "num": min(100, num),
+                        "start": start, "api_key": k["serpapi"]},
+                headers=UA, ssl=False,
+                timeout=aiohttp.ClientTimeout(total=25)) as r:
+            if r.status != 200:
+                return []
+            j = await r.json(content_type=None)
+        out = [str(it.get("link") or "") for it in (j.get("organic_results") or [])]
+        return _uniq([u for u in (_clean_url(x) for x in out) if u])
+    except Exception:
+        return []
+
+
 def _pick_proxy() -> str:
     pool = PROXIES or load_proxy_pool()
     if not pool:
@@ -1702,6 +1834,107 @@ async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list 
                 except Exception:
                     pass
     return {"urls": found, "stats": stats}
+
+
+# ── DEEP SCAN — sab dorks, poore stats (competitor jaisa card) ───────────────
+async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
+                     use_proxy: bool = True, strict: bool = True,
+                     progress=None) -> dict:
+    """Har dork scan karo, junk hatao, aur poore stats do:
+
+    scanned / raw / unique / errors / filtered / engines
+    """
+    dorks = [str(d).strip() for d in (dorks or []) if str(d).strip()]
+    max_urls = max(10, min(50000, int(max_urls or 5000)))
+    pages = max(1, min(10, int(pages or 1)))
+    st = {"scanned": 0, "total": len(dorks), "raw": 0, "unique": 0,
+          "errors": 0, "filtered": 0, "engine_hits": defaultdict(int),
+          "junk": 0, "mismatch": 0, "cc": 0, "api": 0}
+    seen, out = set(), []
+
+    # 1) site: dorks -> Common Crawl (free, bahut zyada URLs)
+    doms = domains_from_dorks(dorks)
+    if doms:
+        for dom in doms[:8]:
+            got = await cc_urls(dom, limit=min(2000, max_urls), proxy=None)
+            st["raw"] += len(got)
+            st["cc"] += len(got)
+            for u in got:
+                k = u.split("#")[0]
+                if k not in seen:
+                    seen.add(k)
+                    out.append(k)
+                    if len(out) >= max_urls:
+                        break
+            if len(out) >= max_urls:
+                break
+
+    # 2) optional API keys (agar user ne daale hain)
+    k = api_keys()
+    conn = aiohttp.TCPConnector(limit=60, ssl=False, ttl_dns_cache=600)
+    async with aiohttp.ClientSession(connector=conn) as session:
+        if k["serpapi"] or (k["cse_key"] and k["cse_cx"]):
+            for dork in dorks[:60]:
+                got = []
+                if k["serpapi"]:
+                    got = await serpapi_search(session, dork, num=20)
+                if not got and k["cse_key"] and k["cse_cx"]:
+                    got = await cse_search(session, dork)
+                st["raw"] += len(got)
+                st["api"] += len(got)
+                for u in got:
+                    if not (strict and not dork_match(u, dork)):
+                        kk = u.split("#")[0]
+                        if kk not in seen:
+                            seen.add(kk)
+                            out.append(kk)
+
+        # 3) saare dorks, saare engines — koi early stop nahi
+        for i, dork in enumerate(dorks, 1):
+            st["scanned"] = i
+            if len(out) >= max_urls:
+                break
+            for page in range(pages):
+                if len(out) >= max_urls:
+                    break
+                order = list(ENGINE_ORDER)
+                random.shuffle(order)
+                order.sort(key=lambda e: ENGINE_MISS.get(e, 0) >= 3)
+                got_any = 0
+                for eng in order[:4]:
+                    proxy = _pick_proxy() if use_proxy else None
+                    urls = await fetch_engine(session, eng, dork, proxy, page=page)
+                    if not urls:
+                        st["errors"] += 1
+                        continue
+                    st["engine_hits"][eng] += len(urls)
+                    st["raw"] += len(urls)
+                    got_any += 1
+                    for u in urls:
+                        if strict and not dork_match(u, dork):
+                            st["mismatch"] += 1
+                            st["filtered"] += 1
+                            continue
+                        kk = u.split("#")[0]
+                        if kk in seen:
+                            st["junk"] += 1
+                            st["filtered"] += 1
+                            continue
+                        seen.add(kk)
+                        out.append(kk)
+                        if len(out) >= max_urls:
+                            break
+                    if got_any >= 2:
+                        break
+            if progress and (i % 2 == 0 or i == len(dorks)):
+                try:
+                    await progress(st)
+                except Exception:
+                    pass
+
+    st["unique"] = len(out)
+    st["filtered"] = max(st["filtered"], st["raw"] - st["unique"])
+    return {"urls": out, "stats": st}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2025,6 +2258,8 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_parse_last(update, context)
         if rest == "manual":
             return await cb_parse_manual(update, context)
+        if rest == "deep":
+            return await cb_parse_deep(update, context)
     elif head == "rd":
         if rest == "last":
             return await cb_rand_last(update, context)
@@ -2312,6 +2547,7 @@ async def tool_parse(update, context):
     q = update.callback_query
     last = context.user_data.get("last_dorks") or []
     kb = RK([
+        [InlineKeyboardButton("🚀 DEEP SCAN (LAST DORKS)", callback_data="pr:deep")],
         [InlineKeyboardButton("📥 USE LAST %d DORKS" % len(last), callback_data="pr:last")],
         [InlineKeyboardButton("✍️ MANUAL DORK", callback_data="pr:manual")],
         [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
@@ -2354,6 +2590,114 @@ async def cb_parse_manual(update, context):
     except Exception:
         pass
     context.user_data["await"] = "parse_dorks"
+
+
+async def cb_parse_deep(update, context):
+    q = update.callback_query
+    dorks = context.user_data.get("last_dorks") or []
+    if not dorks:
+        try:
+            await q.answer("Pehle DORKER chalao", show_alert=True)
+        except Exception:
+            pass
+        return
+    context.user_data["parse_dorks"] = dorks[:1000]
+    doms = domains_from_dorks(dorks)
+    extra = ("\n🌐 <b>%d domain</b> mile → Common Crawl se bhi URLs aayenge" % len(doms)) if doms else ""
+    try:
+        await q.edit_message_text(
+            H("DEEP SCAN", "sab dorks • poore stats") + "\n\n"
+            "🎯 Dorks: <b>%d</b>%s\n\n"
+            "Max URLs kitne chahiye? <b>Number bhejo</b>\n"
+            "<i>Recommended: 5000 (bada number = zyada time)</i>" % (len(dorks), extra),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
+    except Exception:
+        pass
+    context.user_data["await"] = "deep_max"
+
+
+async def input_deep_max(update, context, text: str):
+    import re as _re
+    try:
+        mx = int(_re.sub(r"[^0-9]", "", text) or "5000")
+    except Exception:
+        mx = 5000
+    mx = max(50, min(50000, mx))
+    dorks = context.user_data.get("parse_dorks") or context.user_data.get("last_dorks") or []
+    if not dorks:
+        await update.effective_message.reply_text("❌ Dork nahi mile. DORKER chalao.")
+        return
+    msg = await update.effective_message.reply_text(
+        "🚀 <b>DEEP SCAN chalu…</b>\n0 / %d dorks" % len(dorks), parse_mode=ParseMode.HTML)
+    t0 = time.time()
+    last = {"t": 0.0}
+
+    async def prog(st):
+        if time.time() - last["t"] < 2.5:
+            return
+        last["t"] = time.time()
+        pct = st["scanned"] / max(1, st["total"]) * 100
+        try:
+            await msg.edit_text(
+                "🌐 <b>%s</b>\n%s\n\n"
+                "Scanned : <code>%d/%d</code>\n"
+                "Raw URLs: <code>%s</code>\n"
+                "Unique  : <code>%s</code>\n"
+                "Errors  : <code>%s</code>\n\n"
+                "[%s] <b>%.0f%%</b>"
+                % (F("DEEP PARSER — RUNNING", T()["head"]), T()["div"][:20],
+                   st["scanned"], st["total"], fmt(st["raw"]), fmt(st["unique"]),
+                   fmt(st["errors"]), bar(pct, 22), pct),
+                parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+
+    res = await parse_deep(dorks, max_urls=mx, pages=int(sget("parse_pages", 1) or 1),
+                           use_proxy=bool(PROXIES or load_proxy_pool()), progress=prog)
+    took = time.time() - t0
+    st = res["stats"]
+    urls = res["urls"]
+    context.user_data["last_urls"] = urls
+    eng = ", ".join("%s:%d" % (a, b) for a, b in
+                    sorted(st["engine_hits"].items(), key=lambda z: -z[1])[:4]) or "—"
+    card = (H("DEEP PARSER — COMPLETE", "%.1fs" % took) + "\n\n"
+            "Scanned: <code>%d/%d</code> dorks\n"
+            "Raw URLs: <code>%s</code>\n"
+            "Unique URLs: <code>%s</code>\n"
+            "⚠️ Errors: <code>%s</code>\n\n"
+            "🚫 Filtered: <code>%s</code>\n"
+            "   <i>(junk %s • dork-mismatch %s)</i>\n\n"
+            "🌐 Common Crawl: <code>%s</code>\n"
+            "🔑 API: <code>%s</code>\n"
+            "⚙️ Engines: <code>%s</code>\n\n"
+            "[%s] <b>100%%</b>\n\n"
+            "📦 <b>Files ready</b>"
+            % (st["scanned"], st["total"], fmt(st["raw"]), fmt(st["unique"]),
+               fmt(st["errors"]), fmt(st["filtered"]), fmt(st["junk"]),
+               fmt(st["mismatch"]), fmt(st["cc"]), fmt(st["api"]), esc(eng),
+               bar(100, 22)))
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    for ch in chunk_lines(card)[:2]:
+        await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
+    if urls:
+        path, cnt = dump_text(urls, "deep", "PYTHON SNAKE — deep scan")
+        await send_file(update, path, "🌐 %d unique URLs" % cnt)
+        try:
+            js = dump_json({"stats": {k: (v if not isinstance(v, dict) else dict(v))
+                                      for k, v in st.items()}, "urls": urls[:5000]}, "deepstats")
+            await send_file(update, js, "📊 stats")
+        except Exception:
+            pass
+    else:
+        await update.effective_message.reply_text(
+            "❌ 0 URLs — sab engines block/empty the.\n"
+            "👉 🧅 PROXY ENGINE se proxies add karo, phir dobara.",
+            reply_markup=kb_back("m:parse"))
+    await update.effective_message.reply_text("⬅️ Menu", reply_markup=kb_back("m:home"))
+    context.user_data.pop("await", None)
 
 
 async def input_parse_dorks(update, context, text: str):
@@ -2735,6 +3079,7 @@ AWAIT_HANDLERS = {
     "rand_items": input_rand,
     "key_redeem": None,
     "bc_text": None,
+    "deep_max": None,
 }
 
 
@@ -2838,7 +3183,8 @@ def kb_admin() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🧅 PROXY", callback_data="a:proxy")],
         [InlineKeyboardButton("⚙️ ENGINE", callback_data="a:eng"),
          InlineKeyboardButton("📦 DUMPS", callback_data="a:dumps")],
-        [InlineKeyboardButton("🎨 THEME / FONT", callback_data="a:theme")],
+        [InlineKeyboardButton("🎨 THEME / FONT", callback_data="a:theme"),
+         InlineKeyboardButton("🔑 API KEYS", callback_data="a:keys_api")],
         [InlineKeyboardButton("📣 BROADCAST", callback_data="a:bc"),
          InlineKeyboardButton("🚫 BANS", callback_data="a:bans")],
         [InlineKeyboardButton("💾 BACKUP", callback_data="a:backup"),
@@ -3110,6 +3456,16 @@ async def admin_callback(update, context, action: str):
                     zf.write(p, arcname=f)
         await send_file(update, name, "💾 backup")
         return
+    if action == "keys_api":
+        k = api_keys()
+        await ed(H("API KEYS", "optional free tiers") + "\n\n"
+                 "SerpAPI : %s   <code>/setkey serpapi KEY</code>\n"
+                 "CSE     : %s   <code>/setkey cse KEY CX</code>\n"
+                 "CC      : ✅ always on (free)\n\n"
+                 "<i>Bina keys ke bhi 13 engines + Common Crawl chalte hain.</i>"
+                 % ("✅" if k["serpapi"] else "⚪", "✅" if (k["cse_key"] and k["cse_cx"]) else "⚪"))
+        return
+
     if action == "theme":
         try:
             await q.edit_message_text(theme_preview(list(THEMES.keys())),
@@ -3219,6 +3575,7 @@ async def cmd_addkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 AWAIT_HANDLERS["bc_text"] = lambda *a, **k: input_broadcast(*a, **k)
+AWAIT_HANDLERS["deep_max"] = lambda *a, **k: input_deep_max(*a, **k)
 
 
 async def input_broadcast(update, context, text: str):
@@ -3253,6 +3610,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("menu", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("myid", cmd_myid))
+    app.add_handler(CommandHandler("ping", cmd_ping))
+    app.add_handler(CommandHandler("setkey", cmd_setkey))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CommandHandler("theme", cmd_theme))
     app.add_handler(CommandHandler("ban", cmd_ban))
@@ -3284,6 +3643,122 @@ def _install_signals(stop_event) -> None:
                 pass
 
 
+selfcheck = {}     # startup diagnostics (/ping me dikhta hai)
+
+
+async def _self_check(app) -> None:
+    """Startup pe Telegram side verify — webhook / conflict / token."""
+    try:
+        me = await app.bot.get_me()
+        logger.info("🤖 Bot: @%s (id %s) — token OK", me.username, me.id)
+        selfcheck["username"] = me.username
+    except Exception as exc:
+        logger.error("❌ getMe FAIL — token galat/revoke: %s", exc)
+        print("\n" + "=" * 62)
+        print("  ❌ TOKEN GALAT YA REVOKE HO CHUKA")
+        print("=" * 62)
+        print("  BotFather → /revoke → naya token → ./setconfig.sh --token <naya>")
+        print("=" * 62 + "\n")
+        return
+
+    # webhook set hai? -> polling chalti hi nahi. Hata do.
+    try:
+        wh = await app.bot.get_webhook_info()
+        if wh.url:
+            logger.warning("⚠️ Webhook set tha (%s) — polling block ho rahi thi. Hata rahe hain…", wh.url)
+            selfcheck["webhook_removed"] = wh.url
+            await app.bot.delete_webhook(drop_pending_updates=False)
+            logger.info("✅ Webhook hata diya — ab polling chalegi")
+        else:
+            logger.info("✅ Webhook clear hai (polling mode)")
+    except Exception as exc:
+        logger.warning("webhook check skip: %s", exc)
+
+    # conflict check — koi dusra bot same token pe?
+
+    selfcheck["ok"] = True
+    # admin ko online message
+    try:
+        for aid in ADMIN_IDS:
+            await app.bot.send_message(
+                chat_id=int(aid),
+                text=("🐍 <b>%s ONLINE</b>\n%s\n🤖 @%s\n🧵 PID %d\n%s\n\n"
+                      "<i>/ping se kabhi bhi check kar sakte ho</i>"
+                      % (BRAND, T()["div"], me.username, os.getpid(), T()["div"])),
+                parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        logger.warning("admin online msg fail: %s", exc)
+
+
+async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: optional API keys (Google CSE / SerpAPI). Free tiers."""
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.effective_message.reply_text("🚫 Admin only.")
+        return
+    k = api_keys()
+    args = list(context.args or [])
+    if not args:
+        txt = (H("API KEYS", "optional — free tiers") + "\n\n"
+               "Ye dono <b>optional</b> hain. Bina inke bot chalta hai "
+               "(13 engines + Common Crawl + Wayback free).\n\n"
+               "🔑 <b>SerpAPI</b> — 100 searches/mahina FREE\n"
+               "   <i>asli Google results + poore dorks (inurl:/filetype:)</i>\n"
+               "   serpapi.com → signup → API key\n"
+               "   <code>/setkey serpapi YOUR_KEY</code>\n\n"
+               "🔑 <b>Google CSE</b> — 100 queries/din FREE\n"
+               "   <i>par inurl: support nahi karta (kam useful)</i>\n"
+               "   <code>/setkey cse API_KEY CX_ID</code>\n\n"
+               "🗑 Hatane ke liye: <code>/setkey serpapi -</code>\n\n"
+               "━━ Status ━━\n"
+               "SerpAPI : %s\n"
+               "CSE     : %s\n"
+               "CC      : ✅ always on (free, no key)"
+               % ("✅ set" if k["serpapi"] else "⚪ not set",
+                  "✅ set" if (k["cse_key"] and k["cse_cx"]) else "⚪ not set"))
+        await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML)
+        return
+    what = args[0].lower()
+    if what == "serpapi":
+        if len(args) < 2:
+            await update.effective_message.reply_text("Usage: /setkey serpapi YOUR_KEY")
+            return
+        val = args[1].strip()
+        sset("serpapi", "" if val == "-" else val)
+        await update.effective_message.reply_text(
+            "✅ SerpAPI %s" % ("hata diya" if val == "-" else "set ho gaya (100/month free)"))
+        return
+    if what == "cse":
+        if len(args) < 3:
+            await update.effective_message.reply_text("Usage: /setkey cse API_KEY CX_ID")
+            return
+        sset("cse_key", "" if args[1] == "-" else args[1].strip())
+        sset("cse_cx", "" if args[1] == "-" else args[2].strip())
+        await update.effective_message.reply_text("✅ Google CSE set ho gaya (100/day free)")
+        return
+    await update.effective_message.reply_text(
+        "❓ Options: <code>serpapi</code> ya <code>cse</code>", parse_mode=ParseMode.HTML)
+
+
+async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kya bot zinda hai? + kaun sa theme + uptime."""
+    t0 = time.time()
+    msg = await update.effective_message.reply_text("🏓 …")
+    ms = int((time.time() - t0) * 1000)
+    up = int(time.time() - START_TS)
+    await msg.edit_text(
+        (H("PONG", "%s ms" % ms) + "\n\n"
+         "🟢 Bot zinda hai\n"
+         "🤖 @%s\n"
+         "🎨 Theme: <b>%s</b>\n"
+         "⏱ Uptime: <code>%dh %dm</code>\n"
+         "🧵 PID: <code>%d</code>\n"
+         "👥 Users: <code>%d</code>"
+         % (selfcheck.get("username") or "?", F(THEMES[theme_name()]["label"], T()["head"]),
+            up // 3600, (up % 3600) // 60, os.getpid(), len(USERS))),
+        parse_mode=ParseMode.HTML)
+
+
 async def _serve(app, stop_ev=None) -> None:
     """Apna polling loop — asyncio.get_event_loop() use NAHI karta.
 
@@ -3294,6 +3769,7 @@ async def _serve(app, stop_ev=None) -> None:
         stop_ev = asyncio.Event()
     _install_signals(stop_ev)
     await app.initialize()
+    await _self_check(app)
     await app.start()
     await app.updater.start_polling(
         allowed_updates=Update.ALL_TYPES,

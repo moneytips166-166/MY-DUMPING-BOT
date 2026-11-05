@@ -76,5 +76,11 @@ set -u
 cd "$(dirname "$0")" || exit 1
 curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/snake_setconfig.sh" -o .cfg.tmp && bash .cfg.tmp && rm -f .cfg.tmp
 EOF
-chmod +x start.sh stop.sh restart.sh logs.sh status.sh update.sh setconfig.sh 2>/dev/null
+cat > doctor.sh <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+set -u
+cd "$(dirname "$0")" || exit 1
+curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot/snake_doctor.sh" -o .doc.tmp && bash .doc.tmp && rm -f .doc.tmp
+EOF
+chmod +x start.sh stop.sh restart.sh logs.sh status.sh update.sh setconfig.sh doctor.sh 2>/dev/null
 echo "  ✅ helpers ready"
