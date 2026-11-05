@@ -63,7 +63,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v1.4"
+VERSION = "v1.6"
+KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -2049,11 +2050,28 @@ def access_ok(uid) -> bool:
     return is_admin(uid) or has_access(uid)
 
 
+def is_verified(context, uid) -> bool:
+    """Captcha ek baar — restart ke baad dobara nahi poochta."""
+    if context.user_data.get("verified"):
+        return True
+    try:
+        if USERS.get(str(uid), {}).get("verified"):
+            context.user_data["verified"] = True
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def need_key_text(uid) -> str:
     return (H("ACCESS NEEDED", "license nahi hai") + "\n\n"
             "Aapki ID: <code>%s</code>\n\n"
-            "🔑 <b>REDEEM KEY</b> dabao aur key daalo.\n"
-            "Ya owner se key lo: %s"
+            "<b>Key kaise redeem kare?</b>\n"
+            "1️⃣ Neeche 🔑 <b>REDEEM KEY</b> dabao\n"
+            "2️⃣ Key bhejo: <code>SNK-AB12-CD34</code>\n\n"
+            "⚡ <b>Ya seedha:</b> <code>/redeem SNK-AB12-CD34</code>\n"
+            "⚡ <b>Ya bas</b> key chat me paste kar do — khud redeem ho jayegi.\n\n"
+            "Key nahi hai? Owner se lo: %s"
             % (uid, ADMIN_USERNAME))
 
 
@@ -2095,10 +2113,14 @@ async def show_home(update, uid, edit: bool = True):
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     touch_user(update)
-    if not context.user_data.get("verified"):
+    if not is_verified(context, u.id):
         q, kb = captcha_new(context)
         await update.effective_message.reply_text(q, reply_markup=kb, parse_mode=ParseMode.HTML)
         return
+    # /start SNK-XXXX-XXXX  (deep link)
+    arg = (" ".join(getattr(context, "args", []) or [])).strip().upper()
+    if arg and (KEY_RE.match(arg) or arg in KEYS) and not access_ok(u.id):
+        return await input_redeem(update, context, arg)
     await show_home(update, u.id, edit=False)
 
 
@@ -2174,6 +2196,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ok = False
         if ok:
             context.user_data["verified"] = True
+            try:
+                USERS.setdefault(str(uid), {})["verified"] = True
+                save_all()
+            except Exception:
+                pass
             await show_home(update, uid)
         else:
             text, kb = captcha_new(context)
@@ -2238,6 +2265,24 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tool = data[2:]
     if tool == "home":
         return await show_home(update, uid)
+
+    # 🔑 redeem aur help bina key wale ko bhi milna chahiye
+    if tool in ("redeem", "help"):
+        if tool == "redeem":
+            try:
+                await q.edit_message_text(tool_redeem_text(), reply_markup=kb_back("m:home"),
+                                          parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            context.user_data["await"] = "key_redeem"
+            return
+        try:
+            await q.edit_message_text(help_text(), reply_markup=kb_back("m:home"),
+                                      parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+        return
+
     if not access_ok(uid):
         try:
             await q.edit_message_text(need_key_text(uid), reply_markup=kb_needkey(),
@@ -3147,7 +3192,7 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = getattr(update.message, "document", None)
     if not doc:
         return
-    if not context.user_data.get("verified"):
+    if not is_verified(context, uid):
         q, kb = captcha_new(context)
         await update.message.reply_text(q, reply_markup=kb, parse_mode=ParseMode.HTML)
         return
@@ -3369,10 +3414,22 @@ AWAIT_HANDLERS = {
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = (update.message.text or "").strip()
-    if not context.user_data.get("verified"):
+    if not is_verified(context, uid):
         q, kb = captcha_new(context)
         await update.message.reply_text(q, reply_markup=kb, parse_mode=ParseMode.HTML)
         return
+
+    # 🔑 REDEEM pehle — access gate se PEHLE, warna key type hi nahi ho sakti
+    wait = context.user_data.get("await")
+    if wait == "key_redeem":
+        context.user_data.pop("await", None)
+        context.user_data.pop("await_admin", None)
+        return await input_redeem(update, context, text)
+    up = text.upper()
+    if not access_ok(uid) and (KEY_RE.match(up) or up in KEYS):
+        context.user_data.pop("await", None)
+        return await input_redeem(update, context, up)
+
     if not access_ok(uid):
         await update.message.reply_text(need_key_text(uid), parse_mode=ParseMode.HTML,
                                         reply_markup=kb_needkey())
@@ -3381,7 +3438,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("await", None)
         context.user_data.pop("await_admin", None)
         return
-    wait = context.user_data.get("await")
     fn = AWAIT_HANDLERS.get(wait)
     if fn:
         context.user_data.pop("await", None)
@@ -3434,11 +3490,20 @@ def redeem_key(uid, key: str) -> tuple:
 TOOL_HANDLERS["redeem"] = lambda *a, **k: tool_redeem(*a, **k)
 
 
+def tool_redeem_text() -> str:
+    return (H("REDEEM KEY", "3 tarike") + "\n\n"
+            "1️⃣ Neeche key <b>bhej do</b> (button flow)\n"
+            "2️⃣ <code>/redeem SNK-AB12-CD34</code>\n"
+            "3️⃣ Bas key <b>paste</b> karo — auto redeem\n\n"
+            "Format: <code>SNK-XXXX-XXXX</code>\n"
+            "Mili nahi? Owner: %s" % ADMIN_USERNAME)
+
+
 async def tool_redeem(update, context):
     q = update.callback_query
-    txt = (H("REDEEM KEY") + "\n\nKey bhejo (jaise <code>SNK-AB12-CD34</code>):")
     try:
-        await q.edit_message_text(txt, reply_markup=kb_back("m:home"), parse_mode=ParseMode.HTML)
+        await q.edit_message_text(tool_redeem_text(), reply_markup=kb_back("m:home"),
+                                  parse_mode=ParseMode.HTML)
     except Exception:
         pass
     context.user_data["await"] = "key_redeem"
@@ -3448,11 +3513,38 @@ AWAIT_HANDLERS["key_redeem"] = lambda *a, **k: input_redeem(*a, **k)
 
 
 async def input_redeem(update, context, text: str):
-    ok, msg = redeem_key(update.effective_user.id, text)
-    await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML,
-                                              reply_markup=kb_main() if ok else None)
+    uid = update.effective_user.id
+    key = (text or "").strip().upper()
+    if not key:
+        await update.effective_message.reply_text(
+            "❌ Key khaali hai. Format: <code>SNK-AB12-CD34</code>", parse_mode=ParseMode.HTML)
+        return
+    ok, msg = redeem_key(uid, key)
     if ok:
-        await show_home(update, update.effective_user.id, edit=False)
+        await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
+        await show_home(update, uid, edit=False)
+        return
+    hint = ""
+    if not KEY_RE.match(key):
+        hint = "\n\n📌 Format: <code>SNK-XXXX-XXXX</code> (dashes ke saath)"
+    await update.effective_message.reply_text(
+        msg + hint, parse_mode=ParseMode.HTML, reply_markup=kb_needkey())
+
+
+# ── /redeem command (key ke bina bhi kaam karta hai) ─────────────────────────
+async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_verified(context, uid):
+        q, kb = captcha_new(context)
+        await update.effective_message.reply_text(q, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+    arg = (" ".join(getattr(context, "args", []) or [])).strip()
+    if arg:
+        return await input_redeem(update, context, arg)
+    context.user_data["await"] = "key_redeem"
+    await update.effective_message.reply_text(tool_redeem_text(),
+                                              reply_markup=kb_back("m:home"),
+                                              parse_mode=ParseMode.HTML)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3887,8 +3979,26 @@ async def on_error(update, context):
     logger.error("handler error: %s", context.error, exc_info=context.error)
 
 
+async def _post_init(app) -> None:
+    """Telegram ke "/" menu me commands dikhein (redeem included)."""
+    try:
+        await app.bot.set_my_commands([
+            BotCommand("start", "🏠 Menu"),
+            BotCommand("redeem", "🔑 Key redeem karo"),
+            BotCommand("help", "📖 Help"),
+            BotCommand("theme", "🎨 Theme badlo"),
+            BotCommand("myid", "🪪 Apni ID"),
+            BotCommand("ping", "🏓 Bot zinda?"),
+            BotCommand("admin", "👑 Admin panel"),
+        ])
+        logger.info("✅ Bot commands set (/redeem included)")
+    except Exception as exc:
+        logger.warning("set_my_commands skip: %s", exc)
+
+
 def build_app() -> Application:
-    app = ApplicationBuilder().token(TOKEN).concurrent_updates(True).build()
+    app = (ApplicationBuilder().token(TOKEN).concurrent_updates(True)
+           .post_init(_post_init).build())
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
@@ -3900,6 +4010,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("ban", cmd_ban))
     app.add_handler(CommandHandler("unban", cmd_unban))
     app.add_handler(CommandHandler("addkey", cmd_addkey))
+    app.add_handler(CommandHandler("redeem", cmd_redeem))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))

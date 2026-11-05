@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v1.5
+# 🐍 PYTHON SNAKE CORE — v1.6
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -108,6 +108,38 @@ Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
 
 ---
+
+## 🔑 v1.6 — REDEEM THEEK + BUGS FIX
+
+### Key redeem ab 3 tarike se chalti hai
+Pehle **key redeem hi nahi hoti thi** — 3 jagah se tooti hui thi:
+
+| Bug | Pehle | Ab |
+|---|---|---|
+| `/redeem KEY` command | **exist hi nahi karta tha** — bot chup | ✅ kaam karta hai |
+| Chat me key type karna | access-gate pehle atak jata tha | ✅ seedha redeem |
+| 🔑 REDEEM button | wapas wahi "key lo" message (loop) | ✅ redeem screen khulti hai |
+| `/start SNK-...` | ignore | ✅ deep-link redeem |
+| 📖 HELP bina key | blocked | ✅ khulta hai |
+
+**Ab bas ye 3 tarike:**
+```text
+/redeem SNK-AB12-CD34
+```
+```text
+SNK-AB12-CD34          ← bas paste kar do
+```
+ya 🔑 **REDEEM KEY** button → key bhejo.
+
+- Format: `SNK-XXXX-XXXX` (dashes ke saath)
+- Galat format / use ho chuki key / nahi mili → **saaf jawab** (pehle silence)
+- `/redeem` bina key → instructions + key listener
+- Telegram `/` menu me commands register ho gaye (`redeem` included)
+
+### 🐛 Aur jo fix hua
+- **VERSION** ab `v1.6` — header me dikhega, update hua ya nahi turant pata chalega
+- **Captcha dobara nahi poochta** — ek baar solve, `data/users.json` me save
+- `./update.sh` bhi dead-screen safe (`screen -wipe` + precise pgrep)
 
 ## 🆕 v1.5 — DEAD SCREEN FIX + FILE UPLOAD
 
