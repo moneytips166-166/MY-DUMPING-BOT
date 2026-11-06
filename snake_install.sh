@@ -7,7 +7,7 @@
 #
 #  Kya karta hai:
 #     • ~/snake folder banata hai
-#     • snake_core.py download karta hai
+#     • bot.py (EK hi file) download karta hai + /storage/emulated/0/DBF me copy
 #     • purane bot (~/spidey/bot_fixed.py) se TOKEN + ADMIN_IDS khud utha leta hai
 #     • start/stop/restart/logs/status/setconfig scripts banata hai (screen based)
 #     • packages check karta hai
@@ -17,7 +17,8 @@ set -u
 REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot}"
 DIR="${SNAKE_DIR:-$HOME/snake}"
 OLD_BOT="${OLD_BOT:-$HOME/spidey/bot_fixed.py}"
-BOT="snake_core.py"
+BOT="bot.py"
+DBF_DIR="${DBF_DIR:-/storage/emulated/0/DBF}"
 
 echo "=============================================================="
 echo "  🐍 PYTHON SNAKE CORE — INSTALLER"
@@ -68,6 +69,33 @@ if [ "${BYTES:-0}" -lt 50000 ]; then
 fi
 mv -f ".$BOT.new" "$BOT"
 echo "  ✅ $BOT aaya ($(wc -l < "$BOT") lines)"
+
+# ---------- 4b. compat shim (purane start.sh ke liye) ----------
+cat > snake_core.py <<'SHIMEOF'
+#!/usr/bin/env python3
+# snake_core.py — sirf COMPAT SHIM. Asli code bot.py me hai (ek hi file).
+import os
+import sys
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+BOT = os.path.join(BASE, "bot.py")
+
+if not os.path.exists(BOT):
+    sys.exit("❌ bot.py nahi mila — ./update.sh chalao")
+
+with open(BOT, encoding="utf-8") as _f:
+    _src = _f.read()
+
+exec(compile(_src, BOT, "exec"))
+SHIMEOF
+echo "  ✅ snake_core.py shim ready"
+
+# ---------- 4c. DBF folder me wahi file ----------
+if mkdir -p "$DBF_DIR" 2>/dev/null && cp -f "$BOT" "$DBF_DIR/bot.py" 2>/dev/null; then
+  echo "  📁 DBF copy : $DBF_DIR/bot.py"
+else
+  echo "  ⚠️  DBF copy skip (permission) — chalao: termux-setup-storage"
+fi
 
 # ---------- 5. token + admin migrate ----------
 echo ""

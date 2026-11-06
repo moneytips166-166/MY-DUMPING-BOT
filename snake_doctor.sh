@@ -9,7 +9,8 @@ set -u
 cd "$(dirname "$0")" || exit 1
 
 PY="$(command -v python3 || echo python3)"
-BOT="snake_core.py"
+BOT="bot.py"                                  # EK hi file
+[ -f "$BOT" ] || BOT="snake_core.py"          # purani install fallback
 TMPD="${TMPDIR:-$PWD}"
 SYN="$TMPD/.snake_syn"
 num() { echo "${1:-0}" | tr -dc '0-9' | head -c 9 | sed 's/^$/0/'; }

@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v2.3
+# 🐍 PYTHON SNAKE CORE — v2.4
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -13,7 +13,7 @@ curl -fsSL "https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/ar
 Ye kya karta hai:
 
 - `~/snake` folder banata hai
-- `snake_core.py` download karta hai (**3,9xx lines** — pehle wale 29,000 ki jagah)
+- `bot.py` download karta hai (**ek hi file**, ~7,800 lines)
 - purane `~/spidey/bot_fixed.py` se **token + admin ID khud utha leta hai**
 - `start.sh / stop.sh / restart.sh / logs.sh / status.sh / update.sh / setconfig.sh` banata hai (sab **screen** based)
 - packages check karta hai
@@ -108,6 +108,31 @@ Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
 
 ---
+
+## ✨ v2.4 — EK FILE SYSTEM (`bot.py`)
+
+### 📄 Ab sirf EK file: `bot.py`
+- **Repo me**: `bot.py` = poora bot. Koi patch, koi alag module nahi.
+- **Phone me**: `~/snake/bot.py` (chalta yahi hai) + **same copy**
+  `/storage/emulated/0/DBF/bot.py` (aapki maangi jagah — har update pe wahi file refresh hoti hai).
+- `snake_core.py` ab sirf **15 line ka shim** hai (purane `start.sh/stop.sh/restart.sh`
+  tod na dein) — wo bhi `bot.py` ko hi load karta hai. Code duplicate nahi hota.
+
+### 🔄 `./update.sh` kya karta hai (naya)
+```
+1. bot.py download (EAGER: 50 KB se chhoti ho to abort)
+2. purana token + ADMIN_IDS preserve
+3. py_compile check — fail ho to KUCH replace nahi (auto safe)
+4. bot.py replace  →  ~/snake/bot.py
+5. snake_core.py shim dobara likhta hai
+6. /storage/emulated/0/DBF/bot.py me copy
+7. version + lines print
+```
+Purani install (jisme sirf `snake_core.py` tha) bhi **khud migrate** ho jati hai —
+pehli baar update chalane pe `snake_core.py` → `bot.py` ban jata hai.
+
+### 🛠 Jo scripts bhi update ho gaye
+`snake_setconfig.sh` (token/admin ab `bot.py` me likhta hai) • `snake_doctor.sh` (bot.py check karta hai) • `snake_install.sh` (naya install bhi bot.py + DBF copy).
 
 ## ✨ v2.3 — FILE PEHLE, COUNT BAAD ME
 

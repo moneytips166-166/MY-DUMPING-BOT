@@ -10,8 +10,9 @@ set -u
 cd "$(dirname "$0")" || exit 1
 
 REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/moneytips166-166/MY-DUMPING-BOT/arena/063f862a-my-dumping-bot}"
-BOT="snake_core.py"
+BOT="bot.py"                       # EK hi file — har update isi me
 NEW=".snake_new.py"
+DBF_DIR="${DBF_DIR:-/storage/emulated/0/DBF}"   # mirror copy yahan bhi
 PY="$(command -v python3 || echo python3)"
 
 mkdir -p backups
@@ -22,8 +23,13 @@ echo "  Folder: $(pwd)"
 echo "=============================================================="
 
 if [ ! -f "$BOT" ]; then
-  echo "❌ $BOT nahi mila — pehle installer chalao"
-  exit 1
+  if [ -f "snake_core.py" ] && [ "$(wc -l < snake_core.py)" -gt 1000 ]; then
+    echo "  🔁 Purani snake_core.py mili — bot.py me migrate…"
+    cp -f snake_core.py "$BOT"
+  else
+    echo "❌ $BOT nahi mila — pehle installer chalao"
+    exit 1
+  fi
 fi
 
 echo "  📄 Purani : $(wc -l < "$BOT") lines"
@@ -87,10 +93,39 @@ else
   rm -f "$NEW"; exit 1
 fi
 
-# ---------- replace + restart ----------
+# ---------- replace ----------
 mv -f "$NEW" "$BOT"
 rm -rf __pycache__
-echo "  ✅ $BOT update ho gaya"
+echo "  ✅ $BOT update ho gaya (ek hi file — koi patch nahi)"
+
+# ---------- snake_core.py shim (purane start.sh ke liye) ----------
+cat > snake_core.py <<'SHIMEOF'
+#!/usr/bin/env python3
+# snake_core.py — sirf COMPAT SHIM. Asli code bot.py me hai (ek hi file).
+import os
+import sys
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+BOT = os.path.join(BASE, "bot.py")
+
+if not os.path.exists(BOT):
+    sys.exit("❌ bot.py nahi mila — ./update.sh chalao")
+
+with open(BOT, encoding="utf-8") as _f:
+    _src = _f.read()
+
+exec(compile(_src, BOT, "exec"))
+SHIMEOF
+$PY -m py_compile snake_core.py 2>/dev/null && echo "  ✅ shim ready (start.sh waise hi chalega)"
+
+# ---------- DBF folder me wahi file ----------
+echo ""
+if mkdir -p "$DBF_DIR" 2>/dev/null && cp -f "$BOT" "$DBF_DIR/bot.py" 2>/dev/null; then
+  echo "  📁 DBF copy : $DBF_DIR/bot.py  ($(wc -l < "$DBF_DIR/bot.py") lines)"
+else
+  echo "  ⚠️  DBF folder likhne ki permission nahi: $DBF_DIR"
+  echo "      Termux me ek baar chalao:  termux-setup-storage"
+fi
 
 # ---------- helpers refresh ----------
 echo ""
@@ -104,7 +139,8 @@ fi
 # dead session saaf karo, phir ASLI process dekho (text nahi)
 screen -wipe >/dev/null 2>&1 || true
 WAS_RUNNING=0
-if pgrep -f "python3 -u snake_core\.py" >/dev/null 2>&1 || pgrep -f "python3 snake_core\.py" >/dev/null 2>&1; then WAS_RUNNING=1; fi
+if pgrep -f "python3 -u snake_core\.py" >/dev/null 2>&1 || pgrep -f "python3 snake_core\.py" >/dev/null 2>&1 \
+   || pgrep -f "python3 -u bot\.py" >/dev/null 2>&1 || pgrep -f "python3 bot\.py" >/dev/null 2>&1; then WAS_RUNNING=1; fi
 [ "$WAS_RUNNING" = "0" ] && screen -ls 2>/dev/null | grep -q "\.[Ss]nake" && WAS_RUNNING=1
 if [ "$WAS_RUNNING" = "1" ]; then
   echo "  🔄 Bot chal raha tha — restart kar rahe hain…"
@@ -119,19 +155,18 @@ LINES="$(wc -l < "$BOT" 2>/dev/null | tr -d ' ')"
 echo ""
 echo "  📦 Version : ${VER:-?}  (${LINES:-?} lines)"
 case "${VER:-}" in
-  v2.3)
-    echo "  ✅ v2.3 — file pehle/count baad me + /enginetest + gap-fix report"
+  v2.4)
+    echo "  ✅ v2.4 — EK file system: bot.py (+ DBF copy), koi patch nahi"
     ;;
-  v2.2)
-    echo "  ⚠️  v2.2 lag raha hai — v2.3 chahiye (dobara ./update.sh chalao)"
-    ;;
-  v2.1|v2.0)
-    echo "  ⚠️  ${VER} lag raha hai — v2.3 chahiye (dobara ./update.sh chalao)"
+  v2.3|v2.2|v2.1|v2.0)
+    echo "  ⚠️  ${VER} lag raha hai — v2.4 chahiye (dobara ./update.sh chalao)"
     ;;
   *)
     echo "  ⚠️  Purana version lag raha hai — dobara ./update.sh chalao"
     ;;
 esac
+echo "  📁 File     : $(pwd)/$BOT"
+echo "  📁 DBF copy : $DBF_DIR/bot.py"
 
 echo ""
 echo "=============================================================="

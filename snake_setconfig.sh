@@ -11,8 +11,9 @@
 set -u
 cd "$(dirname "$0")" || exit 1
 
-BOT="snake_core.py"
-[ -f "$BOT" ] || { echo "❌ $BOT nahi mila"; exit 1; }
+BOT="bot.py"                                  # EK hi file
+[ -f "$BOT" ] || BOT="snake_core.py"          # purani install ke liye fallback
+[ -f "$BOT" ] || { echo "❌ bot.py nahi mila — ./update.sh chalao"; exit 1; }
 PY="$(command -v python3 || echo python3)"
 
 _show() {
@@ -30,10 +31,10 @@ _set_token() {
   fi
   mkdir -p backups
   cp -f "$BOT" "backups/token_$(date +%Y%m%d_%H%M%S).py" 2>/dev/null
-  $PY - "$NEW" <<'PYEOF'
+  $PY - "$NEW" "$BOT" <<'PYEOF'
 import re, sys
 tok = sys.argv[1].strip()
-f = "snake_core.py"
+f = sys.argv[2]
 src = open(f, encoding="utf-8").read()
 new, n = re.subn(r'^BOT_TOKEN *= *"[^"]*"', 'BOT_TOKEN = "%s"' % tok, src, count=1, flags=re.M)
 if n == 0:
@@ -52,12 +53,12 @@ _set_admin() {
   done
   mkdir -p backups
   cp -f "$BOT" "backups/admin_$(date +%Y%m%d_%H%M%S).py" 2>/dev/null
-  $PY - "$NORM" <<'PYEOF'
+  $PY - "$NORM" "$BOT" <<'PYEOF'
 import re, sys
 ids = [x for x in sys.argv[1].split() if x.isdigit()]
 if not ids:
     print("❌ Koi valid id nahi mili"); sys.exit(1)
-f = "snake_core.py"
+f = sys.argv[2]
 src = open(f, encoding="utf-8").read()
 new, n = re.subn(r'^ADMIN_IDS\s*=\s*\[[^\]]*\]', 'ADMIN_IDS = [%s]' % ", ".join(ids),
                  src, count=1, flags=re.M)

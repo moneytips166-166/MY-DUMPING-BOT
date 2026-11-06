@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""t19 — snake_core.py ka full regression suite (v2.1).
+"""t19 — bot.py ka full regression suite (v2.4).
 
 Chalane ka tarika:
     .venv/bin/python tests/test_core.py
@@ -48,7 +48,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.3", "VERSION")
+    eq(core.VERSION, "v2.4", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -198,7 +198,7 @@ def test_commands():
     ok(callable(core.cmd_apis), "cmd_apis")
     ok(callable(core._cmd_intent_clear), "cmd intent clear")
     src = open(os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), "snake_core.py"), encoding="utf-8").read()
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
     contains(src, 'CommandHandler("apis", cmd_apis)')
     contains(src, 'MessageHandler(filters.COMMAND, _cmd_intent_clear), group=-1')
     contains(src, 'BotCommand("apis"')
@@ -444,8 +444,27 @@ def test_enginetest():
     group("enginetest")
     ok(callable(core.cmd_enginetest), "cmd exists")
     src = open(os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), "snake_core.py"), encoding="utf-8").read()
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
     contains(src, 'CommandHandler("enginetest", cmd_enginetest)')
+
+
+def test_single_file():
+    group("single file")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bot = os.path.join(root, "bot.py")
+    shim = os.path.join(root, "snake_core.py")
+    ok(os.path.exists(bot), "bot.py maujood")
+    ok(os.path.exists(shim), "shim maujood")
+    with open(shim, encoding="utf-8") as f:
+        stxt = f.read()
+    ok(len(stxt.splitlines()) < 40, "shim patli hai (%d lines)" % len(stxt.splitlines()))
+    contains(stxt, "bot.py")
+    with open(bot, encoding="utf-8") as f:
+        btxt = f.read()
+    contains(btxt, 'VERSION = "v2.4"')
+    # shim jo module load karta hai = bot.py hi
+    eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
+    eq(core.VERSION, "v2.4", "shim se version")
 
 
 def test_help_uses_fonts():
@@ -463,7 +482,8 @@ def main():
                test_setkey_variants, test_flows, test_feature_gate,
                test_niche_country, test_qa, test_help_uses_fonts,
                test_reader_formats, test_kw_slug, test_engines, test_crawler,
-               test_file_in_flow, test_pending_file, test_enginetest):
+               test_file_in_flow, test_pending_file, test_enginetest,
+               test_single_file):
         try:
             fn()
         except Exception as exc:

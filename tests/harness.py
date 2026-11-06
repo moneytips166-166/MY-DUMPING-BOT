@@ -1,4 +1,4 @@
-"""Fake Telegram objects — snake_core.py ko bina bot token ke test karne ke liye.
+"""Fake Telegram objects — bot.py ko bina bot token ke test karne ke liye.
 
 Koi network nahi, koi real Telegram nahi. Sirf jitna snake_core use karta hai
 utna hi banaya gaya hai.
