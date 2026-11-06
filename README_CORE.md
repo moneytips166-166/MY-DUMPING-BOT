@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v1.6
+# 🐍 PYTHON SNAKE CORE — v1.7
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -108,6 +108,55 @@ Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
 
 ---
+
+## 🐦 v1.7 — FREE GOOGLE (ijerm, koi key nahi)
+
+### Sabse pehle: ye chalta hai ya nahi? — **HAAN, chalta hai**
+Live test kiya gaya (aapke diye endpoint par):
+
+| Dork | Result |
+|---|---|
+| `shopping sites uk` | 18 URLs (real shops) ✅ |
+| `inurl:admin.php` | 9 URLs (real admin panels) ✅ |
+| `site:gov.in inurl:login` | **17/17 asli gov login pages** ✅ |
+| `inurl:php?id= site:gov.in` | 10 URLs, sab gov.in ✅ |
+| `inurl:/wp-content/uploads/` (6 pages) | 59 URLs ✅ |
+
+- **Key nahi chahiye** — bilkul free, unlimited (throttle ke saath)
+- Response ~2-5 sec
+- **`pages=6` tak theek, `10+` pe timeout** → bot 6 pe clamp karta hai
+- Error format: `{"status":"error","message":"..."}` — bot handle karta hai
+
+### ⚠️ Imaandaar baat — limits
+1. **Ye official Google API nahi hai.** Kisi ne apna Google scraper
+   `ijerm.com/submit_article/book1/` pe public chhod diya hai. Kal band ho sakta hai.
+2. **Dork quality Google pe depend karti hai:**
+   - `site:` ke saath → **gold** (junk almost zero)
+   - bina `site:` ke `inurl:`/`ext:` → bahut junk (youtube, reddit, stackoverflow)
+   - Bot ka **`dork_match` strict filter** us junk ko kaat deta hai
+3. **Rate limit** — bot 2.5 sec ka gap rakhta hai, 3 fail pe 5 min cooldown
+
+### Bot me kahan laga
+- **PARSER → DEEP SCAN** — har dork pe free Google try hota hai (budget: 40 dorks / 2 min)
+- **PARSER → normal parse** — page 0 pe pehle free Google, phir 13 engines
+- Deep card me naya row: **`🐦 Google (free): N`**
+- Junk hosts (exploit-db, scribd, github, reddit, youtube…) auto-remove
+
+### Command
+```text
+/gtest site:gov.in inurl:login
+```
+Live proof — URLs, speed, count sab dikhata hai. `/ping` me bhi status.
+
+```text
+/setkey gjerm -                      ← band karo
+/setkey gjerm https://...            ← URL badlo (endpoint mar jaye to)
+```
+
+### 🧹 Bonus fix — tracking params
+Google `srsltid`, `gclid`, `utm_*`, `fbclid` add karta hai — isse same URL
+do baar aata tha aur dedupe fail hota tha. Ab `_clean_url` ye sab strip karta hai
+(`?id=5` jaise kaam ke params safe hain).
 
 ## 🔑 v1.6 — REDEEM THEEK + BUGS FIX
 

@@ -63,7 +63,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v1.6"
+VERSION = "v1.7"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1447,6 +1447,30 @@ async def fetch_sxng(session, dork: str, page: int = 1, proxy=None,
     return []
 
 
+TRACK_PARAMS = {
+    "srsltid", "gclid", "dclid", "gbraid", "wbraid", "fbclid", "msclkid",
+    "yclid", "twclid", "igshid", "ttclid", "li_fat_id",
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_name", "utm_reader", "utm_brand", "utm_social",
+    "mc_cid", "mc_eid", "ref_src", "_ga", "_gl", "spm", "scm",
+}
+
+
+def _strip_track(query: str) -> str:
+    """srsltid/gclid/utm_* jaise tracking params hatao (dedupe saaf rahe)."""
+    if not query:
+        return ""
+    keep = []
+    for part in query.split("&"):
+        if not part:
+            continue
+        k = part.split("=", 1)[0].lower()
+        if k in TRACK_PARAMS:
+            continue
+        keep.append(part)
+    return "&".join(keep)
+
+
 def _clean_url(u: str) -> str:
     u = _html.unescape(u or "").strip().strip('"\'')
     if u.startswith("//"):
@@ -1467,8 +1491,9 @@ def _clean_url(u: str) -> str:
                 return ""
         if len(u) > 500:
             return ""
+        q2 = _strip_track(p.query or "")
         return "%s://%s%s%s" % (p.scheme or "http", host, p.path,
-                                ("?" + p.query) if p.query else "")
+                                ("?" + q2) if q2 else "")
     except Exception:
         return ""
 
@@ -1746,6 +1771,97 @@ async def cse_search(session, dork: str, num: int = 10, start: int = 1) -> list:
         return []
 
 
+# ── GOOGLE via ijerm (koi API key nahi, free) ────────────────────────────────
+GJ_DEFAULT = "https://ijerm.com/submit_article/book1/search-api"
+GJ_STATE = {"fail": 0, "ok": 0, "last": 0.0, "dead_until": 0.0}
+GJ_LOCK = None
+GJ_MIN_GAP = 2.5          # requests ke beech minimum gap (sec) — endpoint ko izzat do
+GJ_MAX_PAGES = 6          # 10+ pages pe endpoint timeout karta hai
+GJ_JUNK_HOSTS = {
+    "exploit-db.com", "www.exploit-db.com", "github.com", "www.github.com",
+    "scribd.com", "www.scribd.com", "stackoverflow.com", "stackexchange.com",
+    "www.youtube.com", "youtube.com", "reddit.com", "www.reddit.com",
+    "medium.com", "qiita.com", "note.com", "habr.com", "blog.51cto.com",
+    "facebook.com", "www.facebook.com", "twitter.com", "x.com",
+    "wordpress.org", "www.hostinger.com", "elementor.com",
+}
+
+
+def gj_enabled() -> bool:
+    v = str(sget("gj_url", "") or "").strip()
+    return v != "-"
+
+
+def gj_base() -> str:
+    v = str(sget("gj_url", "") or "").strip()
+    return v if (v and v != "-" and v.startswith("http")) else GJ_DEFAULT
+
+
+def gj_alive() -> bool:
+    return time.time() >= GJ_STATE["dead_until"]
+
+
+def gj_host_junk(url: str) -> bool:
+    try:
+        host = url.split("//", 1)[-1].split("/", 1)[0].lower().split(":")[0]
+    except Exception:
+        return False
+    if host.startswith("www."):
+        host = host
+    return host in GJ_JUNK_HOSTS or host.removeprefix("www.") in GJ_JUNK_HOSTS
+
+
+async def gjerm_search(session, dork: str, pages: int = 1) -> list:
+    """ijerm ka free Google endpoint — koi key nahi. Rate-limited + circuit breaker."""
+    global GJ_LOCK
+    dork = (dork or "").strip()
+    if not dork or not gj_enabled() or not gj_alive():
+        return []
+    if GJ_LOCK is None:
+        GJ_LOCK = asyncio.Lock()
+    st = GJ_STATE
+    async with GJ_LOCK:
+        gap = GJ_MIN_GAP - (time.time() - st["last"])
+        if gap > 0:
+            await asyncio.sleep(min(gap, 6))
+        pages = max(1, min(GJ_MAX_PAGES, int(pages or 1)))
+        try:
+            async with session.get(
+                    gj_base(),
+                    params={"q": dork, "pages": pages},
+                    headers={"User-Agent": random.choice(UA_LIST),
+                             "Accept": "application/json"},
+                    ssl=False, allow_redirects=True,
+                    timeout=aiohttp.ClientTimeout(total=45)) as r:
+                st["last"] = time.time()
+                if r.status != 200:
+                    st["fail"] += 1
+                    if st["fail"] >= 3:
+                        st["dead_until"] = time.time() + 300
+                        logger.warning("gjerm: 3 fail — 5 min ke liye band")
+                    return []
+                j = await r.json(content_type=None)
+        except Exception as exc:
+            st["last"] = time.time()
+            st["fail"] += 1
+            if st["fail"] >= 3:
+                st["dead_until"] = time.time() + 300
+                logger.warning("gjerm fail (%s) — 5 min band", str(exc)[:60])
+            return []
+    if not isinstance(j, dict) or j.get("status") == "error":
+        st["fail"] += 1
+        return []
+    st["ok"] += 1
+    st["fail"] = 0
+    out = []
+    for u in (j.get("urls") or []):
+        cu = _clean_url(str(u))
+        if not cu or gj_host_junk(cu):
+            continue
+        out.append(cu)
+    return _uniq(out)
+
+
 async def serpapi_search(session, dork: str, num: int = 20, start: int = 0) -> list:
     """SerpAPI — 100 searches/month free (real Google results + dorks)."""
     k = api_keys()
@@ -1797,6 +1913,25 @@ async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list 
                 q = dork
                 got = 0
                 tried = 0
+                # free Google (ijerm) — page 0 pe hi, chhota budget
+                if page == 0 and gj_enabled() and gj_alive() and len(found) < max_urls:
+                    gurls = await gjerm_search(session, dork, pages=1)
+                    if gurls:
+                        stats["queries"] += 1
+                        stats["engine_hits"]["gjerm"] += len(gurls)
+                        fn = 0
+                        for u in gurls:
+                            if strict and not dork_match(u, dork):
+                                continue
+                            kk = u.split("#")[0]
+                            if kk in seen:
+                                continue
+                            seen.add(kk)
+                            found.append(kk)
+                            fn += 1
+                            if len(found) >= max_urls:
+                                break
+                        got += 1 if fn else 0
                 order = list(engines)
                 random.shuffle(order)
                 # jo engine 3+ baar khaali/blocked nikla, use peeche bhejo
@@ -1850,7 +1985,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     pages = max(1, min(10, int(pages or 1)))
     st = {"scanned": 0, "total": len(dorks), "raw": 0, "unique": 0,
           "errors": 0, "filtered": 0, "engine_hits": defaultdict(int),
-          "junk": 0, "mismatch": 0, "cc": 0, "api": 0}
+          "junk": 0, "mismatch": 0, "cc": 0, "api": 0, "gj": 0}
     seen, out = set(), []
 
     # 1) site: dorks -> Common Crawl (free, bahut zyada URLs)
@@ -1870,10 +2005,11 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
             if len(out) >= max_urls:
                 break
 
-    # 2) optional API keys (agar user ne daale hain)
+    # 2) FREE GOOGLE (ijerm) — koi key nahi, rate-limited
     k = api_keys()
     conn = aiohttp.TCPConnector(limit=60, ssl=False, ttl_dns_cache=600)
     async with aiohttp.ClientSession(connector=conn) as session:
+        # 2) optional API keys (agar user ne daale hain)
         if k["serpapi"] or (k["cse_key"] and k["cse_cx"]):
             for dork in dorks[:60]:
                 got = []
@@ -1891,10 +2027,32 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                             out.append(kk)
 
         # 3) saare dorks, saare engines — koi early stop nahi
+        gj_budget = min(40, len(dorks))          # free Google ki limit (slow endpoint)
+        gj_deadline = time.time() + 120
         for i, dork in enumerate(dorks, 1):
             st["scanned"] = i
             if len(out) >= max_urls:
                 break
+            # free Google — har dork pe page 0 se, budget khatam hone tak
+            if (i <= gj_budget and gj_enabled() and gj_alive()
+                    and time.time() < gj_deadline and len(out) < max_urls):
+                gurls = await gjerm_search(session, dork, pages=min(2, pages))
+                st["raw"] += len(gurls)
+                st["gj"] += len(gurls)
+                for u in gurls:
+                    if strict and not dork_match(u, dork):
+                        st["mismatch"] += 1
+                        st["filtered"] += 1
+                        continue
+                    kk = u.split("#")[0]
+                    if kk in seen:
+                        st["junk"] += 1
+                        st["filtered"] += 1
+                        continue
+                    seen.add(kk)
+                    out.append(kk)
+                    if len(out) >= max_urls:
+                        break
             for page in range(pages):
                 if len(out) >= max_urls:
                     break
@@ -2622,9 +2780,11 @@ async def tool_parse(update, context):
     ])
     txt = (H("PARSER", "asli engines = asli URLs") + "\n\n"
            "Engines: DDG • Bing • Mojeek • Yahoo • Brave • Startpage • Google\n"
+           "🐦 Free Google: %s\n"
            "Proxy: %s\n\n"
            "Dork list bhejo (ek line me ek) — ya upar se LAST DORKS chuno."
-           % ("✅ %d ready" % len(PROXIES or load_proxy_pool()) if (PROXIES or load_proxy_pool()) else "⚪ none (no-proxy mode)"))
+           % ("✅ ON (no key)" if gj_enabled() else "⚪ OFF",
+              "✅ %d ready" % len(PROXIES or load_proxy_pool()) if (PROXIES or load_proxy_pool()) else "⚪ none (no-proxy mode)"))
     try:
         await q.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
     except Exception:
@@ -2736,13 +2896,14 @@ async def input_deep_max(update, context, text: str):
             "🚫 Filtered: <code>%s</code>\n"
             "   <i>(junk %s • dork-mismatch %s)</i>\n\n"
             "🌐 Common Crawl: <code>%s</code>\n"
+            "🐦 Google (free): <code>%s</code>\n"
             "🔑 API: <code>%s</code>\n"
             "⚙️ Engines: <code>%s</code>\n\n"
             "[%s] <b>100%%</b>\n\n"
             "📦 <b>Files ready</b>"
             % (st["scanned"], st["total"], fmt(st["raw"]), fmt(st["unique"]),
                fmt(st["errors"]), fmt(st["filtered"]), fmt(st["junk"]),
-               fmt(st["mismatch"]), fmt(st["cc"]), fmt(st["api"]), esc(eng),
+               fmt(st["mismatch"]), fmt(st["cc"]), fmt(st.get("gj", 0)), fmt(st["api"]), esc(eng),
                bar(100, 22)))
     try:
         await msg.delete()
@@ -3989,6 +4150,7 @@ async def _post_init(app) -> None:
             BotCommand("theme", "🎨 Theme badlo"),
             BotCommand("myid", "🪪 Apni ID"),
             BotCommand("ping", "🏓 Bot zinda?"),
+            BotCommand("gtest", "🐦 Free Google test"),
             BotCommand("admin", "👑 Admin panel"),
         ])
         logger.info("✅ Bot commands set (/redeem included)")
@@ -4011,6 +4173,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("unban", cmd_unban))
     app.add_handler(CommandHandler("addkey", cmd_addkey))
     app.add_handler(CommandHandler("redeem", cmd_redeem))
+    app.add_handler(CommandHandler("gtest", cmd_gtest))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
@@ -4104,16 +4267,43 @@ async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
                "🔑 <b>Google CSE</b> — 100 queries/din FREE\n"
                "   <i>par inurl: support nahi karta (kam useful)</i>\n"
                "   <code>/setkey cse API_KEY CX_ID</code>\n\n"
+               "🐦 <b>Google Free (ijerm)</b> — koi key nahi, FREE\n"
+               "   <i>asli Google results, dork support (site:/inurl:)</i>\n"
+               "   default ON hai. Band: <code>/setkey gjerm -</code>\n"
+               "   URL badalna: <code>/setkey gjerm https://...</code>\n\n"
                "🗑 Hatane ke liye: <code>/setkey serpapi -</code>\n\n"
                "━━ Status ━━\n"
                "SerpAPI : %s\n"
                "CSE     : %s\n"
-               "CC      : ✅ always on (free, no key)"
+               "CC      : ✅ always on (free, no key)\n"
+               "Google  : %s"
                % ("✅ set" if k["serpapi"] else "⚪ not set",
-                  "✅ set" if (k["cse_key"] and k["cse_cx"]) else "⚪ not set"))
+                  "✅ set" if (k["cse_key"] and k["cse_cx"]) else "⚪ not set",
+                  ("⚪ OFF" if not gj_enabled() else
+                   ("✅ ON • %d ok / %d fail" % (GJ_STATE["ok"], GJ_STATE["fail"])))))
         await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML)
         return
     what = args[0].lower()
+    if what in ("gjerm", "gj", "gfree", "google"):
+        val = (args[1].strip() if len(args) > 1 else "")
+        if not val:
+            await update.effective_message.reply_text(
+                "Usage:\n<code>/setkey gjerm -</code>  (band karo)\n"
+                "<code>/setkey gjerm https://...</code>  (URL badlo)", parse_mode=ParseMode.HTML)
+            return
+        if val == "-":
+            sset("gj_url", "-")
+            await update.effective_message.reply_text("⚪ Free Google band kar diya.")
+            return
+        if not val.startswith("http"):
+            await update.effective_message.reply_text("❌ URL <code>http...</code> se shuru hona chahiye.",
+                                                      parse_mode=ParseMode.HTML)
+            return
+        sset("gj_url", val)
+        GJ_STATE.update({"fail": 0, "dead_until": 0.0})
+        await update.effective_message.reply_text(
+            "✅ Free Google URL set:\n<code>%s</code>" % esc(val[:120]), parse_mode=ParseMode.HTML)
+        return
     if what == "serpapi":
         if len(args) < 2:
             await update.effective_message.reply_text("Usage: /setkey serpapi YOUR_KEY")
@@ -4136,21 +4326,70 @@ async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Kya bot zinda hai? + kaun sa theme + uptime."""
+    """Kya bot zinda hai? + theme + uptime + free Google status."""
     t0 = time.time()
     msg = await update.effective_message.reply_text("🏓 …")
     ms = int((time.time() - t0) * 1000)
     up = int(time.time() - START_TS)
+    if not gj_enabled():
+        gj = "⚪ OFF"
+    elif not gj_alive():
+        gj = "⏸ 5 min cooldown"
+    else:
+        gj = "✅ ON (%d ok / %d fail)" % (GJ_STATE["ok"], GJ_STATE["fail"])
+    txt = (H("PONG", "%s ms" % ms) + "\n\n"
+           "🟢 Bot zinda hai\n"
+           "🤖 @%s\n"
+           "🎨 Theme: <b>%s</b>\n"
+           "⏱ Uptime: <code>%dh %dm</code>\n"
+           "🧵 PID: <code>%d</code>\n"
+           "👥 Users: <code>%d</code>\n"
+           "🐦 Free Google: %s")
+    txt = txt % (selfcheck.get("username") or "?",
+                 F(THEMES[theme_name()]["label"], T()["head"]),
+                 up // 3600, (up % 3600) // 60, os.getpid(), len(USERS), gj)
+    await msg.edit_text(txt, parse_mode=ParseMode.HTML)
+
+
+async def cmd_gtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/gtest <dork> — free Google endpoint live test (proof)."""
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.effective_message.reply_text("🚫 Admin only.")
+        return
+    dork = " ".join(context.args or []).strip()
+    if not dork:
+        dork = "site:gov.in inurl:login"
+    if not gj_enabled():
+        await update.effective_message.reply_text(
+            "⚪ Free Google band hai. Chalu karo:\n<code>/setkey gjerm https://...</code>",
+            parse_mode=ParseMode.HTML)
+        return
+    msg = await update.effective_message.reply_text(
+        "🐦 Testing free Google…\n<code>%s</code>" % esc(dork[:100]), parse_mode=ParseMode.HTML)
+    t0 = time.time()
+    conn = aiohttp.TCPConnector(limit=4, ssl=False)
+    async with aiohttp.ClientSession(connector=conn) as session:
+        urls = await gjerm_search(session, dork, pages=2)
+    took = time.time() - t0
+    if not urls:
+        await msg.edit_text(
+            (H("FREE GOOGLE — FAIL", "%.1fs" % took) + "\n\n"
+             "❌ 0 URLs mile.\n"
+             "• Endpoint band ho sakta hai\n"
+             "• Ya rate-limit lag gaya\n\n"
+             "🔁 Thodi der baad try karo, ya naya URL:\n"
+             "<code>/setkey gjerm https://...</code>"),
+            parse_mode=ParseMode.HTML)
+        return
+    body = "\n".join("%d. <code>%s</code>" % (i, esc(u[:95])) for i, u in enumerate(urls[:12], 1))
     await msg.edit_text(
-        (H("PONG", "%s ms" % ms) + "\n\n"
-         "🟢 Bot zinda hai\n"
-         "🤖 @%s\n"
-         "🎨 Theme: <b>%s</b>\n"
-         "⏱ Uptime: <code>%dh %dm</code>\n"
-         "🧵 PID: <code>%d</code>\n"
-         "👥 Users: <code>%d</code>"
-         % (selfcheck.get("username") or "?", F(THEMES[theme_name()]["label"], T()["head"]),
-            up // 3600, (up % 3600) // 60, os.getpid(), len(USERS))),
+        (H("FREE GOOGLE — WORKING ✅", "%.1fs • %d URLs" % (took, len(urls))) + "\n\n"
+         "🎯 Dork: <code>%s</code>\n"
+         "📊 Pages: 2\n"
+         "⚡ Speed: <code>%.1fs</code>\n"
+         "🔑 Key: <b>nahi chahiye</b>\n\n"
+         "<b>Real URLs:</b>\n%s" % (esc(dork[:80]), took, body)),
         parse_mode=ParseMode.HTML)
 
 
