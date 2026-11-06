@@ -48,12 +48,12 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.7", "VERSION")
+    eq(core.VERSION, "v2.8", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
     ok(core.KW_MAX >= 100000, "KW_MAX")
-    eq(len(core.COUNTRIES), 16, "countries count")
+    ok(len(core.COUNTRIES) >= 60, "countries count 60+")
     eq(len(core.PRO_TEMPLATES_DEFAULT), 20, "pro templates")
     ok(len(core.UNIVERSAL_TEMPLATES) >= 40, "universal templates")
     ok(len(core.FEATURES) == 12, "features 12")
@@ -461,10 +461,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.7"')
+    contains(btxt, 'VERSION = "v2.8"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.7", "shim se version")
+    eq(core.VERSION, "v2.8", "shim se version")
 
 
 def test_diagnostics():
@@ -634,6 +634,83 @@ def test_parse_everything():
     ok(core.parse_budget() >= 60, "budget min")
 
 
+def test_v28_tools():
+    group("v2.8")
+    # grade
+    eq(core.dork_grade(97), "S+")
+    eq(core.dork_grade(90), "S")
+    eq(core.dork_grade(80), "A")
+    eq(core.dork_grade(70), "B")
+    eq(core.dork_grade(60), "C")
+    eq(core.dork_grade(45), "D")
+    eq(core.dork_grade(10), "F")
+    eq(core.dork_grade("x"), "F")
+    # 9 dims
+    r = core.dork_score_full("site:.gov.in inurl:login.php?id= admin")
+    eq(len(r["dims"]), 9, "9 dimensions")
+    eq(r["total"], sum(r["dims"].values()))
+    ok(r["grade"] in ("S+", "S", "A", "B", "C", "D", "F"))
+    eq(core.dork_score_full("")["total"], 0)
+    ok(core.dork_score_full("site:.gov.in inurl:login.php?id= admin")["total"]
+       > core.dork_score_full("hello there friend how are you today ok")["total"])
+    # hash identify (koi cracking nahi)
+    eq(core.detect_hash("5f4dcc3b5aa765d61d8327deb882cf99"), "md5")
+    eq(core.detect_hash("da39a3ee5e6b4b0d3255bfef95601890afd80709"), "sha1")
+    eq(core.detect_hash("$2b$10$" + "a" * 53), "bcrypt")
+    eq(core.detect_hash("$argon2id$v=19$m=65536"), "argon2")
+    eq(core.detect_hash("plain text"), "")
+    # password strength
+    eq(core.password_strength("123456"), "weak")
+    eq(core.password_strength("Hello123!"), "strong")
+    eq(core.password_strength("Str0ng!Passw0rd#2026"), "very_strong")
+    # dump analyze
+    dump = ("admin@site.com:admin123\n"
+            "bob@x.in|Sunshine2024!\n"
+            "5f4dcc3b5aa765d61d8327deb882cf99\n"
+            "carol@site.com:qwerty\n")
+    a = core.analyze_dump(dump)
+    eq(a["lines"], 4)
+    eq(a["combo"], 3)
+    eq(a["hash"].get("md5"), 1)
+    eq(a["domain_count"], 2)
+    eq(sum(a["strength"].values()), 3)
+    ok(len(a["combo_list"]) == 3)
+    eq(core.analyze_dump([])["lines"], 0)
+    # merge + dedup
+    m = core.merge_dedup([["b2", "a10", "a2"], "a2\nb2\nc3"])
+    eq(m["unique"], 4)
+    eq(m["dupes"], 2)
+    eq(m["list"], ["a2", "a10", "b2", "c3"], "natural sort")
+    eq(core.merge_dedup(["x\ny"], "alpha")["list"], ["x", "y"])
+    # CMS + exposed dorks
+    eq(len(core.CMS_DORKS), 8)
+    cw = core.cms_dorks("wordpress", "shopify store", 20)
+    eq(len(cw), 20)
+    ok(all("shopify" in d.lower() for d in cw), "keyword har dork me")
+    ok(any("wp-admin" in d for d in core.cms_dorks("wordpress", "", 10)))
+    ex = core.exposed_dorks("", 15)
+    ok(len(ex) >= 10)
+    ok(any(".env" in d or "env" in d for d in ex))
+    # proxy formats: auth + socks5h + socks4a + IPv6
+    got = core.parse_proxies(
+        "socks5h://user:pass@9.9.9.9:1080\n"
+        "http://admin:pw@10.0.0.1:3128\n"
+        "socks4a://11.11.11.11:1080\n"
+        "[2001:db8::1]:8080\n"
+        "1.2.3.4:8080\n")
+    ok("socks5h://user:pass@9.9.9.9:1080" in got, "socks5h + auth")
+    ok("http://admin:pw@10.0.0.1:3128" in got, "http auth")
+    ok("socks4a://11.11.11.11:1080" in got, "socks4a")
+    ok(any("[2001:db8::1]:8080" in g for g in got), "IPv6")
+    ok("http://1.2.3.4:8080" in got, "simple ip:port")
+    # countries 60+
+    ok(len(core.COUNTRIES) >= 60, "60+ countries")
+    kb = core.country_kb(0)
+    ok(sum(len(r) for r in kb.inline_keyboard) <= 100, "Telegram 100 button limit")
+    # disclaimer
+    contains(core.main_text("X"), "authorized")
+
+
 def test_help_uses_fonts():
     group("help fonts")
     txt = core.help_text()
@@ -651,7 +728,7 @@ def main():
                test_reader_formats, test_kw_slug, test_engines, test_crawler,
                test_file_in_flow, test_pending_file, test_enginetest,
                test_single_file, test_diagnostics, test_batch,
-               test_parse_everything):
+               test_parse_everything, test_v28_tools):
         try:
             fn()
         except Exception as exc:

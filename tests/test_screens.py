@@ -45,6 +45,7 @@ def screens():
     if callable(getattr(core, "admin_dash", None)):
         out["admin_dash"] = core.admin_dash()
     out["batch_card"] = core.batch_card()
+    out["country_kb_page2"] = (core.H("COUNTRY DORKS", "test") + "\n\n" + core.P("test"))
     return out
 
 
@@ -72,7 +73,8 @@ async def cb_screens():
             BAD.append("%s → EXCEPTION %s: %s" % (name, type(exc).__name__, exc))
     # admin API cards + proxy/engine batch screens
     for data in ("a:keys_api", "a:apis", "a:home", "a:proxy", "a:eng",
-                 "a:pzbatch", "a:pzwant", "a:injbatch"):
+                 "a:pzbatch", "a:pzwant", "a:injbatch",
+                 "m:dork", "dk:cms", "dp:country", "m:dump"):
         ctx = FakeContext({})
         upd = FakeUpdate(data=data)
         try:

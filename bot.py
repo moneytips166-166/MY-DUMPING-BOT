@@ -64,7 +64,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.7"
+VERSION = "v2.8"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -851,6 +851,282 @@ def quality_label(score: int) -> str:
     return "🔴 TRASH"
 
 
+_GRADE_STEPS = ((95, "S+"), (88, "S"), (78, "A"), (68, "B"), (55, "C"), (40, "D"))
+GRADE_EMOJI = {"S+": "💎", "S": "🏆", "A": "🟢", "B": "🔵", "C": "🟡", "D": "🟠", "F": "🔴"}
+
+
+def dork_grade(score) -> str:
+    """0-100 → S+ / S / A / B / C / D / F."""
+    try:
+        sc = float(score)
+    except Exception:
+        return "F"
+    for cut, g in _GRADE_STEPS:
+        if sc >= cut:
+            return g
+    return "F"
+
+
+_INTENT_WORDS = ("login", "admin", "panel", "dashboard", "signin", "register", "upload",
+                 "backup", "config", "env", "database", "phpmyadmin", "wp-admin", "api",
+                 "invoice", "order", "payment", "cpanel", "webmail", "portal")
+_JUNK_WORDS = ("free download", "crack", "serial key", "torrent", "mp3", "song",
+               "movie", "xxx", "porn", "game hack")
+
+
+def score_dims(dork: str) -> dict:
+    """9 dimension breakdown — har dimension ke points (total 100)."""
+    d = " ".join(str(dork or "").lower().split())
+    dims = {"operators": 0, "site": 0, "path": 0, "filetype": 0, "quotes": 0,
+            "intent": 0, "length": 0, "clean": 0, "specific": 0}
+    if not d:
+        return dims
+    ops = [o for o in ("site:", "inurl:", "intitle:", "intext:", "filetype:", "ext:")
+           if o in d]
+    dims["operators"] = 30 if len(ops) >= 3 else (22 if len(ops) == 2 else
+                                                  (14 if len(ops) == 1 else 0))
+    if "site:" in d:
+        tail = d.split("site:", 1)[1].split()[0] if len(d.split("site:", 1)) > 1 else ""
+        dims["site"] = 14 if ("." in tail and len(tail) > 3) else 6
+    if "inurl:" in d:
+        tail = d.split("inurl:", 1)[1].split()[0] if len(d.split("inurl:", 1)) > 1 else ""
+        dims["path"] = 12 if any(c in tail for c in "=/.") else 7
+    if "filetype:" in d or "ext:" in d:
+        dims["filetype"] = 10
+    if '"' in d:
+        dims["quotes"] = 8
+    dims["intent"] = 10 if any(w in d for w in _INTENT_WORDS) else 2
+    n = len(d)
+    dims["length"] = 6 if 25 <= n <= 120 else (3 if 15 <= n <= 180 else 0)
+    dims["clean"] = 0 if any(w in d for w in _JUNK_WORDS) else 6
+    if re.search(r"\.(php|asp|aspx|jsp|env|sql|bak|json|xml)", d) or re.search(r"[?&]\w+=", d):
+        dims["specific"] = 4
+    return dims
+
+
+def dork_score_full(dork: str) -> dict:
+    """Total + grade + 9 dims (UI card ke liye)."""
+    dims = score_dims(dork)
+    total = max(0, min(100, sum(dims.values())))
+    return {"total": total, "grade": dork_grade(total), "dims": dims}
+
+
+HASH_RULES = (
+    (r"^\$2[abxy]\$\d\d\$", "bcrypt"),
+    (r"^\$argon2", "argon2"),
+    (r"^\$1\$", "md5-crypt"),
+    (r"^\$5\$", "sha256-crypt"),
+    (r"^\$6\$", "sha512-crypt"),
+    (r"^\*[A-Fa-f0-9]{40}$", "mysql5"),
+    (r"^\{SSHA\}", "ssha"),
+    (r"^[A-Fa-f0-9]{32}$", "md5"),
+    (r"^[A-Fa-f0-9]{40}$", "sha1"),
+    (r"^[A-Fa-f0-9]{64}$", "sha256"),
+    (r"^[A-Fa-f0-9]{96}$", "sha384"),
+    (r"^[A-Fa-f0-9]{128}$", "sha512"),
+)
+
+
+def detect_hash(value) -> str:
+    """Hash type pehchano — koi cracking nahi, sirf sha-pehchan (identify)."""
+    v = str(value or "").strip()
+    if len(v) < 16:
+        return ""
+    for pat, name in HASH_RULES:
+        if re.match(pat, v):
+            return name
+    return ""
+
+
+def password_strength(pw) -> str:
+    """Password ki taakat: weak / medium / strong / very_strong."""
+    p = str(pw or "")
+    if not p:
+        return "weak"
+    pts = 0
+    pts += 3 if len(p) >= 16 else (2 if len(p) >= 12 else (1 if len(p) >= 8 else 0))
+    pts += 1 if re.search(r"[a-z]", p) else 0
+    pts += 1 if re.search(r"[A-Z]", p) else 0
+    pts += 1 if re.search(r"\d", p) else 0
+    pts += 1 if re.search(r"[^A-Za-z0-9]", p) else 0
+    if len(set(p)) < max(3, len(p) // 3):
+        pts -= 1                       # "111111" / "aaaaaa"
+    if pts >= 6:
+        return "very_strong"
+    if pts >= 4:
+        return "strong"
+    if pts >= 2:
+        return "medium"
+    return "weak"
+
+
+def analyze_dump(items) -> dict:
+    """Dump (list ya text) ko todo: combos / emails / hashes / strength / domains."""
+    if isinstance(items, str):
+        raw = [x.strip() for x in items.splitlines() if x.strip()]
+    else:
+        raw = [str(x).strip() for x in (items or []) if str(x).strip()]
+    data = {"lines": len(raw), "unique": 0, "combo": 0, "emails": 0, "users": 0,
+            "hash": {}, "strength": {"weak": 0, "medium": 0, "strong": 0,
+                                     "very_strong": 0},
+            "domains": {}, "combo_list": [], "hash_list": [], "email_list": []}
+    seen = set()
+    email_re = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+    for line in raw:
+        if line in seen:
+            continue
+        seen.add(line)
+        parts = re.split(r"[:|;\t]", line, maxsplit=2)
+        hit = False
+        if len(parts) >= 2:
+            left, right = parts[0].strip(), parts[1].strip()
+            if "@" in left and right:
+                data["combo"] += 1
+                data["combo_list"].append(line)
+                data["email_list"].append(left.lower())
+                dom = left.split("@", 1)[1].lower()
+                data["domains"][dom] = data["domains"].get(dom, 0) + 1
+                data["strength"][password_strength(right)] += 1
+                h = detect_hash(right)
+                if h:
+                    data["hash"][h] = data["hash"].get(h, 0) + 1
+                    data["hash_list"].append(line)
+                hit = True
+            elif detect_hash(right):
+                data["hash"][detect_hash(right)] = data["hash"].get(detect_hash(right), 0) + 1
+                data["hash_list"].append(line)
+                data["users"] += 1
+                hit = True
+        if not hit:
+            if email_re.fullmatch(line):
+                data["emails"] += 1
+                data["email_list"].append(line.lower())
+                dom = line.split("@", 1)[1].lower()
+                data["domains"][dom] = data["domains"].get(dom, 0) + 1
+            else:
+                h = detect_hash(line)
+                if h:
+                    data["hash"][h] = data["hash"].get(h, 0) + 1
+                    data["hash_list"].append(line)
+    data["unique"] = len(seen)
+    data["combo_list"] = _uniq(data["combo_list"])
+    data["hash_list"] = _uniq(data["hash_list"])
+    data["email_list"] = _uniq(data["email_list"])
+    data["top_domains"] = sorted(data["domains"].items(), key=lambda z: -z[1])[:5]
+    data["domain_count"] = len(data["domains"])
+    return data
+
+
+def _natural_key(x: str):
+    return [int(t) if t.isdigit() else t.lower()
+            for t in re.split(r"(\d+)", str(x or ""))]
+
+
+def merge_dedup(items, sort_mode: str = "smart") -> dict:
+    """Multiple lists → ek merged + deduped + sorted list (generic, koi card-data nahi)."""
+    flat = []
+    for it in (items or []):
+        if isinstance(it, (list, tuple, set)):
+            flat.extend(str(x).strip() for x in it)
+        else:
+            flat.extend(str(x).strip() for x in str(it).splitlines())
+    flat = [x for x in flat if x]
+    uniq = _uniq(flat)
+    if sort_mode == "alpha":
+        uniq = sorted(uniq, key=lambda z: z.lower())
+    elif sort_mode == "length":
+        uniq = sorted(uniq, key=len)
+    else:                                   # smart — natural sort (page2 < page10)
+        uniq = sorted(uniq, key=_natural_key)
+    kinds = {"url": 0, "dork": 0, "email": 0, "number": 0, "other": 0}
+    for u in uniq:
+        low = u.lower()
+        if low.startswith("http"):
+            kinds["url"] += 1
+        elif "@" in u and " " not in u:
+            kinds["email"] += 1
+        elif re.fullmatch(r"\d{5,}", u):
+            kinds["number"] += 1
+        elif re.search(r"(site:|inurl:|intitle:|intext:|filetype:|ext:)", low) or " " in u:
+            kinds["dork"] += 1
+        else:
+            kinds["other"] += 1
+    return {"list": uniq, "input": len(flat), "unique": len(uniq),
+            "dupes": len(flat) - len(uniq), "kinds": kinds, "sort": sort_mode}
+
+
+# ── CMS + exposed-file dork engine ─────────────────────────────────────────
+CMS_DORKS = {
+    "wordpress": ['inurl:wp-content/plugins (KW)', 'inurl:wp-admin (KW)',
+                  'inurl:wp-config (KW)', 'intext:"wp-config.php" (KW)',
+                  'inurl:/wp-content/uploads/ (KW) filetype:sql',
+                  'inurl:wp-json/wp/v2/users (KW)', 'inurl:readme.html (KW)'],
+    "joomla": ['inurl:components/com_ (KW)', 'inurl:administrator (KW)',
+               'inurl:configuration.php (KW)', 'intext:"Joomla!" (KW) inurl:index.php'],
+    "opencart": ['inurl:index.php?route=product (KW)', 'inurl:admin (KW) OpenCart',
+                 'intext:"OpenCart" (KW) inurl:index.php'],
+    "prestashop": ['inurl:/modules/ (KW)', 'intext:"PrestaShop" (KW)',
+                   'inurl:admin (KW) PrestaShop'],
+    "magento": ['inurl:/skin/frontend/ (KW)', 'inurl:downloader (KW)',
+                'intext:"Magento" (KW) inurl:admin'],
+    "drupal": ['inurl:sites/default/files (KW)', 'inurl:user/login (KW) drupal',
+               'intext:"Drupal" (KW) inurl:node'],
+    "laravel": ['intext:"Whoops!" (KW)', 'inurl:/storage/logs/ (KW)',
+                'intext:"laravel" (KW) inurl:.env'],
+    "codeigniter": ['intext:"CodeIgniter" (KW)', 'inurl:index.php/ (KW)',
+                    'intext:"The page you are looking for" (KW)'],
+}
+
+EXPOSED_DORKS = [
+    "inurl:.env (KW)", "filetype:env (KW) DB_PASSWORD", "filetype:sql (KW) intext:INSERT",
+    "inurl:wp-config.php.bak (KW)", "filetype:bak (KW)", "inurl:backup.sql (KW)",
+    "inurl:phpmyadmin (KW)", "inurl:.git/config (KW)", "inurl:config.php.bak (KW)",
+    "inurl:db.sql (KW)", "inurl:.DS_Store (KW)", "filetype:log (KW) password",
+    "inurl:adminer.php (KW)", "inurl:server-status (KW)", "inurl:.htpasswd (KW)",
+]
+
+
+DORK_MODS = ["", " filetype:php", " inurl:index.php", " intext:admin",
+             " inurl:login", " inurl:upload", " inurl:api"]
+
+
+def cms_dorks(cms: str, keywords="", n: int = 200) -> list:
+    """Ek CMS ke liye dorks — keyword + modifiers se variety."""
+    cms = (cms or "").lower()
+    cands = CMS_DORKS.get(cms)
+    if not cands:
+        cands = [t for lst in CMS_DORKS.values() for t in lst]
+    kws = kw_cores(keywords) if str(keywords or "").strip() else [""]
+    out = []
+    combos = len(cands) * max(1, len(kws))
+    for i in range(max(1, int(n or 200)) * 4):
+        tpl = cands[i % len(cands)]
+        kw = kws[(i // len(cands)) % max(1, len(kws))]
+        mod = DORK_MODS[(i // combos) % len(DORK_MODS)]
+        line = " ".join((tpl.replace("(KW)", kw) + mod).split())
+        if line and line not in out:
+            out.append(line)
+        if len(out) >= n:
+            break
+    return _dork_finish(out, int(n or 200))
+
+
+def exposed_dorks(keywords="", n: int = 200) -> list:
+    kws = kw_cores(keywords) if str(keywords or "").strip() else [""]
+    out = []
+    combos = len(EXPOSED_DORKS) * max(1, len(kws))
+    for i in range(max(1, int(n or 200)) * 4):
+        tpl = EXPOSED_DORKS[i % len(EXPOSED_DORKS)]
+        kw = kws[(i // len(EXPOSED_DORKS)) % max(1, len(kws))]
+        mod = DORK_MODS[(i // combos) % len(DORK_MODS)]
+        line = " ".join((tpl.replace("(KW)", kw) + mod).split()).strip()
+        if line and line not in out:
+            out.append(line)
+        if len(out) >= n:
+            break
+    return _dork_finish(out, int(n or 200))
+
+
 _PAGE_TYPES_CACHE = None
 NICHE_WORDS = ["admin", "login", "dashboard", "panel", "backup", "config", "upload",
                "download", "invoice", "order", "product", "category", "search",
@@ -1575,6 +1851,11 @@ UA = {"User-Agent": random.choice(UA_LIST),
 
 IP_PORT = re.compile(r"(?<!\d)(\d{1,3}(?:\.\d{1,3}){3})\s*[:\s,;|]\s*(\d{2,5})(?!\d)")
 PROTO_URL = re.compile(r"(?:(http|https|socks4|socks5)://)?(?:[\w.:-]+@)?(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})")
+# full format: proto://[user:pass@]host:port — IPv6 [::1]:1080 bhi
+FULL_PROXY = re.compile(
+    r"(?P<proto>https?|socks5h|socks5|socks4a|socks4)://"
+    r"(?:(?P<cred>[^\s/@:]+:[^\s/@]*)@)?"
+    r"(?P<host>\[[0-9A-Fa-f:]+\]|[^\s/:@,;|]+):(?P<port>\d{2,5})")
 
 PROXIES = []          # [{url, proto, host, port, ms, ok, fails}]
 _PROXY_CACHE = {"t": 0.0, "data": []}
@@ -1629,12 +1910,39 @@ def parse_proxies(text: str) -> list:
         except Exception:
             pass
     used = []   # proto URL ne jo span le liya, IP_PORT usko skip kare
+    # (a) full format — proto://user:pass@host:port (IPv6 bhi)
+    for m in FULL_PROXY.finditer(t):
+        proto = (m.group("proto") or "http").lower()
+        cred = (m.group("cred") or "").strip()
+        host = m.group("host")
+        port = int(m.group("port"))
+        if not (1 <= port <= 65535):
+            continue
+        ok_host = True
+        if host.startswith("["):
+            ok_host = len(host) > 2
+        elif not _valid_ip(host):
+            ok_host = bool(re.fullmatch(r"[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", host))
+        if not ok_host:
+            continue
+        out.append("%s://%s%s:%d" % (proto, (cred + "@") if cred else "", host, port))
+        used.append((m.start(), m.end()))
+    # (b) proto://ip:port (bina auth) — purana format
     for m in PROTO_URL.finditer(t):
         proto = (m.group(1) or "http").lower()
         ip, port = m.group(2), int(m.group(3))
+        if any(m.start() < ue and m.end() > us for us, ue in used):
+            continue
         if _valid_ip(ip) and 1 <= port <= 65535:
             out.append("%s://%s:%d" % (proto, ip, port))
-            used.append((m.start(2), m.end(3)))
+            used.append((m.start(), m.end()))
+    for m in re.finditer(r"\[([0-9A-Fa-f:]{3,})\]\s*:\s*(\d{2,5})", t):
+        if any(m.start() < ue and m.end() > us for us, ue in used):
+            continue
+        port = int(m.group(2))
+        if 1 <= port <= 65535:
+            out.append("http://[%s]:%d" % (m.group(1), port))
+            used.append((m.start(), m.end()))
     for m in IP_PORT.finditer(t):
         s0, e0 = m.start(1), m.end(2)
         if any(s0 < ue and e0 > us for us, ue in used):
@@ -3134,7 +3442,21 @@ def reply_msg(update):
     return m
 
 
+def trial_lock_on() -> bool:
+    """Locked trial mode — admin panel se ON/OFF (`/batch trial 1`)."""
+    return bool(sget("trial_lock", 0))
+
+
 async def send_file(update, path: str, caption: str = ""):
+    try:
+        uid = getattr(getattr(update, "effective_user", None), "id", 0)
+        if trial_lock_on() and not access_ok(uid):
+            await reply_msg(update).reply_text(
+                "🔒 <b>Trial mode</b> — scan chal gaya par file locked hai.\n"
+                "Key redeem karo: <code>/redeem KEY</code>", parse_mode=ParseMode.HTML)
+            return False
+    except Exception:
+        pass
     try:
         with open(path, "rb") as f:
             await reply_msg(update).reply_document(document=f,
@@ -3180,7 +3502,9 @@ def main_text(name: str = "") -> str:
             + "◆ %s : <code>%s</code>\n" % (style("EXTENSIONS", "btn"), fmt(c["extensions"]))
             + "◆ %s      : <code>%s</code>\n" % (style("DORKS", "btn"), fmt(c["dorks"]))
             + "◆ %s   : <code>%s</code>\n\n" % (style("KEYWORDS", "btn"), fmt(c["keywords"]))
-            + "👇 %s" % style("Tool chuno", "sub"))
+            + "👇 %s" % style("Tool chuno", "sub") + "\n\n"
+            + "<i>⚠️ Apne ya authorized systems pe hi use karo. "
+              "Kahin se mili leaked/scam copy se bacho — sirf yahi official build hai.</i>")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3484,7 +3808,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await admin_callback(update, context, data[2:])
 
     # ── tool sub-buttons (dd / pr / rd / df / px / inj) ──
-    if data.startswith(("dd:", "dp:", "pr:", "rd:", "df:", "px:", "inj:")):
+    if data.startswith(("dd:", "dp:", "pr:", "rd:", "df:", "px:", "inj:", "dk:")):
         if not access_ok(uid):
             try:
                 await q.edit_message_text(need_key_text(uid), reply_markup=kb_needkey(),
@@ -3571,6 +3895,13 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_gen_start(update, context)
         if rest == "pro":
             return await cb_pro_menu(update, context)
+    elif head == "dk":
+        if rest.startswith("cms:"):
+            return await cb_dk_cms(update, context, rest[4:])
+        if rest == "cms":
+            return await cb_dk_cms(update, context)
+        if rest == "exp":
+            return await cb_dk_exp(update, context)
     elif head == "dp":
         if rest.startswith("set:"):
             return await cb_pro_set(update, context, rest[4:])
@@ -3685,6 +4016,8 @@ async def tool_dork(update, context):
         await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK([
             [InlineKeyboardButton("⚡ DORKS GEN", callback_data="dd:gen")],
             [InlineKeyboardButton("🚀 DORKS GEN PRO", callback_data="dd:pro")],
+            [InlineKeyboardButton("🏗 CMS DORKS", callback_data="dk:cms"),
+             InlineKeyboardButton("📂 EXPOSED FILES", callback_data="dk:exp")],
             [InlineKeyboardButton("🌍 COUNTRY DORKS", callback_data="dp:country")],
             [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
         ]))
@@ -3792,6 +4125,67 @@ async def cb_dork_mode(update, context, mode: str):
 
 async def input_dork_count(update, context, text: str):
     return await input_gen_count(update, context, text)
+
+
+async def cb_dk_cms(update, context, arg: str = ""):
+    """CMS dorks — WordPress/Joomla/... ka engine."""
+    q = update.callback_query
+    if not arg:
+        rows = [[InlineKeyboardButton("%s %s" % ("🏗", k.upper()), callback_data="dk:cms:" + k)]
+                for k in CMS_DORKS]
+        rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")])
+        try:
+            await q.edit_message_text(
+                (H("CMS DORK ENGINE", "%d CMS" % len(CMS_DORKS)) + "\n\n"
+                 + P("CMS chuno — us CMS ke liye ready dorks banenge (keyword optional).")),
+                parse_mode=ParseMode.HTML, reply_markup=RK(rows))
+        except Exception:
+            pass
+        return
+    kw = context.user_data.get("gen_kw_text") or ""
+    dorks = cms_dorks(arg, kw, n=300)
+    if not dorks:
+        try:
+            await q.answer("Kuch nahi bana", show_alert=True)
+        except Exception:
+            pass
+        return
+    context.user_data["last_dorks"] = dorks
+    dork_seen_add(dorks)
+    path, cnt = dump_text(dorks, "cms_" + arg, "PYTHON SNAKE — %s dorks" % arg)
+    try:
+        await q.edit_message_text(
+            (H("%s DORKS" % arg.upper(), "%s bane" % fmt(cnt)) + "\n\n"
+             + KV("CMS", "<code>%s</code>" % arg, "🏗") + "\n"
+             + KV("Keyword", "<code>%s</code>" % (esc(kw[:30]) if kw else "—"), "🔑") + "\n\n"
+             + B("Top 6") + "\n" + short_list(dorks[:6], 6)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=RK([[InlineKeyboardButton("🚀 DEEP SCAN", callback_data="f:deep")],
+                             [InlineKeyboardButton("⬅️ BACK", callback_data="dk:cms")]]))
+    except Exception:
+        pass
+    await send_file(update, path, "🏗 %s %s dorks" % (fmt(cnt), arg))
+
+
+async def cb_dk_exp(update, context):
+    """Exposed-file dorks — .env/.sql/.bak/phpMyAdmin."""
+    q = update.callback_query
+    kw = context.user_data.get("gen_kw_text") or ""
+    dorks = exposed_dorks(kw, n=300)
+    context.user_data["last_dorks"] = dorks
+    dork_seen_add(dorks)
+    path, cnt = dump_text(dorks, "exposed", "PYTHON SNAKE — exposed files")
+    try:
+        await q.edit_message_text(
+            (H("EXPOSED FILES", "%s dorks" % fmt(cnt)) + "\n\n"
+             + P("`.env / .sql / .bak / wp-config / phpMyAdmin / .git` dhundhne wale dorks.") + "\n\n"
+             + B("Top 6") + "\n" + short_list(dorks[:6], 6)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=RK([[InlineKeyboardButton("🚀 DEEP SCAN", callback_data="f:deep")],
+                             [InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")]]))
+    except Exception:
+        pass
+    await send_file(update, path, "📂 %s exposed-file dorks" % fmt(cnt))
 
 
 async def cb_dork_more(update, context):
@@ -3906,22 +4300,69 @@ PRO_SET_META = {
 
 
 COUNTRIES = [
-    ("in", "🇮🇳 INDIA (.in)"), ("pk", "🇵🇰 PAKISTAN (.pk)"),
-    ("us", "🇺🇸 USA (.us)"), ("uk", "🇬🇧 UK (.uk)"),
-    ("ru", "🇷🇺 RUSSIA (.ru)"), ("de", "🇩🇪 GERMANY (.de)"),
-    ("fr", "🇫🇷 FRANCE (.fr)"), ("br", "🇧🇷 BRAZIL (.br)"),
-    ("id", "🇮🇩 INDONESIA (.id)"), ("ng", "🇳🇬 NIGERIA (.ng)"),
-    ("gov", "🏛 GOV (.gov)"), ("edu", "🎓 EDU (.edu)"),
-    ("cn", "🇨🇳 CHINA (.cn)"), ("tr", "🇹🇷 TURKEY (.tr)"),
-    ("ae", "🇦🇪 UAE (.ae)"), ("sa", "🇸🇦 SAUDI (.sa)"),
+    ("in", "🇮🇳 INDIA (.in)"), ("pk", "🇵🇰 PAKISTAN (.pk)"), ("bd", "🇧🇩 BANGLADESH (.bd)"),
+    ("lk", "🇱🇰 SRILANKA (.lk)"), ("np", "🇳🇵 NEPAL (.np)"), ("mm", "🇲🇲 MYANMAR (.mm)"),
+    ("kh", "🇰🇭 CAMBODIA (.kh)"), ("th", "🇹🇭 THAILAND (.th)"), ("vn", "🇻🇳 VIETNAM (.vn)"),
+    ("my", "🇲🇾 MALAYSIA (.my)"), ("sg", "🇸🇬 SINGAPORE (.sg)"), ("ph", "🇵🇭 PHILIPPINES (.ph)"),
+    ("id", "🇮🇩 INDONESIA (.id)"), ("jp", "🇯🇵 JAPAN (.jp)"), ("kr", "🇰🇷 KOREA (.kr)"),
+    ("cn", "🇨🇳 CHINA (.cn)"), ("hk", "🇭🇰 HONGKONG (.hk)"), ("tw", "🇹🇼 TAIWAN (.tw)"),
+    ("us", "🇺🇸 USA (.us)"), ("ca", "🇨🇦 CANADA (.ca)"), ("mx", "🇲🇽 MEXICO (.mx)"),
+    ("br", "🇧🇷 BRAZIL (.br)"), ("ar", "🇦🇷 ARGENTINA (.ar)"), ("cl", "🇨🇱 CHILE (.cl)"),
+    ("co", "🇨🇴 COLOMBIA (.co)"), ("pe", "🇵🇪 PERU (.pe)"), ("ve", "🇻🇪 VENEZUELA (.ve)"),
+    ("ec", "🇪🇨 ECUADOR (.ec)"), ("uy", "🇺🇾 URUGUAY (.uy)"), ("py", "🇵🇾 PARAGUAY (.py)"),
+    ("bo", "🇧🇴 BOLIVIA (.bo)"), ("cr", "🇨🇷 COSTA RICA (.cr)"), ("pa", "🇵🇦 PANAMA (.pa)"),
+    ("do", "🇩🇴 DOMINICAN (.do)"), ("gt", "🇬🇹 GUATEMALA (.gt)"), ("sv", "🇸🇻 EL SALVADOR (.sv)"),
+    ("hn", "🇭🇳 HONDURAS (.hn)"), ("ni", "🇳🇮 NICARAGUA (.ni)"), ("cu", "🇨🇺 CUBA (.cu)"),
+    ("uk", "🇬🇧 UK (.uk)"), ("ie", "🇮🇪 IRELAND (.ie)"), ("fr", "🇫🇷 FRANCE (.fr)"),
+    ("de", "🇩🇪 GERMANY (.de)"), ("nl", "🇳🇱 NETHERLANDS (.nl)"), ("be", "🇧🇪 BELGIUM (.be)"),
+    ("ch", "🇨🇭 SWISS (.ch)"), ("at", "🇦🇹 AUSTRIA (.at)"), ("es", "🇪🇸 SPAIN (.es)"),
+    ("it", "🇮🇹 ITALY (.it)"), ("pt", "🇵🇹 PORTUGAL (.pt)"), ("gr", "🇬🇷 GREECE (.gr)"),
+    ("se", "🇸🇪 SWEDEN (.se)"), ("no", "🇳🇴 NORWAY (.no)"), ("dk", "🇩🇰 DENMARK (.dk)"),
+    ("fi", "🇫🇮 FINLAND (.fi)"), ("is", "🇮🇸 ICELAND (.is)"), ("pl", "🇵🇱 POLAND (.pl)"),
+    ("cz", "🇨🇿 CZECH (.cz)"), ("sk", "🇸🇰 SLOVAKIA (.sk)"), ("hu", "🇭🇺 HUNGARY (.hu)"),
+    ("ro", "🇷🇴 ROMANIA (.ro)"), ("bg", "🇧🇬 BULGARIA (.bg)"), ("hr", "🇭🇷 CROATIA (.hr)"),
+    ("rs", "🇷🇸 SERBIA (.rs)"), ("si", "🇸🇮 SLOVENIA (.si)"), ("ba", "🇧🇦 BOSNIA (.ba)"),
+    ("mk", "🇲🇰 MACEDONIA (.mk)"), ("al", "🇦🇱 ALBANIA (.al)"), ("ru", "🇷🇺 RUSSIA (.ru)"),
+    ("ua", "🇺🇦 UKRAINE (.ua)"), ("by", "🇧🇾 BELARUS (.by)"), ("lt", "🇱🇹 LITHUANIA (.lt)"),
+    ("lv", "🇱🇻 LATVIA (.lv)"), ("ee", "🇪🇪 ESTONIA (.ee)"), ("md", "🇲🇩 MOLDOVA (.md)"),
+    ("ge", "🇬🇪 GEORGIA (.ge)"), ("am", "🇦🇲 ARMENIA (.am)"), ("az", "🇦🇿 AZERBAIJAN (.az)"),
+    ("kz", "🇰🇿 KAZAKHSTAN (.kz)"), ("uz", "🇺🇿 UZBEKISTAN (.uz)"), ("tr", "🇹🇷 TURKEY (.tr)"),
+    ("ir", "🇮🇷 IRAN (.ir)"), ("iq", "🇮🇶 IRAQ (.iq)"), ("il", "🇮🇱 ISRAEL (.il)"),
+    ("ae", "🇦🇪 UAE (.ae)"), ("sa", "🇸🇦 SAUDI (.sa)"), ("qa", "🇶🇦 QATAR (.qa)"),
+    ("kw", "🇰🇼 KUWAIT (.kw)"), ("eg", "🇪🇬 EGYPT (.eg)"), ("ma", "🇲🇦 MOROCCO (.ma)"),
+    ("dz", "🇩🇿 ALGERIA (.dz)"), ("tn", "🇹🇳 TUNISIA (.tn)"), ("ly", "🇱🇾 LIBYA (.ly)"),
+    ("ng", "🇳🇬 NIGERIA (.ng)"), ("ke", "🇰🇪 KENYA (.ke)"), ("za", "🇿🇦 SOUTHAFRICA (.za)"),
+    ("gh", "🇬🇭 GHANA (.gh)"), ("et", "🇪🇹 ETHIOPIA (.et)"), ("tz", "🇹🇿 TANZANIA (.tz)"),
+    ("ug", "🇺🇬 UGANDA (.ug)"), ("zw", "🇿🇼 ZIMBABWE (.zw)"), ("zm", "🇿🇲 ZAMBIA (.zm)"),
+    ("au", "🇦🇺 AUSTRALIA (.au)"), ("nz", "🇳🇿 NEWZEALAND (.nz)"),
+    ("gov", "🏛 GOV (.gov)"), ("edu", "🎓 EDU (.edu)"), ("mil", "🎖 MIL (.mil)"),
 ]
 
 
-def country_kb() -> InlineKeyboardMarkup:
+COUNTRY_PAGE = 45          # ek page pe kitne (Telegram 100-button limit)
+
+
+def country_kb(page: int = 0) -> InlineKeyboardMarkup:
+    total = len(COUNTRIES)
+    pages = max(1, (total + COUNTRY_PAGE - 1) // COUNTRY_PAGE)
+    try:
+        page = max(0, min(pages - 1, int(page or 0)))
+    except Exception:
+        page = 0
+    chunk = COUNTRIES[page * COUNTRY_PAGE:(page + 1) * COUNTRY_PAGE]
     rows = []
-    for i in range(0, len(COUNTRIES), 2):
-        rows.append([InlineKeyboardButton(lbl, callback_data="dp:ctry:" + code)
-                     for code, lbl in COUNTRIES[i:i + 2]])
+    for i in range(0, len(chunk), 3):
+        rows.append([InlineKeyboardButton(lbl, callback_data="dp:ctry:%s" % code)
+                     for code, lbl in chunk[i:i + 3]])
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("⬅️", callback_data="dp:ctry:pg:%d" % (page - 1)))
+        nav.append(InlineKeyboardButton("%d / %d" % (page + 1, pages),
+                                        callback_data="dp:ctry:pg:%d" % page))
+        if page < pages - 1:
+            nav.append(InlineKeyboardButton("➡️", callback_data="dp:ctry:pg:%d" % (page + 1)))
+        rows.append(nav)
     rows.append([InlineKeyboardButton("🌍 SAB COUNTRIES (mix)", callback_data="dp:ctry:all")])
     rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")])
     return RK(rows)
@@ -3929,6 +4370,19 @@ def country_kb() -> InlineKeyboardMarkup:
 
 async def cb_country(update, context, code: str = ""):
     q = update.callback_query
+    if code.startswith("pg:"):
+        try:
+            page = int(code[3:] or 0)
+        except Exception:
+            page = 0
+        try:
+            await q.edit_message_text(
+                (H("COUNTRY DORKS", "%d countries" % len(COUNTRIES)) + "\n\n"
+                 + P("Country chuno — us desh ke domains me dorks banenge.")),
+                parse_mode=ParseMode.HTML, reply_markup=country_kb(page))
+        except Exception:
+            pass
+        return
     if not code:
         try:
             await q.edit_message_text(
@@ -5466,6 +5920,22 @@ async def input_qa_kind(update, context, kind: str, text: str):
             "<b>%s</b>" % B("Top 5")]
     for sc, it in pairs[:5]:
         body.append("<b>%d</b> %s <code>%s</code>" % (sc, quality_label(sc), esc(it[:90])))
+    if kind == "dorks":
+        grades = {}
+        for it in items:
+            g = dork_score_full(it)["grade"]
+            grades[g] = grades.get(g, 0) + 1
+        body.insert(4, KV("Grade", " ".join("%s %s:<code>%d</code>"
+                                            % (GRADE_EMOJI[g], g, grades[g])
+                                            for g in ("S+", "S", "A", "B", "C", "D", "F")
+                                            if g in grades), "🎖"))
+        dims_avg = {}
+        for it in items:
+            for k2, v2 in dork_score_full(it)["dims"].items():
+                dims_avg[k2] = dims_avg.get(k2, 0) + v2
+        body.insert(5, "<i>9 dims: %s</i>"
+                    % " • ".join("%s %.0f" % (k2, v2 / max(1, len(items)))
+                                 for k2, v2 in dims_avg.items()))
     body.append("")
     body.append("<b>%s</b>" % B("Kamzor 3"))
     for sc, it in pairs[-3:]:
@@ -5479,6 +5949,19 @@ async def input_qa_kind(update, context, kind: str, text: str):
     if hq:
         hp, hn = dump_text(hq, "quality_best", "PYTHON SNAKE — only 80+")
         await send_file(update, hp, "🔥 %s best (80+)" % fmt(hn))
+    if kind == "dorks" and len(items) >= 20:      # grade-wise auto split
+        tiers = {"S": [], "A": [], "B": [], "C": []}
+        for it in items:
+            g = dork_score_full(it)["grade"]
+            key = "S" if g in ("S+", "S") else g
+            if key in tiers:
+                tiers[key].append(it)
+        for key, lst in tiers.items():
+            if len(lst) < 2:
+                continue
+            tp, tn = dump_text(lst, "grade_" + key, "PYTHON SNAKE — grade %s" % key)
+            await send_file(update, tp, "%s Grade %s — %s dorks"
+                            % (GRADE_EMOJI.get(key, "•"), key, fmt(tn)))
     await update.effective_message.reply_text("⬅️ Menu", reply_markup=kb_back("m:qa"))
     await_clear(context)
 
@@ -5843,8 +6326,10 @@ def read_lines(raw: bytes) -> list:
 def kb_file(kind: str) -> InlineKeyboardMarkup:
     if kind == "dorks":
         rows = [[InlineKeyboardButton("🚀 DEEP SCAN", callback_data="f:deep")],
+                [InlineKeyboardButton("🎖 GRADE (S+/S/A/B/C)", callback_data="f:grade")],
                 [InlineKeyboardButton("📊 ANALYZE", callback_data="f:ana"),
                  InlineKeyboardButton("🎲 RANDOMIZE", callback_data="f:rnd")],
+                [InlineKeyboardButton("🧩 MERGE + DEDUP", callback_data="f:merge")],
                 [InlineKeyboardButton("💉 INJECTOR", callback_data="f:inj")],
                 [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]]
     elif kind == "urls":
@@ -5853,10 +6338,13 @@ def kb_file(kind: str) -> InlineKeyboardMarkup:
                 [InlineKeyboardButton("🔗 URL REVERSE", callback_data="f:rev")],
                 [InlineKeyboardButton("💉 INJECTOR", callback_data="f:inj"),
                  InlineKeyboardButton("🧹 CLEAN + DEDUPE", callback_data="f:clean")],
+                [InlineKeyboardButton("🧩 MERGE + DEDUP", callback_data="f:merge")],
+                [InlineKeyboardButton("🧬 COMBO / HASH ANALYZE", callback_data="f:combo")],
                 [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]]
     else:
         rows = [[InlineKeyboardButton("📊 QUALITY CHECK", callback_data="f:kqual")],
                 [InlineKeyboardButton("🔁 EXPAND (aur banao)", callback_data="f:kexp")],
+                [InlineKeyboardButton("🧩 MERGE + DEDUP", callback_data="f:merge")],
                 [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]]
     return RK(rows)
 
@@ -6088,6 +6576,135 @@ async def cb_file(update, context, action: str):
         except Exception:
             pass
         await_set(context, "deep_max")
+        return
+
+    if action == "grade":
+        rows = []
+        for it in items:
+            r = dork_score_full(it)
+            rows.append((r["total"], r["grade"], it))
+        avg = sum(r[0] for r in rows) / max(1, len(rows))
+        tiers = {}
+        for sc, g, it in rows:
+            key = "S" if g in ("S+", "S") else g
+            tiers.setdefault(key, []).append(it)
+        kb = RK([[InlineKeyboardButton("🚀 INJECT TOP GRADE", callback_data="f:inj")],
+                 [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]])
+        txt = (H("DORK GRADER", "avg %.0f • %s" % (avg, dork_grade(avg))) + "\n\n"
+               + KV("Total", "<code>%s</code>" % fmt(len(items)), "📦") + "\n"
+               + "\n".join(KV("Grade %s" % g, "<code>%s</code>" % fmt(len(tiers.get(g, []))),
+                               GRADE_EMOJI.get(g, "•"))
+                           for g in ("S", "A", "B", "C", "D", "F")) + "\n\n"
+               + B("Top 5") + "\n"
+               + "\n".join("%s <code>%d</code> %s"
+                           % (GRADE_EMOJI.get(g, "•"), sc, esc(it[:70]))
+                           for sc, g, it in sorted(rows, key=lambda z: -z[0])[:5]))
+        try:
+            await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except Exception:
+            pass
+        for g in ("S", "A", "B", "C"):
+            lst = tiers.get(g) or []
+            if len(lst) < 2:
+                continue
+            tp, tn = dump_text(lst, "grade_" + g, "PYTHON SNAKE — grade %s" % g)
+            await send_file(update, tp, "%s Grade %s — %s dorks" % (GRADE_EMOJI[g], g, fmt(tn)))
+        low = tiers.get("D", []) + tiers.get("F", [])
+        if low:
+            lp, ln = dump_text(low, "grade_low", "PYTHON SNAKE — grade D/F (drop karo)")
+            await send_file(update, lp, "🔴 Grade D/F — %s dorks (hata do)" % fmt(ln))
+        return
+
+    if action == "combo":
+        a = analyze_dump(items)
+        hashes = " • ".join("%s:%s" % (k, fmt(v)) for k, v in
+                            sorted(a["hash"].items(), key=lambda z: -z[1])) or "—"
+        st = a["strength"]
+        txt = (H("COMBO / HASH ANALYZE", "%s lines" % fmt(a["lines"])) + "\n\n"
+               + KV("Unique", "<code>%s</code>" % fmt(a["unique"]), "📦") + "\n"
+               + KV("email:pass", "<code>%s</code>" % fmt(a["combo"]), "🧬") + "\n"
+               + KV("Sirf emails", "<code>%s</code>" % fmt(a["emails"]), "📧") + "\n"
+               + KV("Hash mile", "<code>%s</code>" % hashes, "🔑") + "\n"
+               + KV("Domains", "<code>%s</code>" % fmt(a["domain_count"]), "🌐") + "\n\n"
+               + B("Password strength") + "\n"
+               + "🔴 weak <code>%s</code> • 🟡 medium <code>%s</code> • "
+                 "🟢 strong <code>%s</code> • 💎 very strong <code>%s</code>"
+               % (fmt(st["weak"]), fmt(st["medium"]), fmt(st["strong"]),
+                  fmt(st["very_strong"])) + "\n\n"
+               + (B("Top domains") + "\n"
+                  + "\n".join("• <code>%s</code> — %s" % (esc(d), fmt(c))
+                               for d, c in a["top_domains"]) if a["top_domains"] else "")
+               + "\n\n<i>Hash sirf pehchan (identify) hote hain — bot cracking nahi karta.</i>")
+        try:
+            await q.edit_message_text(txt, parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_back("m:dump"))
+        except Exception:
+            pass
+        if a["combo_list"]:
+            cp, cn = dump_text(a["combo_list"], "combos_extracted", "PYTHON SNAKE — email:pass")
+            await send_file(update, cp, "🧬 %s email:pass" % fmt(cn))
+        if a["hash_list"]:
+            hp, hn = dump_text(a["hash_list"], "hashes_found", "PYTHON SNAKE — hashes")
+            await send_file(update, hp, "🔑 %s hash lines" % fmt(hn))
+        if a["email_list"]:
+            ep, en = dump_text(a["email_list"], "emails_only", "PYTHON SNAKE — emails")
+            await send_file(update, ep, "📧 %s emails" % fmt(en))
+        return
+
+    if action == "merge":
+        bucket = list(context.user_data.get("merge_bucket") or [])
+        before = len(bucket)
+        bucket.extend(items)
+        m = merge_dedup(bucket)
+        context.user_data["merge_bucket"] = m["list"]
+        txt = (H("MERGE + DEDUP", "bucket %s" % fmt(m["unique"])) + "\n\n"
+               + KV("Pehle bucket", "<code>%s</code>" % fmt(before), "📦") + "\n"
+               + KV("Is file se", "<code>%s</code>" % fmt(len(items)), "📄") + "\n"
+               + KV("Merged", "<code>%s</code>" % fmt(m["unique"]), "🧩") + "\n"
+               + KV("Duplicate hataye", "<code>%s</code>" % fmt(m["dupes"]), "🧹") + "\n"
+               + KV("Type", " • ".join("%s:%s" % (k, fmt(v)) for k, v in m["kinds"].items()
+                                       if v), "🏷") + "\n\n"
+               + P("Aur file bhejo aur phir 🧩 MERGE dabao — sab jama hote rahenge."))
+        kb = RK([[InlineKeyboardButton("✅ MERGE NOW (file bhejo)", callback_data="f:merge_now")],
+                 [InlineKeyboardButton("🗑 BUCKET CLEAR", callback_data="f:merge_clear")],
+                 [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]])
+        try:
+            await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except Exception:
+            pass
+        return
+
+    if action == "merge_now":
+        bucket = context.user_data.get("merge_bucket") or []
+        if not bucket:
+            try:
+                await q.answer("Bucket khaali — pehle file bhejo + MERGE", show_alert=True)
+            except Exception:
+                pass
+            return
+        m = merge_dedup(bucket)
+        path, cnt = dump_text(m["list"], "merged", "PYTHON SNAKE — merged + deduped")
+        try:
+            await q.edit_message_text(
+                (H("MERGE DONE", "%s unique" % fmt(cnt)) + "\n\n"
+                 + KV("Input lines", "<code>%s</code>" % fmt(m["input"]), "📥") + "\n"
+                 + KV("Duplicate", "<code>%s</code>" % fmt(m["dupes"]), "🧹") + "\n"
+                 + KV("Unique", "<code>%s</code>" % fmt(m["unique"]), "✅") + "\n\n"
+                 + P("File neeche bheji ja rahi hai.")),
+                parse_mode=ParseMode.HTML, reply_markup=kb_back("m:home"))
+        except Exception:
+            pass
+        await send_file(update, path, "🧩 %s merged lines" % fmt(cnt))
+        context.user_data["file_items"] = m["list"]
+        return
+
+    if action == "merge_clear":
+        context.user_data.pop("merge_bucket", None)
+        try:
+            await q.edit_message_text("🗑 Merge bucket clear.",
+                                      reply_markup=kb_back("m:home"), parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
         return
 
     if action == "ana":
@@ -7822,7 +8439,8 @@ def batch_card() -> str:
             "<code>/batch conc 600</code>\n"
             "<code>/batch timeout 8</code>\n"
             "<code>/batch limit 0</code> — 0 = jitna mile utna (SAB)\n"
-            "<code>/batch budget 20</code> — 20 minute scan chalega\n\n"
+            "<code>/batch budget 20</code> — 20 minute scan chalega\n"
+            "<code>/batch trial 1</code> — trial lock ON (file locked)\n\n"
             "<i>Proxy batch 60k proxies ko chhota-chhota check karta hai: 4k → agla 4k → … "
             "jab tak sab na ho. Phone pe 2000–4000 best hai.</i>")
 
@@ -7837,6 +8455,15 @@ async def cmd_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(batch_card(), parse_mode=ParseMode.HTML)
         return
     key, val = args[0].lower(), args[1]
+    if key == "trial":
+        on = str(val).lower() in ("1", "on", "yes", "true")
+        sset("trial_lock", 1 if on else 0)
+        await update.effective_message.reply_text(
+            "🔒 <b>Trial lock</b> = <code>%s</code>\n\n%s"
+            % ("ON — bina key wale scan kar sakte hain, file locked"
+               if on else "OFF — sab normal", batch_card()),
+            parse_mode=ParseMode.HTML)
+        return
     if key not in BATCH_KEYS:
         await update.effective_message.reply_text(
             "❌ <b>Ye key nahi hai.</b>\n\nSahi: <code>%s</code>"

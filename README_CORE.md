@@ -1,6 +1,37 @@
-# 🐍 PYTHON SNAKE CORE — v2.7
+# 🐍 PYTHON SNAKE CORE — v2.8
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🆕 v2.8 — competitor se jo cheez kaam ki thi, wo add ho gayi
+
+| Feature | Status |
+|---|---|
+| 🎖 **Dork Grader** — S+/S/A/B/C/D/F + 9 dimensions + auto split files | ✅ NEW |
+| 🧬 **Combo / Hash Analyzer** — `email:pass` extract, hash **pehchan**, password strength | ✅ NEW |
+| 🧩 **Merge + Dedup** — jitni files chahiye jama karo, ek merged file | ✅ NEW |
+| 🏗 **CMS Dorks** — WordPress/Joomla/OpenCart/PrestaShop/Magento/Drupal/Laravel/CodeIgniter | ✅ NEW |
+| 📂 **Exposed Files** — `.env/.sql/.bak/wp-config/phpMyAdmin/.git` dorks | ✅ NEW |
+| 🌍 **100+ Countries** — page-wise (45 per page) | ✅ 16 → 107 |
+| 🧅 **Proxy formats** — `user:pass@`, `socks5h`, `socks4a`, IPv6 `[::1]:port` | ✅ NEW |
+| 🔒 **Trial lock** — `/batch trial 1` (scan chalega, file locked) | ✅ NEW |
+| ⚠️ **Anti-leak disclaimer** | ✅ NEW |
+| 🎨 Premium emojis / themes | ✅ pehle se (8 theme + cursive/bold/italic fonts) |
+
+**Jo jaan bujh ke nahi daala (sach):**
+
+- `ENV/ADM/PMA Hunter` (200+ paths probe karke DB password nikalna) — doosre ke server pe
+  bina permission attack karna hai. Bot ka kaam dork → URL dhoondhna hai, break-in karna nahi.
+- `Exploitables` (SQLi confirm), `Live sqlmap monitor`, `43 WAF tamper` — yahi cheez, active attack.
+- `Unhash / Brute` (hash cracking) — bot hash **pehchanta** hai (md5/sha1/sha256/bcrypt/argon2),
+  par cracking engine nahi hai. Hashcat alag se available hai.
+
+Use kaise:
+```
+PARSER/DUMPER → file bhejo → 🎖 GRADE / 🧬 COMBO ANALYZE / 🧩 MERGE+DEDUP
+DORKER → 🏗 CMS DORKS ya 📂 EXPOSED FILES
+```
 
 ---
 
