@@ -113,6 +113,17 @@ else
   echo "  ℹ️  Bot band tha — ./start.sh se chalao"
 fi
 
+# ---------- version dikhao ----------
+VER="$(grep -m1 '^VERSION = ' "$BOT" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/')"
+LINES="$(wc -l < "$BOT" 2>/dev/null | tr -d ' ')"
+echo ""
+echo "  📦 Version : ${VER:-?}  (${LINES:-?} lines)"
+if [ "${VER:-}" = "v2.0" ]; then
+  echo "  ✅ Naya dorker (DORKS GEN + PRO) aa gaya"
+else
+  echo "  ⚠️  Purana version lag raha hai — dobara ./update.sh chalao"
+fi
+
 echo ""
 echo "=============================================================="
 echo "  ✅ UPDATE DONE"

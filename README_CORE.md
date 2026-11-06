@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v1.9
+# 🐍 PYTHON SNAKE CORE — v2.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -108,6 +108,38 @@ Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
 
 ---
+
+## ✨ v2.0 — STYLISH FONTS + FLOW LOCK
+
+### 🔤 Har text ab theme font me
+Pehle sirf **headings** styled thi, body plain thi. Ab:
+- **Labels** → heading font (`ᴅᴏᴍᴀɪɴꜱ : 11`)
+- **Prose** → italic font (`Country chuno — us desh ke domains me dorks banenge`)
+- **Buttons** → button font (pehle se tha)
+
+Function: `KV(label, value, emoji)` + `B()` + `P()`.
+**Data kabhi styled nahi** — keywords/dorks/URLs plain rehte hain (copy-paste ke liye).
+
+### 🔒 Flow lock — keywords ke bina dorks NAHI
+Purane `dd:mode:*` buttons ab `DORKS GEN` pe redirect hote hain:
+```
+🎯 DORKER
+  ├── ⚡ DORKS GEN      → Count → Keywords → dorks
+  ├── 🚀 DORKS GEN PRO  → config → Count → Keywords → dorks (best template)
+  └── 🌍 COUNTRY DORKS  → country → GEN DORKS → Count → Keywords
+```
+Koi bhi raasta keywords skip nahi karta.
+
+### 🩺 Update confirm kaise kare
+- `./update.sh` ab **version print** karta hai:
+  ```
+  📦 Version : v2.0  (6,xxx lines)
+  ✅ Naya dorker (DORKS GEN + PRO) aa gaya
+  ```
+- `/ping` me: `📦 Core: v2.0`
+- Main menu header me: `v2.0 • sirf kaam ka`
+
+Agar `v1.8` ya purana dikhe → update nahi hua, dobara `./update.sh`.
 
 ## 🚀 v1.9 — DORKER PRO (templates system)
 

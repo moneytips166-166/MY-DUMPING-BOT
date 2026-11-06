@@ -63,7 +63,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v1.9"
+VERSION = "v2.0"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -2750,7 +2750,7 @@ def help_text() -> str:
     ]
     body = []
     for emoji, name, desc in items:
-        body.append("%s <b>%s</b>\n   <i>%s</i>" % (emoji, style(name, "btn"), desc))
+        body.append("%s <b>%s</b>\n   %s" % (emoji, style(name, "btn"), P(desc)))
     return (H("HELP", "kaun sa tool kya karta hai") + "\n\n"
             + ("\n\n".join(body)) + "\n\n"
             + tag("FILE UPLOAD") + "\n"
@@ -3046,6 +3046,22 @@ def L(t) -> str:
     return style(str(t), "sub")
 
 
+def B(label) -> str:
+    """Body LABEL — heading font (bold look, emoji safe)."""
+    return style(str(label), "head")
+
+
+def P(prose) -> str:
+    """Prose line — subtitle/italic font (emoji safe)."""
+    return style(str(prose), "sub")
+
+
+def KV(label, value, emoji: str = "") -> str:
+    """Themed 'label : value' line — label stylish, value plain."""
+    head = ("%s " % emoji if emoji else "") + B(label)
+    return "%s : %s" % (head, value)
+
+
 def _demo(lst, n=6) -> str:
     return " ".join(str(x) for x in (lst or [])[:n])
 
@@ -3054,11 +3070,14 @@ def _demo(lst, n=6) -> str:
 async def tool_dork(update, context):
     q = update.callback_query
     txt = (H("DORKER", "dono tarike") + "\n\n"
-           "⚡ <b>DORKS GEN</b>\n"
-           "   <i>Count → Keywords → ready dorks (universal templates, har niche)</i>\n\n"
-           "🚀 <b>DORKS GEN PRO</b>\n"
-           "   <i>Domains · Params · Filetypes · Filters · Templates · Combos</i>\n\n"
-           "📚 History: <code>%s</code> dorks" % fmt(dork_seen_count()))
+           "⚡ <b>%s</b>\n   %s\n\n"
+           "🚀 <b>%s</b>\n   %s\n\n"
+           "%s\n\n"
+           "%s"
+           % (B("DORKS GEN"), P("Count → Keywords → ready dorks"),
+              B("DORKS GEN PRO"), P("Domains · Params · Filetypes · Templates · Combos"),
+              KV("History", "<code>%s</code> dorks" % fmt(dork_seen_count()), "📚"),
+              P(VERSION)))
     try:
         await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK([
             [InlineKeyboardButton("⚡ DORKS GEN", callback_data="dd:gen")],
@@ -3077,8 +3096,12 @@ async def cb_gen_start(update, context):
     try:
         await q.edit_message_text(
             (H("DORKS GEN", "step 1 / 2") + "\n\n"
-             "🔢 Kitne dorks chahiye? <b>Number bhejo</b>\n"
-             "<i>1 – %s • Recommended: 1,000</i>" % fmt(DORK_MAX)),
+             "🔢 %s\n\n"
+             "<b>%s</b>\n\n"
+             "%s"
+             % (B("Count Bhejo"), P("Number hi likho — jaise 1000"),
+                KV("Range", "1 – %s" % fmt(DORK_MAX)),
+                ) + "\n" + KV("Recommended", "1,000")),
             parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
     except Exception:
         pass
@@ -3094,10 +3117,15 @@ async def input_gen_count(update, context, text: str):
     context.user_data["gen_count"] = n
     await update.effective_message.reply_text(
         (H("DORKS GEN", "step 2 / 2") + "\n\n"
-         "✅ Count: <code>%s</code>\n\n"
-         "🔑 Ab <b>keywords</b> bhejo (comma ya line se alag):\n"
+         "%s\n\n"
+         "🔑 <b>%s</b>\n\n"
+         "%s\n\n"
          "<code>shopify store, crypto wallet, admin panel</code>\n\n"
-         "<i>Har keyword pe universal HQ templates chalengi.</i>" % fmt(n)),
+         "%s"
+         % (KV("Count", "<code>%s</code>" % fmt(n), "✅"),
+            B("Ab Keywords Bhejo"),
+            P("Comma ya line se alag karo"),
+            P("Har keyword pe universal HQ templates chalengi"))),
         parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
     context.user_data["await"] = "gen_kw"
 
@@ -3129,14 +3157,14 @@ async def input_gen_kw(update, context, text: str):
         pass
     await update.effective_message.reply_text(
         (H("DORKS GEN — DONE", "%s dorks" % fmt(cnt)) + "\n\n"
-         "🔑 Keywords : <code>%d</code>\n"
-         "✅ Bane     : <code>%s</code>\n"
-         "🆕 Naye     : <code>%s</code>\n"
-         "⭐ Avg      : <code>%.0f/100</code>\n"
-         "⏱ Time     : <code>%.2fs</code>\n\n"
-         "<b>Top 8:</b>\n%s"
-         % (len(kw_cores(text)), fmt(cnt), fmt(added), avg, took,
-            short_list(dorks[:8], 8))),
+         "%s\n%s\n%s\n%s\n%s\n\n"
+         "<b>%s</b>\n%s"
+         % (KV("Keywords", "<code>%d</code>" % len(kw_cores(text)), "🔑"),
+            KV("Bane", "<code>%s</code>" % fmt(cnt), "✅"),
+            KV("Naye", "<code>%s</code>" % fmt(added), "🆕"),
+            KV("Avg score", "<code>%.0f/100</code>" % avg, "⭐"),
+            KV("Time", "<code>%.2fs</code>" % took, "⏱"),
+            B("Top 8"), short_list(dorks[:8], 8))),
         parse_mode=ParseMode.HTML, reply_markup=RK([
             [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep")],
             [InlineKeyboardButton("🆕 AUR (fresh)", callback_data="dd:more")],
@@ -3228,20 +3256,20 @@ async def cb_pro_menu(update, context):
     try:
         await q.edit_message_text(
             (H("DORKS GEN PRO", "config + templates") + "\n\n"
-             "🔑 Keywords : <code>%s</code> loaded\n"
-             "🌐 Domains  : <code>%d</code> — <code>%s</code>\n"
-             "🔢 Params   : <code>%d</code> — <code>%s</code>\n"
-             "📄 Filetypes: <code>%d</code> — <code>%s</code>\n"
-             "🔍 Filters  : <code>%d</code> — <code>%s</code>\n"
-             "📋 PF       : <code>%d</code> entries\n"
-             "✅ Templates: <code>%d/%d</code> ON"
-             % (fmt(len(context.user_data.get("last_kws") or [])),
-                len(cfg["domains"]), _demo(cfg["domains"], 5),
-                len(cfg["params"]), ", ".join(cfg["params"][:5]),
-                len(cfg["filetypes"]), " ".join(cfg["filetypes"]),
-                len(cfg["sfilters"]), " ".join(cfg["sfilters"]),
-                len(cfg["pfilters"]),
-                len(pro_on_templates(cfg)), len(cfg["templates"]))),
+             "%s\n%s\n%s\n%s\n%s\n%s\n%s"
+             % (KV("Keywords", "<code>%s</code> loaded"
+                  % fmt(len(context.user_data.get("last_kws") or [])), "🔑"),
+                KV("Domains", "<code>%d</code> — <code>%s</code>"
+                   % (len(cfg["domains"]), _demo(cfg["domains"], 5)), "🌐"),
+                KV("Params", "<code>%d</code> — <code>%s</code>"
+                   % (len(cfg["params"]), ", ".join(cfg["params"][:5])), "🔢"),
+                KV("Filetypes", "<code>%d</code> — <code>%s</code>"
+                   % (len(cfg["filetypes"]), " ".join(cfg["filetypes"])), "📄"),
+                KV("SF", "<code>%d</code> — <code>%s</code>"
+                   % (len(cfg["sfilters"]), " ".join(cfg["sfilters"])), "🔍"),
+                KV("PF", "<code>%d</code> entries" % len(cfg["pfilters"]), "📋"),
+                KV("Enabled", "<code>%d/%d</code> templates"
+                   % (len(pro_on_templates(cfg)), len(cfg["templates"])), "✅"))),
             parse_mode=ParseMode.HTML, reply_markup=pro_menu_kb())
     except Exception:
         pass
@@ -3294,10 +3322,11 @@ async def cb_country(update, context, code: str = ""):
         try:
             await q.edit_message_text(
                 (H("COUNTRY DORKS", "site:.XX wale dorks") + "\n\n"
-                 "🌍 Country chuno — us country ke domains me dorks banenge.\n"
-                 "<i>Jaise <code>site:.in inurl:login</code></i>\n\n"
-                 "📌 Abhi domains: <code>%s</code>"
-                 % " ".join(pro_load()["domains"][:8])),
+                 "%s\n%s\n\n%s"
+                 % (P("Country chuno — us desh ke domains me dorks banenge"),
+                    P("Jaise site:.in inurl:login"),
+                    KV("Abhi domains", "<code>%s</code>"
+                       % " ".join(pro_load()["domains"][:8]), "📌"))),
                 parse_mode=ParseMode.HTML, reply_markup=country_kb())
         except Exception:
             pass
@@ -3313,11 +3342,11 @@ async def cb_country(update, context, code: str = ""):
     try:
         await q.edit_message_text(
             (H("COUNTRY SET", label) + "\n\n"
-             "🌐 Domains : <code>%s</code>\n"
-             "✅ Templates: <code>%d/%d</code> ON\n\n"
-             "Ab 🎯 <b>GEN DORKS</b> dabao — is country ke dorks banenge."
-             % (" ".join(cfg["domains"]), len(pro_on_templates(cfg)),
-                len(cfg["templates"]))),
+             "%s\n%s\n\n%s"
+             % (KV("Domains", "<code>%s</code>" % " ".join(cfg["domains"]), "🌐"),
+                KV("Templates", "<code>%d/%d</code> ON"
+                   % (len(pro_on_templates(cfg)), len(cfg["templates"])), "✅"),
+                P("Ab GEN DORKS dabao — is country ke dorks banenge"))),
             parse_mode=ParseMode.HTML, reply_markup=RK([
                 [InlineKeyboardButton("🎯 GEN DORKS", callback_data="dp:gen")],
                 [InlineKeyboardButton("📊 CONFIG", callback_data="dp:cfg"),
@@ -3346,11 +3375,14 @@ async def cb_pro_set(update, context, key: str):
                  "<code>site.com/<b>search</b>?q=</code>\n"
                  "Isse dork banti hai: <code>inurl:shop.</code> + page filter.\n")
     txt = (H(title, "%s set karo" % what) + "\n\n"
-           "📥 <b>Bhejo</b> (comma / space / line — koi bhi):\n"
+           "📥 <b>%s</b>\n%s\n\n"
            "<code>%s</code>\n%s\n"
-           "📌 Abhi: <code>%d</code> — <code>%s</code>\n\n"
-           "<i>Naya bhejo to purana replace ho jayega.</i>"
-           % (exblock, extra, len(cur), _demo(cur, 8)))
+           "%s\n\n"
+           "%s"
+           % (B("Bhejo"), P("comma / space / line — koi bhi"), exblock, extra,
+              KV("Abhi", "<code>%d</code> — <code>%s</code>"
+                 % (len(cur), _demo(cur, 8)), "📌"),
+              P("Naya bhejo to purana replace ho jayega")))
     try:
         await q.edit_message_text(txt, parse_mode=ParseMode.HTML,
                                   reply_markup=kb_back("dd:pro"))
@@ -3403,7 +3435,9 @@ async def input_pro_set(update, context, key: str, text: str):
     pro_save(cfg)
     await update.effective_message.reply_text(
         (H("SAVED", "%d %s" % (len(out), meta[1])) + "\n\n"
-         "<code>%s</code>\n\n👇 Aage kya?" % (" ".join(out[:16]))),
+         "%s\n\n<code>%s</code>\n\n%s"
+         % (KV("Saved", "<code>%d</code>" % len(out), "✅"),
+            esc(" ".join(out[:16])), B("Aage kya?"))),
         parse_mode=ParseMode.HTML, reply_markup=RK([
             [InlineKeyboardButton("📊 CONFIG DEKHO", callback_data="dp:cfg"),
              InlineKeyboardButton("🚀 PRO MENU", callback_data="dd:pro")],
@@ -3417,28 +3451,26 @@ def pro_cfg_text() -> str:
     cfg = pro_load()
     on = pro_on_templates(cfg)
     lines = [H("PRO DORK CONFIG", "live status"), "",
-             "🔑 <b>%s</b> : <code>%s</code> loaded" % (L("Keywords"), fmt(0)),
-             "🌐 <b>%s</b> : <code>%d</code> — <code>%s</code>"
-             % (L("Domains"), len(cfg["domains"]), " ".join(cfg["domains"][:8])),
-             "🔢 <b>%s</b> : <code>%d</code> — <code>%s</code>"
-             % (L("Params"), len(cfg["params"]), ", ".join(cfg["params"][:6])),
-             "📄 <b>%s</b>: <code>%d</code> — <code>%s</code>"
-             % (L("Filetypes"), len(cfg["filetypes"]), " ".join(cfg["filetypes"])),
-             "🔍 <b>%s</b> : <code>%d</code> — <code>%s</code>"
-             % (L("SF"), len(cfg["sfilters"]), " ".join(cfg["sfilters"])),
-             "📋 <b>%s</b> : <code>%d</code> entries"
-             % (L("PF"), len(cfg["pfilters"])),
-             "🧬 <b>%s</b> : <code>%d</code>" % (L("Combos"), len(cfg["combos"])),
+             KV("Keywords", "<code>0</code> loaded", "🔑"),
+             KV("Domains", "<code>%d</code> — <code>%s</code>"
+                % (len(cfg["domains"]), " ".join(cfg["domains"][:8])), "🌐"),
+             KV("Params", "<code>%d</code> — <code>%s</code>"
+                % (len(cfg["params"]), ", ".join(cfg["params"][:6])), "🔢"),
+             KV("Filetypes", "<code>%d</code> — <code>%s</code>"
+                % (len(cfg["filetypes"]), " ".join(cfg["filetypes"])), "📄"),
+             KV("SF", "<code>%d</code> — <code>%s</code>"
+                % (len(cfg["sfilters"]), " ".join(cfg["sfilters"])), "🔍"),
+             KV("PF", "<code>%d</code> entries" % len(cfg["pfilters"]), "📋"),
+             KV("Combos", "<code>%d</code>" % len(cfg["combos"]), "🧬"),
              "",
-             "✅ <b>%s</b> : <code>%d/%d</code> templates"
-             % (L("Enabled"), len(on), len(cfg["templates"])),
+             KV("Enabled", "<code>%d/%d</code> templates" % (len(on), len(cfg["templates"])), "✅"),
              ""]
     for t in cfg["templates"]:
         mark = "✅" if t.get("on") else "🚫"
         lines.append("%s <b>%02d.</b> <code>%s</code>" % (mark, t["id"], esc(t["tpl"])))
     lines.append("")
-    lines.append("<i>Legend: (KW)=keyword (DE)=domain (PF)=page-filter "
-                 "(PT)=param (FT)=filetype (SF)=search-filter (NB)=number (CO)=combo</i>")
+    lines.append(P("Legend: (KW)=keyword (DE)=domain (PF)=page-filter "
+                   "(PT)=param (FT)=filetype (SF)=search-filter (NB)=number (CO)=combo"))
     return "\n".join(lines)
 
 
@@ -3488,9 +3520,10 @@ async def cb_pro_tpl(update, context, arg: str = ""):
     try:
         await q.edit_message_text(
             (H("VIEW TEMPLATES", "%d/%d ON" % (on, len(cfg["templates"]))) + "\n\n"
-             "👇 Kisi bhi template ko <b>ON / OFF</b> karne ke liye dabao\n"
-             "<i>OFF wali template dorks me use nahi hogi.</i>\n\n"
-             "✅ = ON   🚫 = OFF"),
+             "%s\n\n" % KV("Enabled", "<code>%d/%d</code>" % (on, len(cfg["templates"])), "✅")
+             + "%s\n\n" % P("Kisi bhi template ko ON/OFF karne ke liye dabao")
+             + "%s\n" % P("OFF wali template dorks me use nahi hogi")
+             + "%s" % KV("Status", "✅ ON  •  🚫 OFF")),
             parse_mode=ParseMode.HTML, reply_markup=pro_tpl_kb())
     except Exception:
         pass
@@ -3504,8 +3537,9 @@ async def cb_pro_reset(update, context, arg: str = ""):
         try:
             await q.edit_message_text(
                 (H("RESET DONE", "default pe wapas") + "\n\n"
-                 "♻️ Saare config + templates default ho gaye.\n"
-                 "<code>%d</code> templates ON" % len(PRO_TEMPLATES_DEFAULT)),
+                 "%s\n%s"
+                 % (KV("Templates", "<code>%d</code> ON" % len(PRO_TEMPLATES_DEFAULT), "♻️"),
+                    P("Saare config + templates default ho gaye"))),
                 parse_mode=ParseMode.HTML, reply_markup=kb_back("dd:pro"))
         except Exception:
             pass
@@ -3515,9 +3549,12 @@ async def cb_pro_reset(update, context, arg: str = ""):
     try:
         await q.edit_message_text(
             (H("RESET TO DEFAULT", "confirm karo") + "\n\n"
-             "⚠️ Ye sab <b>delete</b> ho jayega:\n"
-             "• domains, params, filetypes\n• filters, combos\n• custom templates\n\n"
-             "<b>Pakka reset karna hai?</b>"),
+             "⚠️ <b>%s</b>\n\n"
+             "%s\n%s\n%s\n\n"
+             "<b>%s</b>"
+             % (B("Ye sab delete ho jayega"), P("• domains, params, filetypes"),
+                P("• filters, combos"), P("• custom templates"),
+                B("Pakka reset karna hai?"))),
             parse_mode=ParseMode.HTML, reply_markup=RK([
                 [InlineKeyboardButton("✅ HAAN, RESET", callback_data="dp:reset:yes")],
                 [InlineKeyboardButton("❌ NAHI, WAPAS", callback_data="dp:reset:no")],
@@ -3594,10 +3631,10 @@ async def cb_pro_combos(update, context, arg: str = ""):
     try:
         await q.edit_message_text(
             (H("GEN ALL COMBOS", "%d combos" % len(cfg["combos"])) + "\n\n"
-             "🧬 <b>%s</b>\n\n"
-             "❌ dabao = remove • ➕ = naya add\n"
-             "🎯 = saare combos ke dorks banao"
-             % esc("  ".join(cfg["combos"][:20]))),
+             "🧬 <b>%s</b>\n\n<code>%s</code>\n\n%s\n%s"
+             % (B("Combos"), esc("  ".join(cfg["combos"][:20])),
+                P("❌ dabao = remove  •  ➕ = naya add"),
+                P("🎯 = saare combos ke dorks banao"))),
             parse_mode=ParseMode.HTML, reply_markup=combos_kb())
     except Exception:
         pass
@@ -3635,8 +3672,10 @@ async def cb_pro_gen(update, context):
     try:
         await q.edit_message_text(
             (H("GEN DORKS (PRO)", "step 1 / 2") + "\n\n"
-             "🔢 Kitne dorks chahiye? <b>Number bhejo</b>\n"
-             "<i>1 – %s • Recommended: 2,000</i>" % fmt(DORK_MAX)),
+             "🔢 <b>%s</b>\n\n%s\n%s"
+             % (B("Kitne dorks chahiye?"),
+                KV("Range", "1 – %s" % fmt(DORK_MAX)),
+                KV("Recommended", "2,000"))),
             parse_mode=ParseMode.HTML, reply_markup=kb_back("dd:pro"))
     except Exception:
         pass
@@ -3653,12 +3692,12 @@ async def input_dpgen_count(update, context, text: str):
     cfg = pro_load()
     await update.effective_message.reply_text(
         (H("GEN DORKS (PRO)", "step 2 / 2") + "\n\n"
-         "✅ Count: <code>%s</code>\n"
-         "✅ Templates ON: <code>%d/%d</code>\n"
-         "🌐 Domains: <code>%d</code>\n\n"
-         "🔑 Ab <b>keywords</b> bhejo:\n"
-         "<code>shopify store, crypto wallet</code>"
-         % (fmt(n), len(pro_on_templates(cfg)), len(cfg["templates"]), len(cfg["domains"]))),
+         "%s\n%s\n%s\n\n🔑 <b>%s</b>\n\n<code>shopify store, crypto wallet</code>"
+         % (KV("Count", "<code>%s</code>" % fmt(n), "✅"),
+            KV("Templates", "<code>%d/%d</code> ON"
+               % (len(pro_on_templates(cfg)), len(cfg["templates"])), "🧩"),
+            KV("Domains", "<code>%d</code>" % len(cfg["domains"]), "🌐"),
+            B("Ab keywords bhejo"))),
         parse_mode=ParseMode.HTML, reply_markup=kb_back("dd:pro"))
     context.user_data["await"] = "dpgen_kw"
 
@@ -3690,15 +3729,14 @@ async def input_dpgen_kw(update, context, text: str):
         pass
     await update.effective_message.reply_text(
         (H("PRO GEN — DONE", "%s dorks" % fmt(cnt)) + "\n\n"
-         "🔑 Keywords  : <code>%d</code>\n"
-         "🧩 Best tpls : <code>%d</code> use hui\n"
-         "✅ Bane      : <code>%s</code>\n"
-         "🆕 Naye      : <code>%s</code>\n"
-         "⭐ Avg       : <code>%.0f/100</code>\n"
-         "⏱ Time      : <code>%.2fs</code>\n\n"
-         "<b>Top 8:</b>\n%s"
-         % (res["kw"], res["used"], fmt(cnt), fmt(added), avg, took,
-            short_list(dorks[:8], 8))),
+         "%s\n%s\n%s\n%s\n%s\n%s\n\n<b>%s</b>\n%s"
+         % (KV("Keywords", "<code>%d</code>" % res["kw"], "🔑"),
+            KV("Best templates", "<code>%d</code> use hui" % res["used"], "🧩"),
+            KV("Bane", "<code>%s</code>" % fmt(cnt), "✅"),
+            KV("Naye", "<code>%s</code>" % fmt(added), "🆕"),
+            KV("Avg score", "<code>%.0f/100</code>" % avg, "⭐"),
+            KV("Time", "<code>%.2fs</code>" % took, "⏱"),
+            B("Top 8"), short_list(dorks[:8], 8))),
         parse_mode=ParseMode.HTML, reply_markup=RK([
             [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep")],
             [InlineKeyboardButton("📊 CONFIG", callback_data="dp:cfg"),
@@ -3715,12 +3753,15 @@ async def input_dpgen_kw(update, context, text: str):
 async def tool_kw(update, context):
     q = update.callback_query
     txt = (H("HQ KEYWORD GENERATOR", "seeds ya apne keywords") + "\n\n"
-           "📌 <b>Do tarike — dono chalte hain:</b>\n\n"
-           "1️⃣ <b>Seed</b> bhejo (2-3 topic):\n"
+           "%s\n\n"
+           "1️⃣ <b>%s</b>\n   %s\n"
            "   <code>shopify store, crypto wallet, apk download</code>\n\n"
-           "2️⃣ <b>Apne keywords paste karo</b> (ek line me ek) —\n"
-           "   unhi se aur naye keywords banenge\n\n"
-           "➡️ Agla step: kitne chahiye (<b>max 100,000</b>)")
+           "2️⃣ <b>%s</b>\n   %s\n\n"
+           "➡️ %s"
+           % (B("Do tarike — dono chalte hain"),
+              B("Seed bhejo"), P("2-3 topic"),
+              B("Apne keywords paste karo"), P("ek line me ek — unhi se aur naye banenge"),
+              KV("Agla step", "kitne chahiye (max 100,000)")))
     try:
         await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK([
             [InlineKeyboardButton("📦 NICHE PACKS (ready HQ)", callback_data="kw:niche")],
@@ -3757,12 +3798,14 @@ async def input_kw_input(update, context, text: str):
     kind = "KEYWORDS" if len(items) > 3 else "SEEDS"
     preview = short_list(cores[:6], 6)
     txt = (H("HQ KEYWORDS — COUNT", "%d %s mile" % (len(cores), kind)) + "\n\n"
-           "🔎 Detect : <b>%s</b> (%d lines)\n"
-           "📊 Max    : <code>%s</code> keywords is input se\n\n"
-           "<b>Preview:</b>\n%s\n\n"
-           "🔢 Kitne keywords chahiye? <b>Number bhejo</b>\n"
-           "<i>1 – 100,000 • Recommended: 5,000</i>"
-           % (kind, len(items), fmt(min(cap, KW_MAX)), preview))
+           "%s\n%s\n\n<b>%s</b>\n%s\n\n"
+           "🔢 <b>%s</b>\n%s"
+           % (KV("Detect", "<b>%s</b> (%d lines)" % (kind, len(items)), "🔎"),
+              KV("Max", "<code>%s</code> keywords is input se"
+                 % fmt(min(cap, KW_MAX)), "📊"),
+              B("Preview"), preview,
+              B("Kitne keywords chahiye?"),
+              KV("Range", "1 – 100,000  •  Recommended: 5,000")))
     await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
                                               reply_markup=kb_back("m:kw"))
     context.user_data["await"] = "kw_count"
@@ -3795,15 +3838,14 @@ async def input_kw_count(update, context, text: str):
     path, cnt = dump_text(kws, "keywords",
                           "PYTHON SNAKE — HQ keywords (%s)" % str(items[0])[:50])
     txt = (H("HQ KEYWORDS — DONE", "%s bane" % fmt(cnt)) + "\n\n"
-           "🌱 Input   : <code>%d lines</code>\n"
-           "🔢 Manga   : <code>%s</code>\n"
-           "✅ Bane    : <code>%s</code> unique\n"
-           "⭐ Avg     : <code>%.0f/100</code>\n"
-           "🔥 80+     : <code>%s</code>\n"
-           "⏱ Time    : <code>%.2fs</code>\n\n"
-           "<b>Top 8:</b>\n%s"
-           % (len(items), fmt(n), fmt(cnt), qrep["avg"], fmt(qrep["b80"]), took,
-              short_list(kws[:8], 8)))
+           "%s\n%s\n%s\n%s\n%s\n%s\n\n<b>%s</b>\n%s"
+           % (KV("Input", "<code>%d lines</code>" % len(items), "🌱"),
+              KV("Manga", "<code>%s</code>" % fmt(n), "🔢"),
+              KV("Bane", "<code>%s</code> unique" % fmt(cnt), "✅"),
+              KV("Avg score", "<code>%.0f/100</code>" % qrep["avg"], "⭐"),
+              KV("80+", "<code>%s</code>" % fmt(qrep["b80"]), "🔥"),
+              KV("Time", "<code>%.2fs</code>" % took, "⏱"),
+              B("Top 8"), short_list(kws[:8], 8)))
     if cnt < n:
         txt += ("\n\n⚠️ <i>Is input se max %s hi possible the — aur seeds do to "
                 "100,000 tak jayega.</i>" % fmt(cnt))
@@ -3874,12 +3916,12 @@ async def cb_niche(update, context, key: str = ""):
         try:
             await q.edit_message_text(
                 (H("NICHE PACK", NICHE_PACKS[key][0]) + "\n\n"
-                 "🌱 Seeds: <code>%s</code>\n"
-                 "📊 Max  : <code>%s</code> keywords\n\n"
-                 "<b>Preview:</b>\n%s\n\n"
-                 "🔢 Kitne keywords chahiye? <b>Number bhejo</b> (1 – %s)"
-                 % (esc(", ".join(seeds[:6])), fmt(min(cap, KW_MAX)),
-                    short_list(seeds, 6), fmt(KW_MAX))),
+                 "%s\n%s\n\n<b>%s</b>\n%s\n\n"
+                 "🔢 <b>%s</b> (1 – %s)"
+                 % (KV("Seeds", "<code>%s</code>" % esc(", ".join(seeds[:6])), "🌱"),
+                    KV("Max", "<code>%s</code> keywords" % fmt(min(cap, KW_MAX)), "📊"),
+                    B("Preview"), short_list(seeds, 6),
+                    B("Kitne keywords chahiye?"), fmt(KW_MAX))),
                 parse_mode=ParseMode.HTML, reply_markup=kb_back("m:kw"))
         except Exception:
             pass
@@ -3888,9 +3930,10 @@ async def cb_niche(update, context, key: str = ""):
     try:
         await q.edit_message_text(
             (H("NICHE PACKS", "%d ready packs" % len(NICHE_PACKS)) + "\n\n"
-             "Har pack me ready HQ seeds hain —\n"
-             "jitne keywords chahiye utne bana dega (max 1,00,000).\n\n"
-             "👇 Niche chuno:"),
+             "%s\n%s\n\n%s"
+             % (P("Har pack me ready HQ seeds hain"),
+                P("jitne keywords chahiye utne bana dega (max 1,00,000)"),
+                B("Niche chuno"))),
             parse_mode=ParseMode.HTML, reply_markup=niche_kb())
     except Exception:
         pass
@@ -3976,8 +4019,9 @@ async def cb_kw_action(update, context, action: str):
                 pass
             await update.effective_message.reply_text(
                 (H("FRESH BATCH", "%s naye keywords" % fmt(cnt)) + "\n\n"
-                 "🆕 Purane %s skip kiye\n\n<b>Top 6:</b>\n%s"
-                 % (fmt(len(kws)), short_list(extra[:6], 6))),
+                 "%s\n\n<b>%s</b>\n%s"
+                 % (KV("Purane skip", "<code>%s</code>" % fmt(len(kws)), "🆕"),
+                    B("Top 6"), short_list(extra[:6], 6))),
                 parse_mode=ParseMode.HTML,
                 reply_markup=RK([
                     [InlineKeyboardButton("📊 QUALITY", callback_data="kw:qual"),
@@ -4529,11 +4573,16 @@ QA_META = {
 async def tool_qa(update, context):
     q = update.callback_query
     txt = (H("QUALITY CHECKER", "3 types") + "\n\n"
-           "Kis cheez ka quality check karna hai?\n\n"
-           "🔑 <b>KEYWORDS</b> — search value, intent, length\n"
-           "🎯 <b>DORKS</b> — operators, structure, junk\n"
-           "🔗 <b>URLS</b> — clean? params? tracking? junk host?\n\n"
-           "<i>Bot khud pehchan lega — galat type bheja to bata dega.</i>")
+           "%s\n\n"
+           "🔑 <b>%s</b>\n   %s\n\n"
+           "🎯 <b>%s</b>\n   %s\n\n"
+           "🔗 <b>%s</b>\n   %s\n\n"
+           "%s"
+           % (B("Kis cheez ka check karna hai?"),
+              B("KEYWORDS"), P("search value, intent, length"),
+              B("DORKS"), P("operators, structure, junk"),
+              B("URLS"), P("params, tracking, junk host"),
+              P("Bot khud pehchan lega — galat type bheja to bata dega")))
     try:
         await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK([
             [InlineKeyboardButton("🔑 KEYWORDS", callback_data="qa:keywords")],
@@ -4614,8 +4663,8 @@ async def cb_qa_type(update, context, kind: str):
     try:
         await q.edit_message_text(
             (H("QUALITY — %s" % label, "0-100 score") + "\n\n"
-             "📥 Bhejo (ek line me ek):\n<code>%s</code>\n\n"
-             "<i>Max 200 lines.</i>" % ex),
+             "📥 <b>%s</b>\n\n<code>%s</code>\n\n%s"
+             % (B("Bhejo (ek line me ek)"), esc(ex), P("Max 200 lines"))),
             parse_mode=ParseMode.HTML, reply_markup=kb_back("m:qa"))
     except Exception:
         pass
@@ -4652,19 +4701,19 @@ async def input_qa_kind(update, context, kind: str, text: str):
             buckets["b0"] += 1
     body = [(H("QUALITY REPORT — %s" % label, "avg %.0f/100" % avg)),
             "",
-            "📦 Total : <code>%s</code>" % fmt(len(items)),
+            KV("Total", "<code>%s</code>" % fmt(len(items)), "📦"),
             "",
-            "🔥 80+   : <code>%s</code>" % fmt(buckets["b80"]),
-            "✅ 65-79 : <code>%s</code>" % fmt(buckets["b65"]),
-            "🟡 45-64 : <code>%s</code>" % fmt(buckets["b45"]),
-            "🟠 25-44 : <code>%s</code>" % fmt(buckets["b25"]),
-            "🔴 <25   : <code>%s</code>" % fmt(buckets["b0"]),
+            KV("80+", "<code>%s</code>" % fmt(buckets["b80"]), "🔥"),
+            KV("65-79", "<code>%s</code>" % fmt(buckets["b65"]), "✅"),
+            KV("45-64", "<code>%s</code>" % fmt(buckets["b45"]), "🟡"),
+            KV("25-44", "<code>%s</code>" % fmt(buckets["b25"]), "🟠"),
+            KV("<25", "<code>%s</code>" % fmt(buckets["b0"]), "🔴"),
             "",
-            "<b>Top 5:</b>"]
+            "<b>%s</b>" % B("Top 5")]
     for sc, it in pairs[:5]:
         body.append("<b>%d</b> %s <code>%s</code>" % (sc, quality_label(sc), esc(it[:90])))
     body.append("")
-    body.append("<b>Kamzor 3:</b>")
+    body.append("<b>%s</b>" % B("Kamzor 3"))
     for sc, it in pairs[-3:]:
         body.append("<b>%d</b> %s <code>%s</code>" % (sc, quality_label(sc), esc(it[:90])))
     for ch in chunk_lines("\n".join(body))[:3]:
@@ -6119,35 +6168,35 @@ async def admin_callback(update, context, action: str):
                 jsave("settings", SETTINGS)
             arg = ""
         elif action.startswith("feat:") and arg:
-            key = arg
-            if key in FEATURES:
-                feat_set(key, not feat_is_off(key))
+            if arg in FEATURES:
+                feat_set(arg, not feat_is_off(arg))
+            off_now = ", ".join(feat_off().keys()) or "koi nahi"
             return await ed(
                 (H("FEATURES", "ON / OFF") + "\n\n"
-                 "🚫 = band (user ko message dikhega)\n"
-                 "✅ = chalu\n\n"
-                 "✏️ <b>MSG</b> = custom message likho "
-                 "(jaise <i>ye feature maintenance me hai</i>)\n\n"
-                 "<b>Abhi band:</b> <code>%s</code>"
-                 % (", ".join(feat_off().keys()) or "koi nahi")),
+                 "%s\n%s\n\n%s\n\n%s"
+                 % (KV("Band", "🚫 = user ko message dikhega"),
+                    KV("Chalu", "✅ = normal chalta hai"),
+                    P("✏️ MSG — custom message likho (jaise: ye feature maintenance me hai)"),
+                    KV("Abhi band", "<code>%s</code>" % off_now, "📌"))),
                 feat_kb())
         elif action.startswith("featmsg:") and arg:
             context.user_data["await"] = "feat_msg"
             context.user_data["await_admin"] = True
             context.user_data["feat_key"] = arg
             return await ed(
-                (H("CUSTOM MESSAGE", FEATURES.get(context.user_data["feat_key"], ("?",))[0]) + "\n\n"
-                 "Jo message user ko dikhana hai wo bhejo.\n"
-                 "Jaise: <i>ye feature maintenance me hai</i>\n"
-                 "ya <i>this feature have issue we are fixing</i>\n\n"
-                 "Khaali <code>-</code> bhejo = default message."),
+                (H("CUSTOM MESSAGE", FEATURES.get(arg, ("?",))[0]) + "\n\n"
+                 "%s\n%s\n\n%s"
+                 % (P("Jo message user ko dikhana hai wo bhejo"),
+                    P("jaise: ye feature maintenance me hai"),
+                    KV("Remove", "khaali <code>-</code> bhejo = default message"))),
                 kb_back("a:features"))
+        off_now = ", ".join(feat_off().keys()) or "koi nahi"
         return await ed(
             (H("FEATURES", "ON / OFF") + "\n\n"
-             "🚫 = band (user ko message dikhega)\n"
-             "✅ = chalu\n\n"
-             "<b>Abhi band:</b> <code>%s</code>"
-             % (", ".join(feat_off().keys()) or "koi nahi")),
+             "%s\n%s\n\n%s"
+             % (KV("Band", "🚫 = user ko message dikhega"),
+                KV("Chalu", "✅ = normal chalta hai"),
+                KV("Abhi band", "<code>%s</code>" % off_now, "📌"))),
             feat_kb())
 
     if action == "tutorial":
@@ -6558,10 +6607,11 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "⏱ Uptime: <code>%dh %dm</code>\n"
            "🧵 PID: <code>%d</code>\n"
            "👥 Users: <code>%d</code>\n"
-           "🐦 Free Google: %s")
+           "🐦 Free Google: %s\n"
+           "📦 Core: <b>%s</b>")
     txt = txt % (selfcheck.get("username") or "?",
                  F(THEMES[theme_name()]["label"], T()["head"]),
-                 up // 3600, (up % 3600) // 60, os.getpid(), len(USERS), gj)
+                 up // 3600, (up % 3600) // 60, os.getpid(), len(USERS), gj, VERSION)
     await msg.edit_text(txt, parse_mode=ParseMode.HTML)
 
 
