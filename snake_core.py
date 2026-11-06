@@ -63,7 +63,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v1.8"
+VERSION = "v1.9"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -2580,6 +2580,7 @@ def kb_main() -> InlineKeyboardMarkup:
          InlineKeyboardButton("📊 QUALITY CHECK", callback_data="m:qa")],
         [InlineKeyboardButton("🎲 RANDOMIZER", callback_data="m:rand"),
          InlineKeyboardButton("📖 HELP", callback_data="m:help")],
+        [InlineKeyboardButton("🔑 REDEEM KEY", callback_data="m:redeem")],
     ])
 
 
@@ -2717,9 +2718,21 @@ async def cmd_myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML)
 
 
+def help_kb() -> InlineKeyboardMarkup:
+    tut = str(SETTINGS.get("tutorial") or "").strip()
+    rows = []
+    if tut.startswith("http"):
+        rows.append([InlineKeyboardButton("🎬 HOW TO USE (VIDEO)", url=tut)])
+    else:
+        rows.append([InlineKeyboardButton("🎬 HOW TO USE (video jald)", callback_data="m:help_noTut")])
+    rows.append([InlineKeyboardButton("🔑 REDEEM KEY", callback_data="m:redeem")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
+    return RK(rows)
+
+
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(help_text(), parse_mode=ParseMode.HTML,
-                                              reply_markup=kb_back("m:home"))
+                                              reply_markup=help_kb())
 
 
 def help_text() -> str:
@@ -2764,6 +2777,21 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer()
     except Exception:
         pass
+
+    # ── feature gate (admin ne band kiya ho to custom message) ──
+    if not is_admin(uid):
+        gate = feat_gate(data)
+        if gate:
+            try:
+                await q.answer("Feature maintenance me hai", show_alert=False)
+            except Exception:
+                pass
+            try:
+                await q.edit_message_text(feat_msg(gate), parse_mode=ParseMode.HTML,
+                                          reply_markup=kb_back("m:home"))
+            except Exception:
+                pass
+            return
 
     # ── captcha ──
     if data.startswith("cap:"):
@@ -2816,6 +2844,21 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
             return
 
+    # ── quality checker ──
+    if data.startswith("qa:"):
+        if not access_ok(uid):
+            try:
+                await q.edit_message_text(need_key_text(uid), reply_markup=kb_needkey(),
+                                          parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            return
+        try:
+            return await cb_qa_type(update, context, data[3:])
+        except Exception as exc:
+            logger.exception("qa %s fail: %s", data, exc)
+            return
+
     # ── keyword actions ──
     if data.startswith("kw:"):
         if not access_ok(uid):
@@ -2845,7 +2888,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await admin_callback(update, context, data[2:])
 
     # ── tool sub-buttons (dd / pr / rd / df / px / inj) ──
-    if data.startswith(("dd:", "pr:", "rd:", "df:", "px:", "inj:")):
+    if data.startswith(("dd:", "dp:", "pr:", "rd:", "df:", "px:", "inj:")):
         if not access_ok(uid):
             try:
                 await q.edit_message_text(need_key_text(uid), reply_markup=kb_needkey(),
@@ -2882,7 +2925,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["await"] = "key_redeem"
             return
         try:
-            await q.edit_message_text(help_text(), reply_markup=kb_back("m:home"),
+            await q.edit_message_text(help_text(), reply_markup=help_kb(),
                                       parse_mode=ParseMode.HTML)
         except Exception:
             pass
@@ -2928,6 +2971,33 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_dork_mode(update, context, rest[5:])
         if rest == "more":
             return await cb_dork_more(update, context)
+        if rest == "gen":
+            return await cb_gen_start(update, context)
+        if rest == "pro":
+            return await cb_pro_menu(update, context)
+    elif head == "dp":
+        if rest.startswith("set:"):
+            return await cb_pro_set(update, context, rest[4:])
+        if rest == "country":
+            return await cb_country(update, context)
+        if rest.startswith("ctry:"):
+            return await cb_country(update, context, rest[5:])
+        if rest.startswith("tplall:"):
+            return await cb_pro_tpl(update, context, rest)
+        if rest.startswith("tpl:"):
+            return await cb_pro_tpl(update, context, rest)
+        if rest == "tpl":
+            return await cb_pro_tpl(update, context, "")
+        if rest == "cfg":
+            return await cb_pro_cfg(update, context)
+        if rest.startswith("reset"):
+            return await cb_pro_reset(update, context, rest.split(":", 1)[1] if ":" in rest else "")
+        if rest.startswith("combo"):
+            return await cb_pro_combos(update, context, rest.split(":", 1)[1] if ":" in rest else "")
+        if rest == "combos":
+            return await cb_pro_combos(update, context, "")
+        if rest == "gen":
+            return await cb_pro_gen(update, context)
     elif head == "pr":
         if rest == "last":
             return await cb_parse_last(update, context)
@@ -2971,175 +3041,672 @@ DORK_MODES = {
 }
 
 
+def L(t) -> str:
+    """Body label — theme font (emoji safe)."""
+    return style(str(t), "sub")
+
+
+def _demo(lst, n=6) -> str:
+    return " ".join(str(x) for x in (lst or [])[:n])
+
+
+# ── DORKER — main (2 options) ────────────────────────────────────────────────
 async def tool_dork(update, context):
     q = update.callback_query
-    rows = [[InlineKeyboardButton(label, callback_data="dd:mode:" + k)]
-            for k, (label, _d) in DORK_MODES.items()]
-    rows.append([InlineKeyboardButton("🆕 FRESH DORKS (purane skip)", callback_data="dd:mode:fresh")])
-    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
-    txt = (H("DORKER", "type chuno") + "\n\n" +
-           "\n".join("%s — <i>%s</i>" % (label, desc) for label, desc in DORK_MODES.values()) +
-           "\n\n<b>Count</b> agla step me (1 – %s)" % fmt(DORK_MAX) +
-           "\n🆕 <b>FRESH</b> — pehle bane dorks skip honge (fresh URLs ke liye)" +
-           "\n\n📚 History: <code>%s</code> dorks yaad hain" % fmt(dork_seen_count()))
+    txt = (H("DORKER", "dono tarike") + "\n\n"
+           "⚡ <b>DORKS GEN</b>\n"
+           "   <i>Count → Keywords → ready dorks (universal templates, har niche)</i>\n\n"
+           "🚀 <b>DORKS GEN PRO</b>\n"
+           "   <i>Domains · Params · Filetypes · Filters · Templates · Combos</i>\n\n"
+           "📚 History: <code>%s</code> dorks" % fmt(dork_seen_count()))
     try:
-        await q.edit_message_text(txt, reply_markup=RK(rows),
-                                  parse_mode=ParseMode.HTML)
+        await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK([
+            [InlineKeyboardButton("⚡ DORKS GEN", callback_data="dd:gen")],
+            [InlineKeyboardButton("🚀 DORKS GEN PRO", callback_data="dd:pro")],
+            [InlineKeyboardButton("🌍 COUNTRY DORKS", callback_data="dp:country")],
+            [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
+        ]))
     except Exception:
         pass
 
 
-async def cb_dork_mode(update, context, mode: str):
+# ── NORMAL GEN ───────────────────────────────────────────────────────────────
+async def cb_gen_start(update, context):
     q = update.callback_query
-    fresh = False
-    if mode == "fresh":
-        mode, fresh = "mixed", True
-    context.user_data["dork_mode"] = mode
-    context.user_data["dork_fresh"] = fresh
-    context.user_data.pop("dork_domain", None)
-    label = DORK_MODES.get(mode, ("FRESH DORKS", ""))[0]
-    if mode == "site":
-        txt = (H("DORKER — SITE", "domain bhejo") + "\n\n"
-               "Domain ya TLD bhejo (comma se multiple):\n"
-               "<code>gov.in</code>  •  <code>.pk</code>  •  <code>example.com, gov.in</code>\n\n"
-               "<i>Ya <code>auto</code> bhejo — random TLDs use honge.</i>")
-        try:
-            await q.edit_message_text(txt, reply_markup=kb_back("m:dork"),
-                                      parse_mode=ParseMode.HTML)
-        except Exception:
-            pass
-        context.user_data["await"] = "dork_domain"
-        return
-    txt = (H("DORKER — %s" % label) + "\n\n"
-           "Kitne dork chahiye? <b>Number bhejo</b> (1 – %s)\n"
-           "<i>Recommended: 500 • Max: %s</i>%s"
-           % (fmt(DORK_MAX), fmt(DORK_MAX),
-              "\n🆕 Fresh mode: purane dorks skip" if fresh else ""))
+    context.user_data.pop("gen_count", None)
     try:
-        await q.edit_message_text(txt, reply_markup=kb_back("m:dork"), parse_mode=ParseMode.HTML)
+        await q.edit_message_text(
+            (H("DORKS GEN", "step 1 / 2") + "\n\n"
+             "🔢 Kitne dorks chahiye? <b>Number bhejo</b>\n"
+             "<i>1 – %s • Recommended: 1,000</i>" % fmt(DORK_MAX)),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
     except Exception:
         pass
-    context.user_data["await"] = "dork_count"
+    context.user_data["await"] = "gen_count"
 
 
-async def input_dork_domain(update, context, text: str):
-    dom = (text or "").strip()
-    if dom.lower() in ("auto", "-"):
-        dom = ""
-    context.user_data["dork_domain"] = dom
-    txt = (H("DORKER — SITE", dom or "auto TLD") + "\n\n"
-           "Kitne dork chahiye? <b>Number bhejo</b> (1 – %s)\n"
-           "<i>Ek domain se ~6,000 tak bante hain. Zyada ke liye "
-           "multiple domains bhejo (comma se).</i>" % fmt(DORK_MAX))
-    await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
-                                              reply_markup=kb_back("m:dork"))
-    context.user_data["await"] = "dork_count"
-
-
-async def input_dork_count(update, context, text: str):
+async def input_gen_count(update, context, text: str):
     try:
-        n = int(re.sub(r"[^0-9]", "", text or "") or "500")
+        n = int(re.sub(r"[^0-9]", "", text or "") or "1000")
     except Exception:
-        n = 500
+        n = 1000
     n = max(1, min(DORK_MAX, n))
-    mode = context.user_data.get("dork_mode", "mixed")
-    fresh = bool(context.user_data.get("dork_fresh"))
-    dom = context.user_data.get("dork_domain") or ""
-    niche = context.user_data.get("dork_niche") or ""
-    msg = await update.effective_message.reply_text(
-        "⏳ %s dorks ban rahe hain…%s" % (fmt(n), " (fresh)" if fresh else ""))
+    context.user_data["gen_count"] = n
+    await update.effective_message.reply_text(
+        (H("DORKS GEN", "step 2 / 2") + "\n\n"
+         "✅ Count: <code>%s</code>\n\n"
+         "🔑 Ab <b>keywords</b> bhejo (comma ya line se alag):\n"
+         "<code>shopify store, crypto wallet, admin panel</code>\n\n"
+         "<i>Har keyword pe universal HQ templates chalengi.</i>" % fmt(n)),
+        parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
+    context.user_data["await"] = "gen_kw"
+
+
+async def input_gen_kw(update, context, text: str):
+    n = int(context.user_data.get("gen_count") or 1000)
+    ok, err = kind_check(text, "keywords", "keywords")
+    if not ok:
+        await update.effective_message.reply_text(err, parse_mode=ParseMode.HTML,
+                                                  reply_markup=kb_back("m:dork"))
+        context.user_data["await"] = "gen_kw"
+        return
+    msg = await update.effective_message.reply_text("⚡ %s dorks ban rahe hain…" % fmt(n))
     t0 = time.time()
-    res = dork_gen(mode, n=n, niche=niche, domain=dom, fresh=fresh)
-    dorks = res["dorks"]
+    dorks = universal_gen(text, n=n)
     took = time.time() - t0
     if not dorks:
-        await msg.edit_text(
-            "❌ Fresh mode me kuch naya nahi mila — history bhara hua hai.\n"
-            "👉 <code>/freshclear</code> se history saaf karo, ya naya mode chuno.",
-            parse_mode=ParseMode.HTML)
+        await msg.edit_text("❌ Kuch nahi bana — keywords check karo.")
         return
     context.user_data["last_dorks"] = dorks
-    context.user_data["last_dork_mode"] = mode
-    context.user_data["last_dork_n"] = n
-    scores = [score_dork(d)[0] for d in dorks]
-    avg = sum(scores) / len(scores) if scores else 0
-    path, cnt = dump_text(dorks, "dorks_" + mode, "PYTHON SNAKE — %s dorks" % mode)
-    extra = ""
-    if dom:
-        extra = "\n🌐 Domain  : <code>%s</code>" % esc(dom[:50])
-    if cnt < n:
-        extra += "\n⚠️ <i>Is mode se max %s hi bane (fresh/history ke baad).</i>" % fmt(cnt)
-    txt = (H("DORKER — DONE", "%s %s" % (mode, "FRESH" if fresh else "")) + "\n\n"
-           "🔢 Manga     : <code>%s</code>\n"
-           "✅ Bane      : <code>%s</code>\n"
-           "🆕 Naye      : <code>%s</code>\n"
-           "⭐ Avg score : <code>%.0f/100</code>\n"
-           "📚 History   : <code>%s</code>%s\n"
-           "⏱ Time      : <code>%.2fs</code>\n\n"
-           "<b>Top 10:</b>\n%s"
-           % (fmt(n), fmt(cnt), fmt(res["new"]), avg, fmt(res["seen"]), extra, took,
-              short_list(dorks[:10], 10)))
+    context.user_data["gen_kw_text"] = text
+    added = dork_seen_add(dorks)
+    sc = [score_dork(d)[0] for d in dorks]
+    avg = sum(sc) / len(sc)
+    path, cnt = dump_text(dorks, "gen", "PYTHON SNAKE — universal dorks")
     try:
         await msg.delete()
     except Exception:
         pass
-    for ch in chunk_lines(txt)[:2]:
-        await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
     await update.effective_message.reply_text(
-        "👇 Aage kya?",
-        reply_markup=RK([
-            [InlineKeyboardButton("🆕 AUR FRESH", callback_data="dd:more")],
-            [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep"),
-             InlineKeyboardButton("📥 PARSE", callback_data="m:parse")],
+        (H("DORKS GEN — DONE", "%s dorks" % fmt(cnt)) + "\n\n"
+         "🔑 Keywords : <code>%d</code>\n"
+         "✅ Bane     : <code>%s</code>\n"
+         "🆕 Naye     : <code>%s</code>\n"
+         "⭐ Avg      : <code>%.0f/100</code>\n"
+         "⏱ Time     : <code>%.2fs</code>\n\n"
+         "<b>Top 8:</b>\n%s"
+         % (len(kw_cores(text)), fmt(cnt), fmt(added), avg, took,
+            short_list(dorks[:8], 8))),
+        parse_mode=ParseMode.HTML, reply_markup=RK([
+            [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep")],
+            [InlineKeyboardButton("🆕 AUR (fresh)", callback_data="dd:more")],
             [InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")],
         ]))
-    await send_file(update, path, "🎯 %s dorks • avg %.0f/100" % (fmt(cnt), avg))
+    await send_file(update, path, "⚡ %s dorks • avg %.0f/100" % (fmt(cnt), avg))
     context.user_data.pop("await", None)
 
 
+# ── legacy mode buttons (purane messages ke liye) ───────────────────────────
+async def cb_dork_mode(update, context, mode: str):
+    return await cb_gen_start(update, context)
+
+
+async def input_dork_count(update, context, text: str):
+    return await input_gen_count(update, context, text)
+
+
 async def cb_dork_more(update, context):
-    """dd:more — same mode, naya fresh batch."""
+    """🆕 AUR (fresh) — purane keywords se naye dorks."""
     q = update.callback_query
-    mode = context.user_data.get("last_dork_mode") or "mixed"
-    n = int(context.user_data.get("last_dork_n") or 500)
-    dom = context.user_data.get("dork_domain") or ""
+    kws = context.user_data.get("gen_kw_text") or ""
+    n = int(context.user_data.get("gen_count") or 500)
+    if not kws:
+        try:
+            await q.answer("Pehle DORKS GEN chalao", show_alert=True)
+        except Exception:
+            pass
+        return
     try:
-        await q.edit_message_text("🆕 Fresh batch ban raha hai… (%s × %s)" % (mode, fmt(n)),
+        await q.edit_message_text("🆕 Fresh dorks ban rahe hain… (%s)" % fmt(n),
                                   parse_mode=ParseMode.HTML)
     except Exception:
         pass
-    res = dork_gen(mode, n=n, domain=dom, fresh=True)
-    dorks = res["dorks"]
+    dorks = universal_gen(kws, n=n, fresh=True)
     if not dorks:
         try:
             await q.edit_message_text(
-                "❌ Fresh batch khaali — history bhar gayi.\n"
-                "👉 <code>/freshclear</code> chalao.",
+                "❌ Fresh khatam — <code>/fresh clear</code> chalao.",
                 parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
         except Exception:
             pass
         return
     context.user_data["last_dorks"] = dorks
-    path, cnt = dump_text(dorks, "fresh_" + mode, "PYTHON SNAKE — fresh dorks")
-    scores = [score_dork(d)[0] for d in dorks]
-    avg = sum(scores) / len(scores) if scores else 0
+    added = dork_seen_add(dorks)
+    sc = [score_dork(d)[0] for d in dorks]
+    avg = sum(sc) / len(sc)
+    path, cnt = dump_text(dorks, "gen_fresh", "PYTHON SNAKE — fresh dorks")
     try:
         await q.edit_message_text(
             (H("FRESH BATCH", "%s naye dorks" % fmt(cnt)) + "\n\n"
              "🆕 History me add: <code>%s</code>\n"
-             "📚 Total history  : <code>%s</code>\n"
-             "⭐ Avg score      : <code>%.0f/100</code>\n\n"
-             "<b>Top 6:</b>\n%s" % (fmt(res["new"]), fmt(res["seen"]), avg,
-                                    short_list(dorks[:6], 6))),
-            parse_mode=ParseMode.HTML,
-            reply_markup=RK([
+             "📚 Total          : <code>%s</code>\n"
+             "⭐ Avg            : <code>%.0f/100</code>\n\n<b>Top 6:</b>\n%s"
+             % (fmt(added), fmt(dork_seen_count()), avg, short_list(dorks[:6], 6))),
+            parse_mode=ParseMode.HTML, reply_markup=RK([
                 [InlineKeyboardButton("🆕 AUR FRESH", callback_data="dd:more")],
                 [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep")],
                 [InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")],
             ]))
     except Exception:
         pass
-    await send_file(update, path, "🎯 %s fresh dorks" % fmt(cnt))
+    await send_file(update, path, "⚡ %s fresh dorks" % fmt(cnt))
+
+
+# ── PRO MENU ─────────────────────────────────────────────────────────────────
+def pro_menu_kb() -> InlineKeyboardMarkup:
+    cfg = pro_load()
+    on = len(pro_on_templates(cfg))
+    return RK([
+        [InlineKeyboardButton("🌐 Set Domains (%d)" % len(cfg["domains"]), callback_data="dp:set:domains")],
+        [InlineKeyboardButton("🔢 Set URL Params (%d)" % len(cfg["params"]), callback_data="dp:set:params")],
+        [InlineKeyboardButton("📄 Set Filetypes (%d)" % len(cfg["filetypes"]), callback_data="dp:set:filetypes")],
+        [InlineKeyboardButton("🔍 Set Search Filters (%d)" % len(cfg["sfilters"]), callback_data="dp:set:sfilters")],
+        [InlineKeyboardButton("📋 Set Page Filters (%d)" % len(cfg["pfilters"]), callback_data="dp:set:pfilters")],
+        [InlineKeyboardButton("🧩 View Templates (%d/%d ON)" % (on, len(cfg["templates"])),
+                              callback_data="dp:tpl")],
+        [InlineKeyboardButton("📊 View Current Config", callback_data="dp:cfg")],
+        [InlineKeyboardButton("🧬 Gen All Combos", callback_data="dp:combos")],
+        [InlineKeyboardButton("♻️ Reset to Default", callback_data="dp:reset")],
+        [InlineKeyboardButton("🎯 GEN DORKS (best template)", callback_data="dp:gen")],
+        [InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")],
+    ])
+
+
+async def cb_pro_menu(update, context):
+    q = update.callback_query
+    cfg = pro_load()
+    try:
+        await q.edit_message_text(
+            (H("DORKS GEN PRO", "config + templates") + "\n\n"
+             "🔑 Keywords : <code>%s</code> loaded\n"
+             "🌐 Domains  : <code>%d</code> — <code>%s</code>\n"
+             "🔢 Params   : <code>%d</code> — <code>%s</code>\n"
+             "📄 Filetypes: <code>%d</code> — <code>%s</code>\n"
+             "🔍 Filters  : <code>%d</code> — <code>%s</code>\n"
+             "📋 PF       : <code>%d</code> entries\n"
+             "✅ Templates: <code>%d/%d</code> ON"
+             % (fmt(len(context.user_data.get("last_kws") or [])),
+                len(cfg["domains"]), _demo(cfg["domains"], 5),
+                len(cfg["params"]), ", ".join(cfg["params"][:5]),
+                len(cfg["filetypes"]), " ".join(cfg["filetypes"]),
+                len(cfg["sfilters"]), " ".join(cfg["sfilters"]),
+                len(cfg["pfilters"]),
+                len(pro_on_templates(cfg)), len(cfg["templates"]))),
+            parse_mode=ParseMode.HTML, reply_markup=pro_menu_kb())
+    except Exception:
+        pass
+
+
+PRO_SET_META = {
+    "domains": ("🌐 SET DOMAINS", "domain extensions",
+                ".com .net .org .ru .de .in .pk .us .uk .info .gov",
+                ".gov\n.in\n.pk\nexample.com"),
+    "params": ("🔢 SET URL PARAMETERS", "URL parameters",
+               "id, user_id, cat, type, page, item, product",
+               "id\ncat\npage\nuser_id"),
+    "filetypes": ("📄 SET FILE TYPES", "file extensions",
+                  ".php .asp .aspx .jsp .html .sql .pdf .xml .json",
+                  ".php\n.asp\n.aspx\n.jsp"),
+    "sfilters": ("🔍 SET SEARCH FILTERS", "Google operators",
+                 "inurl: intitle: allinurl: allintitle: intext: allintext: site: filetype:",
+                 "inurl:\nintitle:\nallinurl:\nallintitle:"),
+    "pfilters": ("📋 SET PAGE FILTERS", "page words (path/query me aane wale)",
+                 "index, view, page, item, product, user, login, search, show, cat",
+                 "index\nview\nlogin\nsearch"),
+}
+
+
+COUNTRIES = [
+    ("in", "🇮🇳 INDIA (.in)"), ("pk", "🇵🇰 PAKISTAN (.pk)"),
+    ("us", "🇺🇸 USA (.us)"), ("uk", "🇬🇧 UK (.uk)"),
+    ("ru", "🇷🇺 RUSSIA (.ru)"), ("de", "🇩🇪 GERMANY (.de)"),
+    ("fr", "🇫🇷 FRANCE (.fr)"), ("br", "🇧🇷 BRAZIL (.br)"),
+    ("id", "🇮🇩 INDONESIA (.id)"), ("ng", "🇳🇬 NIGERIA (.ng)"),
+    ("gov", "🏛 GOV (.gov)"), ("edu", "🎓 EDU (.edu)"),
+    ("cn", "🇨🇳 CHINA (.cn)"), ("tr", "🇹🇷 TURKEY (.tr)"),
+    ("ae", "🇦🇪 UAE (.ae)"), ("sa", "🇸🇦 SAUDI (.sa)"),
+]
+
+
+def country_kb() -> InlineKeyboardMarkup:
+    rows = []
+    for i in range(0, len(COUNTRIES), 2):
+        rows.append([InlineKeyboardButton(lbl, callback_data="dp:ctry:" + code)
+                     for code, lbl in COUNTRIES[i:i + 2]])
+    rows.append([InlineKeyboardButton("🌍 SAB COUNTRIES (mix)", callback_data="dp:ctry:all")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")])
+    return RK(rows)
+
+
+async def cb_country(update, context, code: str = ""):
+    q = update.callback_query
+    if not code:
+        try:
+            await q.edit_message_text(
+                (H("COUNTRY DORKS", "site:.XX wale dorks") + "\n\n"
+                 "🌍 Country chuno — us country ke domains me dorks banenge.\n"
+                 "<i>Jaise <code>site:.in inurl:login</code></i>\n\n"
+                 "📌 Abhi domains: <code>%s</code>"
+                 % " ".join(pro_load()["domains"][:8])),
+                parse_mode=ParseMode.HTML, reply_markup=country_kb())
+        except Exception:
+            pass
+        return
+    cfg = pro_load()
+    if code == "all":
+        cfg["domains"] = ["." + c for c, _ in COUNTRIES if c not in ("gov", "edu")][:10]
+        label = "MIX (10 countries)"
+    else:
+        cfg["domains"] = ["." + code]
+        label = dict(COUNTRIES).get(code, "." + code)
+    pro_save(cfg)
+    try:
+        await q.edit_message_text(
+            (H("COUNTRY SET", label) + "\n\n"
+             "🌐 Domains : <code>%s</code>\n"
+             "✅ Templates: <code>%d/%d</code> ON\n\n"
+             "Ab 🎯 <b>GEN DORKS</b> dabao — is country ke dorks banenge."
+             % (" ".join(cfg["domains"]), len(pro_on_templates(cfg)),
+                len(cfg["templates"]))),
+            parse_mode=ParseMode.HTML, reply_markup=RK([
+                [InlineKeyboardButton("🎯 GEN DORKS", callback_data="dp:gen")],
+                [InlineKeyboardButton("📊 CONFIG", callback_data="dp:cfg"),
+                 InlineKeyboardButton("🌍 COUNTRY BADLO", callback_data="dp:country")],
+                [InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")],
+            ]))
+    except Exception:
+        pass
+
+
+async def cb_pro_set(update, context, key: str):
+    """dp:set:<key> — ya dp:<key> (country shortcut)."""
+    q = update.callback_query
+    key = (key or "").replace("country", "domains")
+    meta = PRO_SET_META.get(key)
+    if not meta:
+        return await cb_pro_menu(update, context)
+    title, what, ex, exblock = meta
+    cfg = pro_load()
+    cur = cfg.get(key) or []
+    extra = ""
+    if key == "pfilters":
+        extra = ("\n📖 <b>Page filter kya hai?</b>\n"
+                 "URL ke path/query me aane wala word — jaise\n"
+                 "<code>site.com/<b>login</b>.php</code>, "
+                 "<code>site.com/<b>search</b>?q=</code>\n"
+                 "Isse dork banti hai: <code>inurl:shop.</code> + page filter.\n")
+    txt = (H(title, "%s set karo" % what) + "\n\n"
+           "📥 <b>Bhejo</b> (comma / space / line — koi bhi):\n"
+           "<code>%s</code>\n%s\n"
+           "📌 Abhi: <code>%d</code> — <code>%s</code>\n\n"
+           "<i>Naya bhejo to purana replace ho jayega.</i>"
+           % (exblock, extra, len(cur), _demo(cur, 8)))
+    try:
+        await q.edit_message_text(txt, parse_mode=ParseMode.HTML,
+                                  reply_markup=kb_back("dd:pro"))
+    except Exception:
+        pass
+    context.user_data["await"] = "pro_" + key
+
+
+PARSE_STRIP = re.compile(r"[;\n,|\s]+")
+
+
+async def input_pro_set(update, context, key: str, text: str):
+    meta = PRO_SET_META.get(key)
+    if not meta:
+        return
+    want = {"domains": "domains", "params": "params", "filetypes": "filetypes",
+            "sfilters": "sfilters", "pfilters": "pfilters"}.get(key, "keywords")
+    got = detect_kind(text, want=want)
+    if got != "keywords" and got != want:
+        ok, err = kind_check(text, want, meta[1])
+        await update.effective_message.reply_text(err, parse_mode=ParseMode.HTML,
+                                                  reply_markup=kb_back("dd:pro"))
+        return
+    items = [x.strip() for x in PARSE_STRIP.split(text) if x.strip()]
+    if not items:
+        await update.effective_message.reply_text("❌ Khaali list — dobara bhejo.")
+        return
+    # normalise
+    out = []
+    for it in items:
+        it = it.strip().strip(",")
+        if not it:
+            continue
+        if key == "domains":
+            it = it if it.startswith(".") else ("." + it.lstrip("."))
+            it = it.lower()
+        elif key == "filetypes":
+            it = it if it.startswith(".") else ("." + it.lstrip("."))
+            it = it.lower()
+        elif key == "sfilters":
+            it = it.lower()
+            if not it.endswith(":"):
+                it += ":"
+        else:
+            it = it.lower()
+        out.append(it)
+    out = _uniq(out)[:400]
+    cfg = pro_load()
+    cfg[key] = out
+    pro_save(cfg)
+    await update.effective_message.reply_text(
+        (H("SAVED", "%d %s" % (len(out), meta[1])) + "\n\n"
+         "<code>%s</code>\n\n👇 Aage kya?" % (" ".join(out[:16]))),
+        parse_mode=ParseMode.HTML, reply_markup=RK([
+            [InlineKeyboardButton("📊 CONFIG DEKHO", callback_data="dp:cfg"),
+             InlineKeyboardButton("🚀 PRO MENU", callback_data="dd:pro")],
+            [InlineKeyboardButton("🎯 GEN DORKS", callback_data="dp:gen")],
+        ]))
+    context.user_data.pop("await", None)
+
+
+# ── TEMPLATES VIEW + ON/OFF ──────────────────────────────────────────────────
+def pro_cfg_text() -> str:
+    cfg = pro_load()
+    on = pro_on_templates(cfg)
+    lines = [H("PRO DORK CONFIG", "live status"), "",
+             "🔑 <b>%s</b> : <code>%s</code> loaded" % (L("Keywords"), fmt(0)),
+             "🌐 <b>%s</b> : <code>%d</code> — <code>%s</code>"
+             % (L("Domains"), len(cfg["domains"]), " ".join(cfg["domains"][:8])),
+             "🔢 <b>%s</b> : <code>%d</code> — <code>%s</code>"
+             % (L("Params"), len(cfg["params"]), ", ".join(cfg["params"][:6])),
+             "📄 <b>%s</b>: <code>%d</code> — <code>%s</code>"
+             % (L("Filetypes"), len(cfg["filetypes"]), " ".join(cfg["filetypes"])),
+             "🔍 <b>%s</b> : <code>%d</code> — <code>%s</code>"
+             % (L("SF"), len(cfg["sfilters"]), " ".join(cfg["sfilters"])),
+             "📋 <b>%s</b> : <code>%d</code> entries"
+             % (L("PF"), len(cfg["pfilters"])),
+             "🧬 <b>%s</b> : <code>%d</code>" % (L("Combos"), len(cfg["combos"])),
+             "",
+             "✅ <b>%s</b> : <code>%d/%d</code> templates"
+             % (L("Enabled"), len(on), len(cfg["templates"])),
+             ""]
+    for t in cfg["templates"]:
+        mark = "✅" if t.get("on") else "🚫"
+        lines.append("%s <b>%02d.</b> <code>%s</code>" % (mark, t["id"], esc(t["tpl"])))
+    lines.append("")
+    lines.append("<i>Legend: (KW)=keyword (DE)=domain (PF)=page-filter "
+                 "(PT)=param (FT)=filetype (SF)=search-filter (NB)=number (CO)=combo</i>")
+    return "\n".join(lines)
+
+
+async def cb_pro_cfg(update, context):
+    q = update.callback_query
+    try:
+        await q.edit_message_text(pro_cfg_text()[:3800], parse_mode=ParseMode.HTML,
+                                  reply_markup=kb_back("dd:pro"))
+    except Exception:
+        pass
+
+
+def pro_tpl_kb() -> InlineKeyboardMarkup:
+    cfg = pro_load()
+    rows = []
+    for t in cfg["templates"]:
+        mark = "✅" if t.get("on") else "🚫"
+        rows.append([InlineKeyboardButton("%s %02d. %s" % (mark, t["id"], t["tpl"][:34]),
+                                          callback_data="dp:tpl:%d" % t["id"])])
+    rows.append([InlineKeyboardButton("✅ SAB ON", callback_data="dp:tplall:1"),
+                 InlineKeyboardButton("🚫 SAB OFF", callback_data="dp:tplall:0")])
+    rows.append([InlineKeyboardButton("📊 CONFIG", callback_data="dp:cfg"),
+                 InlineKeyboardButton("⬅️ BACK", callback_data="dd:pro")])
+    return RK(rows)
+
+
+async def cb_pro_tpl(update, context, arg: str = ""):
+    q = update.callback_query
+    cfg = pro_load()
+    if arg.startswith("tplall:"):
+        val = arg.endswith("1")
+        for t in cfg["templates"]:
+            t["on"] = val
+        pro_save(cfg)
+        arg = ""
+    elif arg.startswith("tpl:"):
+        try:
+            tid = int(arg[4:])
+        except Exception:
+            tid = 0
+        for t in cfg["templates"]:
+            if t["id"] == tid:
+                t["on"] = not t.get("on")
+        pro_save(cfg)
+        arg = ""
+    on = len(pro_on_templates(cfg))
+    try:
+        await q.edit_message_text(
+            (H("VIEW TEMPLATES", "%d/%d ON" % (on, len(cfg["templates"]))) + "\n\n"
+             "👇 Kisi bhi template ko <b>ON / OFF</b> karne ke liye dabao\n"
+             "<i>OFF wali template dorks me use nahi hogi.</i>\n\n"
+             "✅ = ON   🚫 = OFF"),
+            parse_mode=ParseMode.HTML, reply_markup=pro_tpl_kb())
+    except Exception:
+        pass
+
+
+# ── RESET ───────────────────────────────────────────────────────────────────
+async def cb_pro_reset(update, context, arg: str = ""):
+    q = update.callback_query
+    if arg == "yes":
+        pro_reset()
+        try:
+            await q.edit_message_text(
+                (H("RESET DONE", "default pe wapas") + "\n\n"
+                 "♻️ Saare config + templates default ho gaye.\n"
+                 "<code>%d</code> templates ON" % len(PRO_TEMPLATES_DEFAULT)),
+                parse_mode=ParseMode.HTML, reply_markup=kb_back("dd:pro"))
+        except Exception:
+            pass
+        return
+    if arg == "no":
+        return await cb_pro_menu(update, context)
+    try:
+        await q.edit_message_text(
+            (H("RESET TO DEFAULT", "confirm karo") + "\n\n"
+             "⚠️ Ye sab <b>delete</b> ho jayega:\n"
+             "• domains, params, filetypes\n• filters, combos\n• custom templates\n\n"
+             "<b>Pakka reset karna hai?</b>"),
+            parse_mode=ParseMode.HTML, reply_markup=RK([
+                [InlineKeyboardButton("✅ HAAN, RESET", callback_data="dp:reset:yes")],
+                [InlineKeyboardButton("❌ NAHI, WAPAS", callback_data="dp:reset:no")],
+            ]))
+    except Exception:
+        pass
+
+
+# ── COMBOS ──────────────────────────────────────────────────────────────────
+def combos_kb() -> InlineKeyboardMarkup:
+    cfg = pro_load()
+    rows = []
+    for i, c in enumerate(cfg["combos"][:24]):
+        rows.append([InlineKeyboardButton("❌ %s" % c[:28], callback_data="dp:combo:x:%d" % i)])
+    rows.append([InlineKeyboardButton("➕ NAYA COMBO ADD", callback_data="dp:combo:add")])
+    rows.append([InlineKeyboardButton("🎯 IN COMBOS DORKS", callback_data="dp:combo:gen")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="dd:pro")])
+    return RK(rows)
+
+
+async def cb_pro_combos(update, context, arg: str = ""):
+    q = update.callback_query
+    cfg = pro_load()
+    if arg.startswith("x:"):
+        try:
+            i = int(arg[2:])
+            gone = cfg["combos"].pop(i)
+        except Exception:
+            gone = "?"
+        pro_save(cfg)
+        try:
+            await q.answer("❌ %s hataya" % gone[:30])
+        except Exception:
+            pass
+        arg = ""
+    elif arg == "add":
+        try:
+            await q.edit_message_text(
+                (H("ADD COMBO", "custom combo") + "\n\n"
+                 "Combo bhejo (ek line me ek):\n"
+                 "<code>email:pass</code>\n<code>user:password</code>\n"
+                 "<code>cc|cvv</code>\n\n"
+                 "<i>Ye (CO) placeholder me use hote hain.</i>"),
+                parse_mode=ParseMode.HTML, reply_markup=kb_back("dp:combos"))
+        except Exception:
+            pass
+        context.user_data["await"] = "pro_combo"
+        return
+    elif arg == "gen":
+        if not cfg["combos"]:
+            try:
+                await q.answer("Koi combo nahi", show_alert=True)
+            except Exception:
+                pass
+            return
+        out = []
+        for c in cfg["combos"]:
+            for p in PRO_TEMPLATES_COMBO:
+                out.append(p.replace("(CO)", c))
+        out = _dork_finish(_uniq(out), DORK_MAX)
+        context.user_data["last_dorks"] = out
+        path, cnt = dump_text(out, "combos", "PYTHON SNAKE — combo dorks")
+        try:
+            await q.edit_message_text(
+                (H("COMBO DORKS", "%s bane" % fmt(cnt)) + "\n\n"
+                 "🧬 Combos : <code>%d</code>\n\n<b>Top 8:</b>\n%s"
+                 % (len(cfg["combos"]), short_list(out[:8], 8))),
+                parse_mode=ParseMode.HTML, reply_markup=kb_back("dp:combos"))
+        except Exception:
+            pass
+        await send_file(update, path, "🧬 %s combo dorks" % fmt(cnt))
+        return
+    # default: list
+    try:
+        await q.edit_message_text(
+            (H("GEN ALL COMBOS", "%d combos" % len(cfg["combos"])) + "\n\n"
+             "🧬 <b>%s</b>\n\n"
+             "❌ dabao = remove • ➕ = naya add\n"
+             "🎯 = saare combos ke dorks banao"
+             % esc("  ".join(cfg["combos"][:20]))),
+            parse_mode=ParseMode.HTML, reply_markup=combos_kb())
+    except Exception:
+        pass
+
+
+PRO_TEMPLATES_COMBO = [
+    '"{co}" ext:txt', '"{co}" filetype:log', 'inurl:{co}', 'intitle:"{co}"',
+    '"{co}" site:pastebin.com', '"{co}" inurl:paste', '"{co}" ext:csv',
+    '"{co}" intext:"{co}"', '"{co}" -site:github.com',
+]
+
+
+async def input_pro_combo(update, context, text: str):
+    items = [x.strip() for x in PARSE_STRIP.split(text) if x.strip()]
+    items = [x for x in items if ":" in x or "|" in x or "@" in x]
+    if not items:
+        await update.effective_message.reply_text(
+            "❌ Combo samajh nahi aaya. Format: <code>email:pass</code>",
+            parse_mode=ParseMode.HTML)
+        context.user_data["await"] = "pro_combo"
+        return
+    cfg = pro_load()
+    cfg["combos"] = _uniq(cfg["combos"] + items)[:100]
+    pro_save(cfg)
+    await update.effective_message.reply_text(
+        (H("COMBOS SAVED", "%d total" % len(cfg["combos"])) + "\n\n<code>%s</code>"
+         % esc("  ".join(items[:10]))),
+        parse_mode=ParseMode.HTML, reply_markup=combos_kb())
+    context.user_data.pop("await", None)
+
+
+# ── PRO GEN (count → keywords → best template) ───────────────────────────────
+async def cb_pro_gen(update, context):
+    q = update.callback_query
+    try:
+        await q.edit_message_text(
+            (H("GEN DORKS (PRO)", "step 1 / 2") + "\n\n"
+             "🔢 Kitne dorks chahiye? <b>Number bhejo</b>\n"
+             "<i>1 – %s • Recommended: 2,000</i>" % fmt(DORK_MAX)),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("dd:pro"))
+    except Exception:
+        pass
+    context.user_data["await"] = "dpgen_count"
+
+
+async def input_dpgen_count(update, context, text: str):
+    try:
+        n = int(re.sub(r"[^0-9]", "", text or "") or "2000")
+    except Exception:
+        n = 2000
+    n = max(1, min(DORK_MAX, n))
+    context.user_data["dpgen_count"] = n
+    cfg = pro_load()
+    await update.effective_message.reply_text(
+        (H("GEN DORKS (PRO)", "step 2 / 2") + "\n\n"
+         "✅ Count: <code>%s</code>\n"
+         "✅ Templates ON: <code>%d/%d</code>\n"
+         "🌐 Domains: <code>%d</code>\n\n"
+         "🔑 Ab <b>keywords</b> bhejo:\n"
+         "<code>shopify store, crypto wallet</code>"
+         % (fmt(n), len(pro_on_templates(cfg)), len(cfg["templates"]), len(cfg["domains"]))),
+        parse_mode=ParseMode.HTML, reply_markup=kb_back("dd:pro"))
+    context.user_data["await"] = "dpgen_kw"
+
+
+async def input_dpgen_kw(update, context, text: str):
+    ok, err = kind_check(text, "keywords", "keywords")
+    if not ok:
+        await update.effective_message.reply_text(err, parse_mode=ParseMode.HTML,
+                                                  reply_markup=kb_back("dd:pro"))
+        context.user_data["await"] = "dpgen_kw"
+        return
+    n = int(context.user_data.get("dpgen_count") or 2000)
+    msg = await update.effective_message.reply_text("🚀 Best templates chun raha hoon…")
+    t0 = time.time()
+    res = pro_gen_best(text, n=n)
+    dorks = res["dorks"]
+    took = time.time() - t0
+    if not dorks:
+        await msg.edit_text("❌ 0 dorks — templates check karo (sab OFF hain?).")
+        return
+    context.user_data["last_dorks"] = dorks
+    added = dork_seen_add(dorks)
+    sc = [score_dork(d)[0] for d in dorks]
+    avg = sum(sc) / len(sc)
+    path, cnt = dump_text(dorks, "pro", "PYTHON SNAKE — pro dorks")
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    await update.effective_message.reply_text(
+        (H("PRO GEN — DONE", "%s dorks" % fmt(cnt)) + "\n\n"
+         "🔑 Keywords  : <code>%d</code>\n"
+         "🧩 Best tpls : <code>%d</code> use hui\n"
+         "✅ Bane      : <code>%s</code>\n"
+         "🆕 Naye      : <code>%s</code>\n"
+         "⭐ Avg       : <code>%.0f/100</code>\n"
+         "⏱ Time      : <code>%.2fs</code>\n\n"
+         "<b>Top 8:</b>\n%s"
+         % (res["kw"], res["used"], fmt(cnt), fmt(added), avg, took,
+            short_list(dorks[:8], 8))),
+        parse_mode=ParseMode.HTML, reply_markup=RK([
+            [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep")],
+            [InlineKeyboardButton("📊 CONFIG", callback_data="dp:cfg"),
+             InlineKeyboardButton("🆕 AUR (fresh)", callback_data="dd:more")],
+            [InlineKeyboardButton("⬅️ BACK", callback_data="dd:pro")],
+        ]))
+    await send_file(update, path, "🚀 %s pro dorks • avg %.0f/100" % (fmt(cnt), avg))
+    context.user_data.pop("await", None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3155,7 +3722,10 @@ async def tool_kw(update, context):
            "   unhi se aur naye keywords banenge\n\n"
            "➡️ Agla step: kitne chahiye (<b>max 100,000</b>)")
     try:
-        await q.edit_message_text(txt, reply_markup=kb_back(), parse_mode=ParseMode.HTML)
+        await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK([
+            [InlineKeyboardButton("📦 NICHE PACKS (ready HQ)", callback_data="kw:niche")],
+            [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
+        ]))
     except Exception:
         pass
     context.user_data["await"] = "kw_input"
@@ -3163,6 +3733,17 @@ async def tool_kw(update, context):
 
 async def input_kw_input(update, context, text: str):
     """Step 1 — seeds YA keywords accept karo, phir count poochho."""
+    got = detect_kind(text, want="keywords")
+    if got == "dorks":
+        await update.effective_message.reply_text(
+            (H("GALAT INPUT", "ye dorks hain") + "\n\n"
+             "❌ <b>Ye keywords nahi hain — DORKS hain.</b>\n\n"
+             "Yahan <b>keywords</b> chahiye, jaise:\n"
+             "<code>shopify store, crypto wallet</code>\n\n"
+             "👉 Dorks banana hai? 🎯 DORKER use karo."),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:kw"))
+        context.user_data["await"] = "kw_input"
+        return
     items = [x.strip() for x in re.split(r"[\n,;|]+", text or "") if x.strip()]
     cores = kw_cores(items)
     if not cores:
@@ -3271,9 +3852,55 @@ def kw_to_dorks(kws, n: int = 3000, tld: str = "") -> list:
     return _uniq(out)[:n]
 
 
-async def cb_kw_action(update, context, action: str):
-    """kw:dorks | kw:qual | kw:more"""
+def niche_kb() -> InlineKeyboardMarkup:
+    rows = []
+    keys = list(NICHE_PACKS.keys())
+    for i in range(0, len(keys), 2):
+        row = []
+        for k in keys[i:i + 2]:
+            row.append(InlineKeyboardButton(NICHE_PACKS[k][0], callback_data="kw:niche:" + k))
+        rows.append(row)
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:kw")])
+    return RK(rows)
+
+
+async def cb_niche(update, context, key: str = ""):
     q = update.callback_query
+    if key and key in NICHE_PACKS:
+        seeds = niche_seeds(key)
+        context.user_data["kw_items"] = seeds
+        context.user_data["kw_cores"] = kw_cores(seeds)
+        cap = kw_capacity(seeds)
+        try:
+            await q.edit_message_text(
+                (H("NICHE PACK", NICHE_PACKS[key][0]) + "\n\n"
+                 "🌱 Seeds: <code>%s</code>\n"
+                 "📊 Max  : <code>%s</code> keywords\n\n"
+                 "<b>Preview:</b>\n%s\n\n"
+                 "🔢 Kitne keywords chahiye? <b>Number bhejo</b> (1 – %s)"
+                 % (esc(", ".join(seeds[:6])), fmt(min(cap, KW_MAX)),
+                    short_list(seeds, 6), fmt(KW_MAX))),
+                parse_mode=ParseMode.HTML, reply_markup=kb_back("m:kw"))
+        except Exception:
+            pass
+        context.user_data["await"] = "kw_count"
+        return
+    try:
+        await q.edit_message_text(
+            (H("NICHE PACKS", "%d ready packs" % len(NICHE_PACKS)) + "\n\n"
+             "Har pack me ready HQ seeds hain —\n"
+             "jitne keywords chahiye utne bana dega (max 1,00,000).\n\n"
+             "👇 Niche chuno:"),
+            parse_mode=ParseMode.HTML, reply_markup=niche_kb())
+    except Exception:
+        pass
+
+
+async def cb_kw_action(update, context, action: str):
+    """kw:dorks | kw:qual | kw:more | kw:niche"""
+    q = update.callback_query
+    if action == "niche" or action.startswith("niche:"):
+        return await cb_niche(update, context, action.split(":", 1)[1] if ":" in action else "")
     kws = context.user_data.get("last_kws") or []
     items = context.user_data.get("last_kw_items") or []
     if not kws and not items:
@@ -3459,7 +4086,12 @@ async def cb_inj_last(update, context):
 async def input_inj_urls(update, context, text: str):
     urls = [x.strip() for x in re.split(r"[\s,]+", text) if x.strip().startswith("http")]
     if not urls:
-        await update.effective_message.reply_text("❌ Koi http URL nahi mila.")
+        await update.effective_message.reply_text(
+            "❌ <b>Ye URLs nahi hain — URLs dijiye.</b>\n\n"
+            "✅ Jaise: <code>https://site.com/page.php?id=5</code>\n"
+            "<i>Ek line me ek URL.</i>", parse_mode=ParseMode.HTML,
+            reply_markup=kb_back("m:inj"))
+        context.user_data["await"] = "inj_urls"
         return
     await _run_inject(update, context, urls[:200])
 
@@ -3663,6 +4295,12 @@ async def input_deep_max(update, context, text: str):
 
 
 async def input_parse_dorks(update, context, text: str):
+    ok, err = kind_check(text, "dorks", "dorks")
+    if not ok:
+        await update.effective_message.reply_text(err, parse_mode=ParseMode.HTML,
+                                                  reply_markup=kb_back("m:parse"))
+        context.user_data["await"] = "parse_dorks"
+        return
     dorks = [x.strip() for x in text.split("\n") if x.strip()][:50]
     if not dorks:
         await update.effective_message.reply_text("❌ Koi dork nahi mila.")
@@ -3881,38 +4519,164 @@ async def cb_proxy_clear(update, context):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  TOOL: QUALITY / RANDOMIZER / DUMPER
 # ═══════════════════════════════════════════════════════════════════════════════
+QA_META = {
+    "keywords": ("🔑 KEYWORDS", "keywords", "shopify store, crypto wallet"),
+    "dorks": ("🎯 DORKS", "dorks", "inurl:admin.php site:gov.in"),
+    "urls": ("🔗 URLs", "urls", "https://site.com/page.php?id=5"),
+}
+
+
 async def tool_qa(update, context):
     q = update.callback_query
-    txt = (H("QUALITY CHECK") + "\n\n"
-           "Dork/keyword paste karo (ek line me ek) — har ek ko <b>0-100</b> score "
-           "dunga + wajah bataunga.")
+    txt = (H("QUALITY CHECKER", "3 types") + "\n\n"
+           "Kis cheez ka quality check karna hai?\n\n"
+           "🔑 <b>KEYWORDS</b> — search value, intent, length\n"
+           "🎯 <b>DORKS</b> — operators, structure, junk\n"
+           "🔗 <b>URLS</b> — clean? params? tracking? junk host?\n\n"
+           "<i>Bot khud pehchan lega — galat type bheja to bata dega.</i>")
     try:
-        await q.edit_message_text(txt, reply_markup=kb_back(), parse_mode=ParseMode.HTML)
+        await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK([
+            [InlineKeyboardButton("🔑 KEYWORDS", callback_data="qa:keywords")],
+            [InlineKeyboardButton("🎯 DORKS", callback_data="qa:dorks")],
+            [InlineKeyboardButton("🔗 URLS", callback_data="qa:urls")],
+            [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
+        ]))
     except Exception:
         pass
-    context.user_data["await"] = "qa_items"
 
 
-async def input_qa(update, context, text: str):
-    items = [x.strip() for x in text.split("\n") if x.strip()][:40]
+def score_url(u: str) -> tuple:
+    """URL quality 0-100 — clean, params, tracking, junk host."""
+    score, why = 50, []
+    u = str(u or "").strip()
+    if not u.startswith("http"):
+        return 0, ["http se shuru nahi"]
+    p = urlparse(u)
+    host = (p.hostname or "").lower()
+    if not host:
+        return 10, ["host nahi mila"]
+    base = ".".join(host.split(".")[-2:])
+    if host in JUNK_HOSTS or base in JUNK_HOSTS:
+        return 5, ["junk/known host"]
+    if p.query:
+        score += 15
+        why.append("+15 query params")
+        if re.search(r"=\s*$", p.query) or re.search(r"=[&]?", p.query):
+            score += 5
+            why.append("+5 value-wala param")
+    else:
+        why.append("query nahi (kam interesting)")
+    tq = _strip_track(p.query or "")
+    if tq != (p.query or ""):
+        score -= 10
+        why.append("-10 tracking params")
+    if len(p.path or "") > 1:
+        score += 8
+        why.append("+8 path hai")
+    else:
+        why.append("root path")
+    if re.search(r"\.(php|asp|aspx|jsp|do|action)$", (p.path or "").lower()):
+        score += 10
+        why.append("+10 dynamic page")
+    low = u.lower()
+    for b in ("javascript:", "mailto:", "#", "undefined", "null"):
+        if b in low:
+            score -= 12
+            why.append("-12 %s" % b)
+    if len(u) > 300:
+        score -= 12
+        why.append("-12 bahut lamba")
+    if re.search(r"(?:^|[?&])(id|pid|cat|page|item|product|user|file|doc|view|action)=", p.query or "", re.I):
+        score += 10
+        why.append("+10 injectable-style param")
+    return max(0, min(100, score)), why
+
+
+def _qa_score(kind: str, items: list) -> list:
+    out = []
+    for it in items:
+        if kind == "dorks":
+            out.append(score_dork(it)[0])
+        elif kind == "urls":
+            out.append(score_url(it)[0])
+        else:
+            out.append(score_keyword(it)[0])
+    return out
+
+
+async def cb_qa_type(update, context, kind: str):
+    q = update.callback_query
+    meta = QA_META.get(kind)
+    if not meta:
+        return
+    label, want, ex = meta
+    context.user_data["qa_kind"] = kind
+    try:
+        await q.edit_message_text(
+            (H("QUALITY — %s" % label, "0-100 score") + "\n\n"
+             "📥 Bhejo (ek line me ek):\n<code>%s</code>\n\n"
+             "<i>Max 200 lines.</i>" % ex),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:qa"))
+    except Exception:
+        pass
+    context.user_data["await"] = "qa_" + kind
+
+
+async def input_qa_kind(update, context, kind: str, text: str):
+    meta = QA_META.get(kind)
+    label = meta[0] if meta else kind
+    ok, err = kind_check(text, kind, label)
+    if not ok:
+        await update.effective_message.reply_text(err, parse_mode=ParseMode.HTML,
+                                                  reply_markup=kb_back("m:qa"))
+        context.user_data["await"] = "qa_" + kind
+        return
+    items = _lines(text)[:200]
     if not items:
         await update.effective_message.reply_text("❌ Kuch nahi mila.")
         return
-    lines, scores = [], []
-    for it in items:
-        sc, why = score_dork(it) if re.search(r"(inurl|intitle|intext|site|filetype):", it, re.I) else score_keyword(it)
-        scores.append(sc)
-        lines.append("<b>%d/100</b> %s\n<code>%s</code>\n<i>%s</i>"
-                     % (sc, quality_label(sc), esc(it[:120]), esc("; ".join(why[:3]))))
+    scores = _qa_score(kind, items)
     avg = sum(scores) / len(scores)
-    body = (H("QUALITY REPORT", "avg %.0f/100" % avg) + "\n\n" + "\n\n".join(lines[:12]))
-    for ch in chunk_lines(body)[:3]:
+    pairs = sorted(zip(scores, items), key=lambda z: -z[0])
+    buckets = {"b80": 0, "b65": 0, "b45": 0, "b25": 0, "b0": 0}
+    for sc in scores:
+        if sc >= 80:
+            buckets["b80"] += 1
+        elif sc >= 65:
+            buckets["b65"] += 1
+        elif sc >= 45:
+            buckets["b45"] += 1
+        elif sc >= 25:
+            buckets["b25"] += 1
+        else:
+            buckets["b0"] += 1
+    body = [(H("QUALITY REPORT — %s" % label, "avg %.0f/100" % avg)),
+            "",
+            "📦 Total : <code>%s</code>" % fmt(len(items)),
+            "",
+            "🔥 80+   : <code>%s</code>" % fmt(buckets["b80"]),
+            "✅ 65-79 : <code>%s</code>" % fmt(buckets["b65"]),
+            "🟡 45-64 : <code>%s</code>" % fmt(buckets["b45"]),
+            "🟠 25-44 : <code>%s</code>" % fmt(buckets["b25"]),
+            "🔴 <25   : <code>%s</code>" % fmt(buckets["b0"]),
+            "",
+            "<b>Top 5:</b>"]
+    for sc, it in pairs[:5]:
+        body.append("<b>%d</b> %s <code>%s</code>" % (sc, quality_label(sc), esc(it[:90])))
+    body.append("")
+    body.append("<b>Kamzor 3:</b>")
+    for sc, it in pairs[-3:]:
+        body.append("<b>%d</b> %s <code>%s</code>" % (sc, quality_label(sc), esc(it[:90])))
+    for ch in chunk_lines("\n".join(body))[:3]:
         await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
-    if len(items) > 12:
-        await update.effective_message.reply_text("…+%d aur (file me)" % (len(items) - 12))
-    path, cnt = dump_text(["%3d  %s" % (s, i) for s, i in zip(scores, items)], "quality",
-                          "PYTHON SNAKE — quality scores")
-    await send_file(update, path, "📊 %d scored" % cnt)
+    path, cnt = dump_text(["%3d  %s" % (s_, i_) for s_, i_ in zip(scores, items)],
+                          "quality_" + kind, "PYTHON SNAKE — %s quality" % kind)
+    await send_file(update, path, "📊 %s %s scored • avg %.0f" % (fmt(cnt), kind, avg))
+    hq = [i_ for s_, i_ in zip(scores, items) if s_ >= 80]
+    if hq:
+        hp, hn = dump_text(hq, "quality_best", "PYTHON SNAKE — only 80+")
+        await send_file(update, hp, "🔥 %s best (80+)" % fmt(hn))
+    await update.effective_message.reply_text("⬅️ Menu", reply_markup=kb_back("m:qa"))
     context.user_data.pop("await", None)
 
 
@@ -4309,18 +5073,581 @@ async def cb_file(update, context, action: str):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  🧠 AUTO-DETECT — input kya hai? (keywords / dorks / domains / params / …)
+# ═══════════════════════════════════════════════════════════════════════════════
+DORK_OP_RE = re.compile(r"\b(inurl|intitle|intext|allinurl|allintitle|inanchor|allintext|"
+                        r"site|filetype|ext)\s*:", re.I)
+FT_WORDS = {"php", "asp", "aspx", "jsp", "html", "htm", "txt", "sql", "pdf", "xml",
+            "json", "js", "bak", "zip", "rar", "env", "log", "conf", "ini", "csv",
+            "xls", "xlsx", "doc", "docx", "ppt", "pptx", "sh", "py", "rb", "pl"}
+TLD_WORDS = {"com", "net", "org", "ru", "de", "in", "pk", "us", "uk", "info", "gov",
+             "io", "co", "fr", "it", "es", "nl", "br", "mx", "au", "ca", "za", "ng",
+             "ke", "eg", "sa", "ae", "tr", "ir", "ua", "pl", "se", "no", "dk", "fi",
+             "edu", "mil", "biz", "xyz", "top", "shop", "store", "site", "online"}
+SF_WORDS = {"inurl:", "intitle:", "allinurl:", "allintitle:", "intext:", "allintext:",
+            "inanchor:", "site:", "filetype:", "ext:"}
+
+KIND_LABEL = {
+    "keywords": "🔑 KEYWORDS", "dorks": "🎯 DORKS", "urls": "🔗 URLs",
+    "domains": "🌐 DOMAINS", "params": "🔢 PARAMETERS", "filetypes": "📄 FILE-TYPES",
+    "sfilters": "🔍 SEARCH FILTERS", "pfilters": "📋 PAGE FILTERS",
+    "combos": "🧬 COMBOS", "empty": "⚪ KHAALI",
+}
+
+
+def _lines(text) -> list:
+    return [x.strip() for x in re.split(r"[\n;|]+", str(text or "")) if x.strip()]
+
+
+def detect_kind(text, want: str = "") -> str:
+    """Input ka asli type pata karo. Priority: dorks > urls > combos > …
+       `want` diya ho to usi ke hisaab se strict ho jata hai.
+    """
+    L = _lines(text)
+    if not L:
+        return "empty"
+    n = len(L)
+
+    def frac(f):
+        return f / n
+
+    dorks = sum(1 for x in L if DORK_OP_RE.search(x))
+    urls = sum(1 for x in L if x.lower().startswith(("http://", "https://", "www.")))
+    doms = 0
+    for x in L:
+        t = x.lower().lstrip(".")
+        if re.fullmatch(r"\.[a-z]{2,8}", x.lower()):
+            doms += 1
+        elif re.fullmatch(r"[a-z0-9.\-]+\.[a-z]{2,8}/?", t) and t.rsplit(".", 1)[-1].rstrip("/") in TLD_WORDS:
+            doms += 1
+    fts = 0
+    for x in L:
+        t = x.lower().lstrip(".")
+        if t in FT_WORDS:
+            fts += 1
+    sfs = sum(1 for x in L if x.lower().strip() in SF_WORDS or
+              (x.lower().endswith(":") and x.lower() in SF_WORDS))
+    combos = sum(1 for x in L if re.search(r"[a-z0-9._%+\-]+:[^\s:]{3,}", x, re.I)
+                 and not DORK_OP_RE.search(x))
+    single = sum(1 for x in L if re.fullmatch(r"[a-z_][a-z0-9_]{0,30}", x, re.I))
+    multi = sum(1 for x in L if " " in x)
+
+    # strict contexts pehle
+    if want == "keywords":
+        if frac(dorks) > 0.3:
+            return "dorks"
+        if frac(urls) > 0.5:
+            return "urls"
+        return "keywords"
+    if want == "dorks":
+        if frac(dorks) > 0.2:
+            return "dorks"
+        if frac(urls) > 0.5:
+            return "urls"
+        return "keywords"
+    if want == "domains":
+        return "domains" if frac(doms) > 0.5 else "keywords"
+    if want == "params":
+        return "params" if frac(single) > 0.6 else "keywords"
+    if want == "filetypes":
+        return "filetypes" if frac(fts) > 0.5 else "keywords"
+    if want == "sfilters":
+        return "sfilters" if frac(sfs) > 0.5 else "keywords"
+    if want == "pfilters":
+        return "pfilters" if frac(single) > 0.5 else "keywords"
+    if want == "combos":
+        return "combos" if frac(combos) > 0.5 else "keywords"
+
+    # auto
+    if frac(dorks) > 0.3:
+        return "dorks"
+    if frac(urls) > 0.5:
+        return "urls"
+    if frac(sfs) > 0.5:
+        return "sfilters"
+    if frac(combos) >= 0.6:
+        return "combos"
+    if frac(fts) >= 0.6:
+        return "filetypes"
+    if frac(doms) >= 0.6:
+        return "domains"
+    if frac(single) >= 0.9 and multi == 0:
+        return "params"
+    return "keywords"
+
+
+KIND_HINT = {
+    "keywords": "jaise <code>shopify store, crypto wallet</code> (multi-word)",
+    "dorks": "jaise <code>inurl:admin.php site:gov.in</code>",
+    "urls": "jaise <code>https://site.com/page.php?id=5</code>",
+    "domains": "jaise <code>.com .net gov.in</code>",
+    "params": "jaise <code>id, cat, page</code> (ek word)",
+    "filetypes": "jaise <code>.php .asp .jsp</code>",
+    "sfilters": "jaise <code>inurl: intitle:</code>",
+    "pfilters": "jaise <code>index, view, login</code>",
+    "combos": "jaise <code>email:pass</code>",
+}
+
+
+def kind_check(text, want: str, ctx_label: str) -> tuple:
+    """(ok, error_text). Galat type ho to saaf message."""
+    got = detect_kind(text, want=want)
+    if got == want:
+        return True, ""
+    return False, (
+        "❌ <b>Ye %s nahi hai — %s dijiye.</b>\n\n"
+        "📥 Aapne bheja: <b>%s</b>\n"
+        "✅ Chahiye   : <b>%s</b> — %s\n\n"
+        "👉 Dobara bhejo (ya ⬅️ BACK dabao)."
+        % (esc(ctx_label), esc(ctx_label), KIND_LABEL.get(got, got),
+           KIND_LABEL.get(want, want), KIND_HINT.get(want, "")))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🧩 PRO DORK ENGINE — config + templates + combos
+# ═══════════════════════════════════════════════════════════════════════════════
+PRO_DEFAULTS = {
+    "domains": [".com", ".net", ".org", ".ru", ".de", ".in", ".pk", ".us", ".uk",
+                ".info", ".gov"],
+    "params": ["id", "user_id", "cat", "type", "page", "item", "product"],
+    "filetypes": [".php", ".asp", ".aspx", ".jsp"],
+    "sfilters": ["inurl:", "intitle:", "allinurl:", "allintitle:"],
+    "pfilters": ["index", "view", "page", "item", "product", "user", "login",
+                 "search", "show", "cat"],
+    "combos": ["email:pass", "user:pass", "username:password", "api_key:",
+               "admin:admin", "root:root", "login:pass", "cc:cc"],
+}
+
+# (KW)=keyword (DE)=domain (PF)=page-filter (PT)=param (FT)=filetype
+# (SF)=search-filter (NB)=random number (CO)=combo
+PRO_TEMPLATES_DEFAULT = [
+    "(KW).(PF)?(PT)=",
+    "(KW).(PF)?(PT)= site:(DE)",
+    "(KW).(PF)?(PT)=(NB)",
+    "(KW).(PF)?(PT)=(NB) site:(DE)",
+    '(SF)"(KW)" site:(DE)',
+    "(SF)(KW).(PF)?(PT)=",
+    "(SF)(KW).(PF)?(PT)= site:(DE)",
+    "(SF)(PT)=(KW).(PF)? site:(DE)",
+    "(SF)(KW).(PF)?(PT)=(NB)",
+    "(SF)(KW).(PF)?(PT)=(NB) site:(DE)",
+    "(SF)(KW) (FT)",
+    "(SF)(KW) (FT) site:(DE)",
+    '(SF)"(KW)" (FT)',
+    "(SF)(KW)/(PF)",
+    "(SF)(KW)/(PF).(FT)",
+    "(KW) (CO)",
+    '(SF)"(KW)" (CO)',
+    "inurl:(KW)/(PF)",
+    "intitle:(KW) inurl:(PT)=",
+    "(KW).(PF) (FT) site:(DE)",
+]
+
+# Universal (normal gen) templates — har niche pe kaam karti hain
+UNIVERSAL_TEMPLATES = [
+    'intitle:"{kw}"',
+    'allintitle:"{kw}"',
+    'intext:"{kw}"',
+    'inurl:"{kw}"',
+    '"{kw}" inurl:index',
+    '"{kw}" inurl:login',
+    'intitle:"{kw}" inurl:{p}=',
+    'intext:"{kw}" inurl:{p}=',
+    '"{kw}" ext:php',
+    '"{kw}" filetype:pdf',
+    '"{kw}" inurl:admin',
+    'intitle:"{kw}" site:{d}',
+    'inurl:{kw} site:{d}',
+    '"{kw}" (intitle:index.of | intitle:"index of")',
+    '"{kw}" inurl:upload',
+    'intitle:"{kw}" inurl:dashboard',
+    '"{kw}" inurl:{pf}',
+    '"{kw}" {p}=',
+]
+
+_PRO_CACHE = None
+PRO_KEY = ["domains", "params", "filetypes", "sfilters", "pfilters", "combos", "templates"]
+
+
+def pro_load() -> dict:
+    """PRO config (data/pro_config.json) — defaults ke saath merge."""
+    global _PRO_CACHE
+    if _PRO_CACHE is None:
+        raw = jload("pro_config", {}) or {}
+        d = {k: list(v) for k, v in PRO_DEFAULTS.items()}
+        for k in PRO_KEY:
+            if k == "templates":
+                continue
+            if isinstance(raw.get(k), list) and raw[k]:
+                d[k] = raw[k]
+        tpls = raw.get("templates")
+        if isinstance(tpls, list) and tpls:
+            clean = []
+            for i, t in enumerate(tpls, 1):
+                if isinstance(t, dict) and t.get("tpl"):
+                    clean.append({"id": int(t.get("id") or i), "tpl": str(t["tpl"]),
+                                  "on": bool(t.get("on", True))})
+                elif isinstance(t, str) and t.strip():
+                    clean.append({"id": i, "tpl": t.strip(), "on": True})
+            if clean:
+                d["templates"] = clean
+        if not isinstance(d.get("templates"), list):
+            d["templates"] = [{"id": i, "tpl": t, "on": True}
+                              for i, t in enumerate(PRO_TEMPLATES_DEFAULT, 1)]
+        _PRO_CACHE = d
+    return _PRO_CACHE
+
+
+def pro_save(cfg: dict = None) -> None:
+    global _PRO_CACHE
+    if cfg is not None:
+        _PRO_CACHE = cfg
+    jsave("pro_config", _PRO_CACHE or pro_load())
+
+
+def pro_reset() -> None:
+    global _PRO_CACHE
+    _PRO_CACHE = {k: list(v) for k, v in PRO_DEFAULTS.items()}
+    _PRO_CACHE["templates"] = [{"id": i, "tpl": t, "on": True}
+                               for i, t in enumerate(PRO_TEMPLATES_DEFAULT, 1)]
+    pro_save()
+
+
+def pro_on_templates(cfg: dict = None) -> list:
+    cfg = cfg or pro_load()
+    return [t for t in cfg["templates"] if t.get("on")]
+
+
+def _pick(lst, i=0):
+    return lst[i % len(lst)] if lst else ""
+
+
+def pro_render(tpl: str, kw: str, cfg: dict = None, idx: int = 0) -> str:
+    """Ek template ko real dork me badlo."""
+    cfg = cfg or pro_load()
+    kw = " ".join(str(kw or "").split())[:60]
+    # domain — leading dot rakho (site:.gov sahi hai, site:gov galat)
+    de = _pick(cfg["domains"], idx)
+    pf = _pick(cfg["pfilters"], idx)
+    pt = _pick(cfg["params"], idx * 3 + 1)
+    ft = _pick(cfg["filetypes"], idx * 2 + 1)
+    sf = _pick(cfg["sfilters"], idx)
+    nb = str(random.randint(1, 9)) * random.choice([1, 2, 3]) + str(random.randint(0, 99))
+    co = _pick(cfg["combos"], idx)
+    out = str(tpl)
+    # KW ka shape: operator ke baad quote, warna hyphen (space dork todta hai)
+    pos = out.find("(KW)")
+    prev = out[pos - 1] if pos > 0 else ""
+    nxt = out[pos + 4] if pos >= 0 and pos + 4 < len(out) else ""
+    already_q = (prev == '"' and nxt == '"')          # template me "(KW)" pehle se
+    if already_q:
+        kw_form = kw
+    elif prev and prev in ':"':
+        kw_form = '"%s"' % kw
+    elif " " in kw:
+        kw_form = kw.replace(" ", "-")
+    else:
+        kw_form = kw
+    out = out.replace("(KW)", kw_form)
+    out = out.replace("(DE)", de)
+    out = out.replace("(PF)", pf)
+    out = out.replace("(PT)", pt)
+    out = out.replace("(FT)", ft.lstrip("."))
+    out = out.replace("(SF)", sf)
+    out = out.replace("(NB)", nb)
+    out = out.replace("(CO)", co)
+    # ".index" / "?id" jaisa shape theek karo
+    out = re.sub(r"(?<![\w:])\." + r"(?=\.)", ".", out)
+    out = re.sub(r"\?\.", "?", out)
+    out = " ".join(out.split())
+    return out.strip()
+
+
+def pro_gen(keywords, n: int = 1000, mode: str = "all") -> dict:
+    """PRO dorks banao — enabled templates × keywords.
+
+    mode: "all" (sab templates) | "best" (keyword ke liye best template)
+    """
+    cfg = pro_load()
+    kws = kw_cores(keywords, limit=2000) if isinstance(keywords, (list, tuple, str)) else []
+    kws = kws or ["admin"]
+    n = max(1, min(DORK_MAX, int(n or 1000)))
+    tpls = pro_on_templates(cfg)
+    if not tpls:
+        return {"dorks": [], "used": 0, "tpls": 0, "kw": len(kws)}
+    out, seen, used = [], set(), defaultdict(int)
+    order = tpls if mode != "best" else (tpls[:1] + tpls[1:])
+
+    def add(x):
+        x = " ".join(str(x).split())
+        if not x or len(x) > 200 or x in seen:
+            return False
+        seen.add(x)
+        out.append(x)
+        return True
+
+    # round-robin: har keyword × har template
+    i = 0
+    stall = 0
+    while len(out) < n and stall < len(kws) * len(order) + 200:
+        before = len(out)
+        kw = kws[i % len(kws)]
+        t = order[(i // len(kws)) % len(order)]
+        add(pro_render(t["tpl"], kw, cfg, idx=i))
+        used[t["id"]] += 1 if len(out) > before else 0
+        if len(out) == before:
+            stall += 1
+        else:
+            stall = 0
+        i += 1
+    dorks = _dork_finish(out, n)
+    return {"dorks": dorks, "used": len(used), "tpls": len(order), "kw": len(kws)}
+
+
+def pro_best_templates(keyword: str, cfg: dict = None, top: int = 4) -> list:
+    """Is keyword ke liye sabse achhi templates (score se)."""
+    cfg = cfg or pro_load()
+    scored = []
+    for t in pro_on_templates(cfg):
+        try:
+            d = pro_render(t["tpl"], keyword, cfg, idx=0)
+        except Exception:
+            continue
+        sc = score_dork(d)[0]
+        scored.append((sc, t))
+    scored.sort(key=lambda z: -z[0])
+    return [t for _, t in scored[:max(1, top)]]
+
+
+def pro_gen_best(keywords, n: int = 1000) -> dict:
+    """Har keyword ke liye uski BEST templates chuno, phir dorks banao."""
+    cfg = pro_load()
+    kws = kw_cores(keywords, limit=2000) or ["admin"]
+    n = max(1, min(DORK_MAX, int(n or 1000)))
+    out, seen, used = [], set(), set()
+    plan = []
+    for kw in kws:
+        for t in pro_best_templates(kw, cfg, top=4):
+            plan.append((kw, t))
+
+    def add(x):
+        x = " ".join(str(x).split())
+        if not x or len(x) > 200 or x in seen:
+            return False
+        seen.add(x)
+        out.append(x)
+        return True
+
+    i, stall = 0, 0
+    while len(out) < n and stall < len(plan) * 2 + 100:
+        before = len(out)
+        kw, t = plan[i % len(plan)]
+        add(pro_render(t["tpl"], kw, cfg, idx=i))
+        if len(out) > before:
+            used.add(t["id"])
+        stall = stall + 1 if len(out) == before else 0
+        i += 1
+    return {"dorks": _dork_finish(out, n), "used": len(used),
+            "tpls": len({t["id"] for _, t in plan}), "kw": len(kws)}
+
+
+# NORMAL gen — curated PRO-style templates (har niche pe kaam karti hain)
+UNIVERSAL_TEMPLATES = [
+    'intitle:"(KW)"', 'allintitle:"(KW)"',
+    'intext:"(KW)"', 'allintext:"(KW)"',
+    'inurl:"(KW)"', 'allinurl:"(KW)"',
+    '"(KW)" inurl:index', '"(KW)" inurl:login', '"(KW)" inurl:admin',
+    '"(KW)" inurl:upload', '"(KW)" inurl:dashboard', '"(KW)" inurl:search',
+    'intitle:"(KW)" inurl:(PT)=', 'intext:"(KW)" inurl:(PT)=', 'inurl:"(KW)" inurl:(PT)=',
+    '"(KW)" ext:(FT)', '"(KW)" filetype:(FT)', 'intitle:"(KW)" ext:(FT)',
+    '(SF)intitle:"(KW)" ext:(FT)',
+    'intitle:"(KW)" site:(DE)', 'inurl:"(KW)" site:(DE)', '"(KW)" site:(DE)',
+    '"(KW)" inurl:{PF}', 'intitle:"(KW)" inurl:(PF)', 'intext:"(KW)" inurl:(PF)',
+    '(SF)"(KW)" (CO)', 'inurl:(CO)',
+    '"(KW)" inurl:api', '"(KW)" inurl:config', '"(KW)" inurl:backup',
+    '"(KW)" inurl:panel', '"(KW)" inurl:portal', '"(KW)" inurl:register',
+    '"(KW)" (PT)=(NB)', 'intitle:"(KW)" (PT)=(NB)', 'inurl:"(KW)" (PT)=(NB)',
+    '"(KW)" (PT)= inurl:(PF)',
+    '"(KW)" -site:github.com', '"(KW)" -inurl:blog',
+    'intitle:"index of" "(KW)"', '"(KW)" filetype:(FT) site:(DE)',
+]
+
+
+def universal_gen(keywords, n: int = 1000, fresh: bool = False) -> list:
+    """NORMAL gen — universal curated templates (koi config nahi chahiye)."""
+    cfg = pro_load()
+    kws = kw_cores(keywords, limit=2000) or ["admin"]
+    n = max(1, min(DORK_MAX, int(n or 1000)))
+    hist = dork_seen() if fresh else set()
+    out, seen = [], set()
+    tpls = UNIVERSAL_TEMPLATES
+
+    def add(x):
+        x = " ".join(str(x).split())
+        if not x or len(x) > 200 or x in seen:
+            return False
+        if hist and dork_hash(x) in hist:
+            return False
+        seen.add(x)
+        out.append(x)
+        return True
+
+    i, stall = 0, 0
+    limit_iter = n * 8 + 2000
+    while len(out) < n and stall < limit_iter and i < limit_iter:
+        before = len(out)
+        nk = len(kws)
+        kw = kws[i % nk]
+        t = tpls[(i // nk) % len(tpls)]
+        add(pro_render(t, kw, cfg, idx=i))
+        stall = stall + 1 if len(out) == before else 0
+        i += 1
+    return _dork_finish(out, n)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🚧 FEATURE GATE — admin koi bhi button band kar sakta hai + custom message
+# ═══════════════════════════════════════════════════════════════════════════════
+FEATURES = OrderedDict([
+    ("parse", ("🔍 PARSER", ["m:parse", "pr:"])),
+    ("dork", ("🎯 DORKER", ["m:dork", "dd:", "dp:"])),
+    ("kw", ("🔑 HQ KEYWORDS", ["m:kw", "kw:"])),
+    ("rev", ("🔗 URL REVERSE", ["m:rev", "rv:"])),
+    ("inj", ("💉 INJECTOR", ["m:inj", "inj:"])),
+    ("dump", ("📦 DUMPER", ["m:dump", "df:"])),
+    ("proxy", ("🧅 PROXY ENGINE", ["m:proxy", "px:"])),
+    ("qa", ("📊 QUALITY CHECK", ["m:qa", "qa:"])),
+    ("rand", ("🎲 RANDOMIZER", ["m:rand", "rd:"])),
+    ("theme", ("🎨 THEME", ["m:theme", "th:set:"])),
+    ("file", ("📂 FILE UPLOAD", ["f:"])),
+    ("redeem", ("🔑 REDEEM", ["m:redeem"])),
+])
+
+DEFAULT_OFF_MSG = ("🚧 <b>%s</b>\n\n"
+                   "Ye feature abhi <b>maintenance</b> me hai.\n"
+                   "Thodi der baad try karo — team fix kar rahi hai. 🙏")
+
+
+def feat_off() -> dict:
+    v = SETTINGS.get("feat_off")
+    return v if isinstance(v, dict) else {}
+
+
+def feat_is_off(key: str) -> bool:
+    return key in feat_off()
+
+
+def feat_msg(key: str) -> str:
+    off = feat_off()
+    label = FEATURES.get(key, (key, []))[0]
+    custom = str(off.get(key) or "").strip()
+    if custom:
+        return "🚧 <b>%s</b>\n\n%s" % (label, esc(custom))
+    return DEFAULT_OFF_MSG % label
+
+
+def feat_gate(data: str) -> str:
+    """callback_data dekho — koi feature band hai kya?"""
+    if not data or data.startswith(("m:home", "m:help", "m:redeem", "a:", "cap:")):
+        return ""
+    for key, (_label, prefixes) in FEATURES.items():
+        if not feat_is_off(key):
+            continue
+        for p in prefixes:
+            if data == p or data.startswith(p):
+                return key
+    return ""
+
+
+def feat_set(key: str, off: bool, message: str = "") -> None:
+    d = dict(feat_off())
+    if off:
+        d[key] = message or ""
+    else:
+        d.pop(key, None)
+    SETTINGS["feat_off"] = d
+    jsave("settings", SETTINGS)
+
+
+def feat_kb() -> InlineKeyboardMarkup:
+    rows = []
+    for key, (label, _p) in FEATURES.items():
+        mk = "🚫" if feat_is_off(key) else "✅"
+        rows.append([InlineKeyboardButton("%s %s" % (mk, label), callback_data="a:feat:" + key),
+                     InlineKeyboardButton("✏️ MSG", callback_data="a:featmsg:" + key)])
+    rows.append([InlineKeyboardButton("✅ SAB ON", callback_data="a:featall:1"),
+                 InlineKeyboardButton("⬅️ BACK", callback_data="a:home")])
+    return RK(rows)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📦 NICHE KEYWORD PACKS — ready HQ seeds
+# ═══════════════════════════════════════════════════════════════════════════════
+NICHE_PACKS = OrderedDict([
+    ("crypto", ("₿ CRYPTO", ["crypto wallet", "bitcoin wallet", "metamask seed",
+                             "private key", "crypto exchange", "ledger backup"])),
+    ("creds", ("🔐 EMAIL:PASS", ["email password", "mail login", "smtp account",
+                                 "inbox access", "email list", "mail pass combo"])),
+    ("cc", ("💳 CARD (CC)", ["credit card bin", "carding shop", "cvv fullz",
+                            "card checker", "cc shop", "carding forum"])),
+    ("ecommerce", ("🛒 ECOMMERCE", ["shopify store", "woocommerce shop", "online store",
+                                    "product catalog", "checkout page", "order tracking"])),
+    ("admin", ("👑 ADMIN PANEL", ["admin panel", "admin login", "cpanel access",
+                                  "phpmyadmin login", "dashboard admin", "control panel"])),
+    ("db", ("🗄 DATABASE", ["mysql database", "sql backup", "database dump",
+                            "phpmyadmin db", "mssql server", "mongodb dump"])),
+    ("api", ("🔌 API / KEYS", ["api key", "api token", "rest api endpoint",
+                               "swagger docs", "graphql endpoint", "open api"])),
+    ("files", ("📁 FILES / BKP", ["backup file", "database backup", "config backup",
+                                  "sql dump file", "site backup", "full backup"])),
+    ("shop", ("🛍 SHOPPING", ["shopping cart", "payment gateway", "coupon code",
+                              "discount deal", "price comparison", "buy online"])),
+    ("smtp", ("📧 SMTP / MAIL", ["smtp server", "mail server", "smtp relay",
+                                 "email sender", "smtp credentials", "mail server login"])),
+    ("tools", ("🛠 TOOLS", ["admin finder", "sql scanner", "vuln scanner",
+                            "dork generator", "subdomain finder", "port scanner"])),
+    ("leak", ("🕵 LEAK / DB", ["leaked database", "breach dump", "combo list",
+                               "credential dump", "password leak", "data leak"])),
+    ("gov", ("🏛 GOV / EDU", ["government portal", "govt login", "education portal",
+                              "university login", "gov database", "public records"])),
+    ("mobile", ("📱 MOBILE / APK", ["apk download", "android app", "mod apk",
+                                    "premium apk", "ios app", "app store"])),
+    ("hosting", ("🖥 HOSTING", ["shared hosting", "vps server", "web hosting panel",
+                                "ftp access", "server login", "hosting cpanel"])),
+])
+
+
+def niche_seeds(key: str) -> list:
+    v = NICHE_PACKS.get((key or "").lower())
+    return list(v[1]) if v else []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  TEXT ROUTER
 # ═══════════════════════════════════════════════════════════════════════════════
 AWAIT_HANDLERS = {
     "dork_count": input_dork_count,
-    "dork_domain": input_dork_domain,
+    "gen_count": None,
+    "gen_kw": None,
+    "dpgen_count": None,
+    "dpgen_kw": None,
+    "pro_combo": None,
+    "pro_domains": None,
+    "pro_params": None,
+    "pro_filetypes": None,
+    "pro_sfilters": None,
+    "pro_pfilters": None,
+    "a_tut": None,
+    "feat_msg": None,
+    "qa_keywords": None,
+    "qa_dorks": None,
+    "qa_urls": None,
     "kw_input": input_kw_input,
     "kw_count": input_kw_count,
     "rev_urls": input_rev_urls,
     "inj_urls": input_inj_urls,
     "parse_dorks": input_parse_dorks,
     "parse_max": input_parse_max,
-    "qa_items": input_qa,
     "rand_items": input_rand,
     "key_redeem": None,
     "bc_text": None,
@@ -4477,6 +5804,8 @@ def kb_admin() -> InlineKeyboardMarkup:
          InlineKeyboardButton("📦 DUMPS", callback_data="a:dumps")],
         [InlineKeyboardButton("🎨 THEME / FONT", callback_data="a:theme"),
          InlineKeyboardButton("🔑 API KEYS", callback_data="a:keys_api")],
+        [InlineKeyboardButton("🚧 FEATURES ON/OFF", callback_data="a:features")],
+        [InlineKeyboardButton("🎬 TUTORIAL VIDEO", callback_data="a:tutorial")],
         [InlineKeyboardButton("📣 BROADCAST", callback_data="a:bc"),
          InlineKeyboardButton("🚫 BANS", callback_data="a:bans")],
         [InlineKeyboardButton("💾 BACKUP", callback_data="a:backup"),
@@ -4782,6 +6111,58 @@ async def admin_callback(update, context, action: str):
             pass
         return
 
+    if action.startswith("features") or action.startswith("feat"):
+        arg = action.split(":", 1)[1] if ":" in action else ""
+        if action.startswith("featall:"):
+            if action.endswith("1"):
+                SETTINGS["feat_off"] = {}
+                jsave("settings", SETTINGS)
+            arg = ""
+        elif action.startswith("feat:") and arg:
+            key = arg
+            if key in FEATURES:
+                feat_set(key, not feat_is_off(key))
+            return await ed(
+                (H("FEATURES", "ON / OFF") + "\n\n"
+                 "🚫 = band (user ko message dikhega)\n"
+                 "✅ = chalu\n\n"
+                 "✏️ <b>MSG</b> = custom message likho "
+                 "(jaise <i>ye feature maintenance me hai</i>)\n\n"
+                 "<b>Abhi band:</b> <code>%s</code>"
+                 % (", ".join(feat_off().keys()) or "koi nahi")),
+                feat_kb())
+        elif action.startswith("featmsg:") and arg:
+            context.user_data["await"] = "feat_msg"
+            context.user_data["await_admin"] = True
+            context.user_data["feat_key"] = arg
+            return await ed(
+                (H("CUSTOM MESSAGE", FEATURES.get(context.user_data["feat_key"], ("?",))[0]) + "\n\n"
+                 "Jo message user ko dikhana hai wo bhejo.\n"
+                 "Jaise: <i>ye feature maintenance me hai</i>\n"
+                 "ya <i>this feature have issue we are fixing</i>\n\n"
+                 "Khaali <code>-</code> bhejo = default message."),
+                kb_back("a:features"))
+        return await ed(
+            (H("FEATURES", "ON / OFF") + "\n\n"
+             "🚫 = band (user ko message dikhega)\n"
+             "✅ = chalu\n\n"
+             "<b>Abhi band:</b> <code>%s</code>"
+             % (", ".join(feat_off().keys()) or "koi nahi")),
+            feat_kb())
+
+    if action == "tutorial":
+        cur = str(SETTINGS.get("tutorial") or "").strip() or "—"
+        context.user_data["await"] = "a_tut"
+        context.user_data["await_admin"] = True
+        return await ed(
+            (H("TUTORIAL VIDEO", "how to use") + "\n\n"
+             "📺 Abhi: <code>%s</code>\n\n"
+             "YouTube video ka link bhejo —\n"
+             "user HELP me <b>🎬 HOW TO USE</b> button pe click karega.\n\n"
+             "Hatane ke liye <code>-</code> bhejo."
+             % esc(cur)),
+            kb_back("a:home"))
+
     if action == "logs":
         p = os.path.join(BASE_DIR, "bot.log")
         tail = "—"
@@ -4867,7 +6248,82 @@ async def cmd_addkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 AWAIT_HANDLERS["bc_text"] = lambda *a, **k: input_broadcast(*a, **k)
+async def _dork_domain_shim(upd, ctx, txt):
+    return await input_pro_set(upd, ctx, "domains", txt)
+
+
 AWAIT_HANDLERS["deep_max"] = lambda *a, **k: input_deep_max(*a, **k)
+AWAIT_HANDLERS["dork_domain"] = lambda *a, **k: input_pro_set(*a, "domains", k.get("text", ""), ) if False else _dork_domain_shim(*a, **k)
+AWAIT_HANDLERS["gen_count"] = lambda *a, **k: input_gen_count(*a, **k)
+AWAIT_HANDLERS["gen_kw"] = lambda *a, **k: input_gen_kw(*a, **k)
+AWAIT_HANDLERS["dpgen_count"] = lambda *a, **k: input_dpgen_count(*a, **k)
+AWAIT_HANDLERS["dpgen_kw"] = lambda *a, **k: input_dpgen_kw(*a, **k)
+AWAIT_HANDLERS["pro_combo"] = lambda *a, **k: input_pro_combo(*a, **k)
+def _pro_await(key):
+    async def _h(upd, ctx, txt):
+        return await input_pro_set(upd, ctx, key, txt)
+    return _h
+
+
+for _pk in ("domains", "params", "filetypes", "sfilters", "pfilters"):
+    AWAIT_HANDLERS["pro_" + _pk] = _pro_await(_pk)
+
+
+def _qa_await(kind):
+    async def _h(upd, ctx, txt):
+        return await input_qa_kind(upd, ctx, kind, txt)
+    return _h
+
+
+for _qk in ("keywords", "dorks", "urls"):
+    AWAIT_HANDLERS["qa_" + _qk] = _qa_await(_qk)
+
+
+async def input_tutorial(upd, ctx, txt):
+    """Admin — tutorial video URL set."""
+    val = (txt or "").strip()
+    if val == "-":
+        SETTINGS["tutorial"] = ""
+        jsave("settings", SETTINGS)
+        await upd.effective_message.reply_text("🗑 Tutorial video hata diya.",
+                                               reply_markup=kb_admin())
+        return
+    if not re.match(r"^https?://", val, re.I):
+        await upd.effective_message.reply_text(
+            "❌ Link <code>https://</code> se shuru hona chahiye.\n"
+            "YouTube: <code>https://youtu.be/XXXX</code>", parse_mode=ParseMode.HTML)
+        ctx.user_data["await"] = "a_tut"
+        ctx.user_data["await_admin"] = True
+        return
+    SETTINGS["tutorial"] = val
+    jsave("settings", SETTINGS)
+    await upd.effective_message.reply_text(
+        "✅ Tutorial video set:\n<code>%s</code>\n\n"
+        "Ab user HELP me 🎬 <b>HOW TO USE</b> button dekhega." % esc(val[:150]),
+        parse_mode=ParseMode.HTML, reply_markup=kb_admin())
+
+
+async def input_feat_msg(upd, ctx, txt):
+    """Admin — kisi feature ka custom maintenance message."""
+    key = ctx.user_data.get("feat_key") or ""
+    if key not in FEATURES:
+        await upd.effective_message.reply_text("❌ Feature nahi mila.", reply_markup=kb_admin())
+        return
+    val = (txt or "").strip()
+    if val == "-":
+        feat_set(key, True, "")
+        note = "↩️ Default message wapas"
+    else:
+        feat_set(key, True, val[:400])
+        note = "✅ Custom message set (feature abhi BAND hai)"
+    await upd.effective_message.reply_text(
+        "%s\n\n<b>%s</b>\n\n<i>%s</i>"
+        % (note, FEATURES[key][0], esc(val[:300] or "default"), ),
+        parse_mode=ParseMode.HTML, reply_markup=feat_kb())
+
+
+AWAIT_HANDLERS["a_tut"] = lambda *a, **k: input_tutorial(*a, **k)
+AWAIT_HANDLERS["feat_msg"] = lambda *a, **k: input_feat_msg(*a, **k)
 
 
 async def input_broadcast(update, context, text: str):

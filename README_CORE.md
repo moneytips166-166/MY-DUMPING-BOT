@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v1.8
+# 🐍 PYTHON SNAKE CORE — v1.9
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -108,6 +108,101 @@ Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
 
 ---
+
+## 🚀 v1.9 — DORKER PRO (templates system)
+
+### 🎯 DORKER → 2 options
+```
+⚡ DORKS GEN        → Count → Keywords → ready dorks (universal templates)
+🚀 DORKS GEN PRO    → poora template system (neeche)
+🌍 COUNTRY DORKS    → 16 countries (.in .pk .us .uk .ru .de … .gov .edu)
+```
+
+### ⚡ DORKS GEN (normal)
+Count poochta → keywords poochta → **40 universal templates** (har niche pe kaam karti hain):
+`intitle:`, `allintitle:`, `intext:`, `inurl:`, `ext:`, `filetype:`, `site:`, `inurl:index of`, combos, params + numbers.
+Ek keyword se **1000+ unique dorks**. Fresh button se naye.
+
+### 🚀 DORKS GEN PRO — 10 buttons
+| Button | Kya karta hai |
+|---|---|
+| 🌐 **Set Domains** | `.com .net .org .ru .de .in .pk .us .uk .info .gov` (aap jo bhejo) |
+| 🔢 **Set URL Params** | `id, user_id, cat, type, page, item, product` |
+| 📄 **Set Filetypes** | `.php .asp .aspx .jsp` |
+| 🔍 **Set Search Filters** | `inurl: intitle: allinurl: allintitle:` |
+| 📋 **Set Page Filters** | `index view page item product user login search show cat` |
+| 🧩 **View Templates** | saari templates + har ek ko **ON/OFF** |
+| 📊 **View Current Config** | poora status card + saari templates |
+| 🧬 **Gen All Combos** | `email:pass` `cc` etc — add / remove / save |
+| ♻️ **Reset to Default** | confirmation ke saath reset |
+| 🎯 **GEN DORKS** | count → keywords → **best template** chun ke dorks |
+
+### 🧩 Template engine (20 default + custom)
+```
+(KW)=keyword  (DE)=domain   (PF)=page-filter (PT)=param
+(FT)=filetype (SF)=search-filter (NB)=number (CO)=combo
+```
+Default 10 (jaise purane bot me thay) + 10 naye HQ:
+```
+(KW).(PF)?(PT)=          (KW).(PF)?(PT)= site:(DE)
+(KW).(PF)?(PT)=(NB)      (KW).(PF)?(PT)=(NB) site:(DE)
+(SF)"(KW)" site:(DE)     (SF)(KW).(PF)?(PT)=
+(SF)(KW).(PF)?(PT)= site:(DE)   (SF)(PT)=(KW).(PF)? site:(DE)
+(SF)(KW).(PF)?(PT)=(NB)  (SF)(KW).(PF)?(PT)=(NB) site:(DE)
++ (SF)(KW) (FT) · (KW) (CO) · inurl:(KW)/(PF) · intitle:(KW) inurl:(PT)= …
+```
+**Config card** exactly jaise aapne dikhaya:
+```
+🌐 Domains  : 11 — .com .net .org .ru .de
+🔢 Params   : 7 — id, user_id, cat, type, page
+📄 Filetypes: 4 — .php .asp .aspx .jsp
+✅ Enabled  : 20/20 templates
+01. (KW).(PF)?(PT)= …
+```
+
+### 🌍 Country dorks
+16 countries ready — `.in .pk .us .uk .ru .de .fr .br .id .ng .cn .tr .ae .sa .gov .edu`
+Country chuno → domains set → `🎯 GEN DORKS` → `site:.in inurl:login` type dorks.
+
+### 🧠 AUTO-DETECT — galat input pe saaf jawab
+Bot khud pehchanta hai input kya hai:
+`keywords · dorks · urls · domains · params · filetypes · sfilters · pfilters · combos`
+
+```
+❌ Ye keywords nahi hai — DORKS dijiye.
+📥 Aapne bheja: 🎯 DORKS
+✅ Chahiye   : 🔑 KEYWORDS — jaise shopify store, crypto wallet
+```
+Laga hua hai: **HQ KEYWORDS**, **PARSER**, **DORKER**, **INJECTOR**, **DUMPER**, **QUALITY**.
+
+### 📊 QUALITY CHECKER — ab 3 type
+| Type | Kya dekhta hai |
+|---|---|
+| 🔑 **KEYWORDS** | length, words, intent, repeat |
+| 🎯 **DORKS** | operators, structure, quotes, deprecated |
+| 🔗 **URLS** | params, tracking, junk host, dynamic page, injectable param |
+
+Har report: avg + buckets (🔥80+ … 🔴<25) + top/worst + `80+ only` file + full scored txt.
+
+### 🔑 REDEEM + 🎬 TUTORIAL + 🚧 ADMIN CONTROL
+- **Home me 🔑 REDEEM KEY** button (admin button nahi — sirf `/admin`)
+- **HELP me 🎬 HOW TO USE** button — admin panel se YouTube link set karo
+- **Admin → 🚧 FEATURES ON/OFF** — koi bhi feature band karo + **apna message** likho
+  ```
+  🚧 PARSER
+  ye feature abhi maintenance me hai
+  ```
+  ya `this feature have issue we are fixing` — jo likho wahi user ko dikhega.
+  12 features: parser, dorker, keywords, reverse, injector, dumper, proxy, quality, randomizer, theme, file upload, redeem.
+- Admin ko gate kabhi nahi lagta.
+
+### 📦 NICHE PACKS (ready HQ seeds)
+15 packs — click → count → keywords:
+`crypto · email:pass · cc · ecommerce · admin panel · database · api · files · shopping · smtp · tools · leak · gov/edu · mobile/apk · hosting`
+
+### ✨ Stylish fonts
+Naye screens ke labels/headings bhi ab **theme font** me hain (`tag()` + `style()`),
+sirf data plain rehta hai (keywords/dorks waise ke waise — warna copy-paste kharab hota).
 
 ## 🚀 v1.8 — HQ KEYWORDS v2 + 100K LIMIT + FRESH SYSTEM
 
