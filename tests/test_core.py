@@ -48,7 +48,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.6", "VERSION")
+    eq(core.VERSION, "v2.7", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -461,10 +461,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.6"')
+    contains(btxt, 'VERSION = "v2.7"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.6", "shim se version")
+    eq(core.VERSION, "v2.7", "shim se version")
 
 
 def test_diagnostics():
@@ -558,6 +558,82 @@ def test_batch():
     contains(txt, "/batch proxy 4000")
 
 
+def _fake_stats(n=1000):
+    return {"scanned": n, "total": n, "raw": 12, "unique": 10, "errors": 0,
+            "filtered": 0, "engine_hits": {"ddgl": 12}, "junk": 0, "mismatch": 0,
+            "cc": 0, "api": 0, "gj": 0, "relaxed": 0, "mode": "fast",
+            "engines": 3, "aborted": 0, "wb": 0, "time_up": 0, "dead": [],
+            "engines_used": 3}
+
+
+def test_parse_everything():
+    """1,000 dorks → saare use hon, koi 'kitne URLs' sawaal nahi."""
+    group("parse-all")
+    calls = {}
+
+    async def fake_deep(dorks, **kw):
+        calls["n"] = len(dorks)
+        calls["max"] = kw.get("max_urls")
+        calls["budget"] = kw.get("budget")
+        calls["dorks"] = list(dorks)
+        return {"urls": ["https://x.gov.in/login"], "stats": _fake_stats(len(dorks))}
+
+    real_deep, real_dump, real_send = core.parse_deep, core.dump_text, core.send_file
+    core.parse_deep = fake_deep
+    core.dump_text = lambda *a, **k: ("/tmp/fake.txt", 1)
+
+    async def fake_send(*a, **k):
+        return None
+
+    core.send_file = fake_send
+    try:
+        text = "\n".join("inurl:page%d site:gov.in" % i for i in range(1000))
+        ctx = FakeContext({})
+        upd = FakeUpdate(text=text)
+        asyncio.run(core.input_parse_dorks(upd, ctx, text))
+        eq(calls.get("n"), 1000, "1000 dorks — sabhi scan me")
+        ok(calls.get("max", 0) >= 1000, "auto URL limit bada")
+        ok(calls.get("budget", 0) > 0, "budget set")
+        ok("Kitne URLs" not in "\n".join(upd.texts()), "URL count ka sawaal nahi")
+        ok("1,000" in "\n".join(upd.texts()) or "1000" in "\n".join(upd.texts()),
+           "asli count dikhe")
+
+        # last dorks → bhi poore (pehle 30 pe cut hota tha)
+        calls.clear()
+        ctx2 = FakeContext({"last_dorks": ["inurl:p%d" % i for i in range(500)]})
+        upd2 = FakeUpdate(data="pr:last")
+        asyncio.run(core.on_callback(upd2, ctx2))
+        eq(calls.get("n"), 500, "last dorks — sabhi")
+        calls.clear()
+        ctx3 = FakeContext({"last_dorks": ["inurl:q%d" % i for i in range(700)]})
+        upd3 = FakeUpdate(data="pr:deep")
+        asyncio.run(core.on_callback(upd3, ctx3))
+        eq(calls.get("n"), 700, "deep scan — sabhi")
+
+        # screenshot wala case: 1,000 dork ki file bheji → 1000 hi jayein
+        calls.clear()
+        from harness import FakeDocument  # noqa: F401
+        data = ("\n".join("inurl:page%d site:gov.in" % i for i in range(1000))).encode()
+        ctx4 = FakeContext({"verified": True})
+        ctx4.user_data["await"] = "parse_dorks"
+        ctx4.user_data["await_ts"] = time.time()
+        upd4 = FakeUpdate(doc=FakeDocument("pro_20261106_175555.txt", data))
+        asyncio.run(core.on_document(upd4, ctx4))
+        eq(calls.get("n"), 1000, "file ke 1000 dorks — koi cap nahi")
+    finally:
+        core.parse_deep, core.dump_text, core.send_file = real_deep, real_dump, real_send
+    # limit helpers
+    saved = core.SETTINGS.pop("parse_url_limit", None)
+    eq(core.parse_url_limit(0), 5000)
+    eq(core.parse_url_limit(1000), 200000)
+    core.sset("parse_url_limit", 12345)
+    eq(core.parse_url_limit(1000), 12345, "admin limit")
+    core.SETTINGS.pop("parse_url_limit", None)
+    if saved is not None:
+        core.SETTINGS["parse_url_limit"] = saved
+    ok(core.parse_budget() >= 60, "budget min")
+
+
 def test_help_uses_fonts():
     group("help fonts")
     txt = core.help_text()
@@ -574,7 +650,8 @@ def main():
                test_niche_country, test_qa, test_help_uses_fonts,
                test_reader_formats, test_kw_slug, test_engines, test_crawler,
                test_file_in_flow, test_pending_file, test_enginetest,
-               test_single_file, test_diagnostics, test_batch):
+               test_single_file, test_diagnostics, test_batch,
+               test_parse_everything):
         try:
             fn()
         except Exception as exc:

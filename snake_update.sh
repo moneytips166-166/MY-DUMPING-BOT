@@ -155,11 +155,11 @@ LINES="$(wc -l < "$BOT" 2>/dev/null | tr -d ' ')"
 echo ""
 echo "  📦 Version : ${VER:-?}  (${LINES:-?} lines)"
 case "${VER:-}" in
-  v2.6)
-    echo "  ✅ v2.6 — proxy BATCH check (4k → agla 4k… sab) + /batch + inject batch"
+  v2.7)
+    echo "  ✅ v2.7 — 1000 dorks = 1000 scan (50 ka cap gaya), koi 'kitne URLs' sawaal nahi, jitna mile utna"
     ;;
-  v2.5|v2.4|v2.3|v2.2|v2.1|v2.0)
-    echo "  ⚠️  ${VER} lag raha hai — v2.6 chahiye (dobara ./update.sh chalao)"
+  v2.6|v2.5|v2.4|v2.3|v2.2|v2.1|v2.0)
+    echo "  ⚠️  ${VER} lag raha hai — v2.7 chahiye (dobara ./update.sh chalao)"
     ;;
   *)
     echo "  ⚠️  Purana version lag raha hai — dobara ./update.sh chalao"

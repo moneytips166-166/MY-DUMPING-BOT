@@ -64,7 +64,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.6"
+VERSION = "v2.7"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1970,7 +1970,10 @@ ENGINE_SETS = {
 ENGINE_LABEL = {"fast": "⚡ FAST — 3 engines (bina proxy)",
                 "normal": "⚖️ NORMAL — 5 engines",
                 "max": "🐢 MAX — 15 engines (proxy chahiye)"}
-ENGINE_TIMEOUT = {"fast": 8.0, "normal": 10.0, "max": 15.0}
+ENGINE_TIMEOUT = {"fast": 6.0, "normal": 8.0, "max": 12.0}
+
+# Bina proxy ye engines pakka block karte hain → try bhi mat karo (time bachao)
+NO_PROXY_DEAD = {"google", "yandex", "startpage", "brave", "qwant", "ecosia", "searx"}
 ENGINE_MISS = {}      # engine -> consecutive empty/blocked count
 ENGINE_LAST = {}      # engine -> (reason, time) — /enginetest + 0-URL card me dikhta hai
 
@@ -2738,27 +2741,53 @@ async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list 
 
 
 # ── DEEP SCAN — sab dorks, poore stats (competitor jaisa card) ───────────────
+def parse_url_limit(ndorks: int = 0) -> int:
+    """URL limit — 0 (default) = JITNA MILE UTNA. Admin se fix bhi kar sakta hai."""
+    try:
+        v = int(sget("parse_url_limit", 0) or 0)
+    except Exception:
+        v = 0
+    if v > 0:
+        return v
+    return min(200000, max(5000, int(ndorks or 0) * 200))
+
+
+def parse_budget() -> float:
+    """Scan kitni der chalega (second) — time khatam to jo mila wahi de dega."""
+    try:
+        return max(60.0, min(7200.0, float(sget("parse_budget", 1800) or 1800)))
+    except Exception:
+        return 1800.0
+
+
 async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                      use_proxy=None, strict: bool = True,
-                     progress=None, mode: str = None) -> dict:
+                     progress=None, mode: str = None, budget: float = 0) -> dict:
     """Har dork scan karo, junk hatao, aur poore stats do:
 
     scanned / raw / unique / errors / filtered / engines
     """
     dorks = [str(d).strip() for d in (dorks or []) if str(d).strip()]
-    max_urls = max(10, min(100000, int(max_urls or 5000)))
+    max_urls = max(10, min(500000, int(max_urls or 5000)))
     pages = max(1, min(10, int(pages or 1)))
     if use_proxy is None:                       # auto
         use_proxy = bool(PROXIES or load_proxy_pool())
     mode = mode if mode in ENGINE_SETS else engines_mode()
-    eng_list = engine_list(mode)
-    eng_to = ENGINE_TIMEOUT.get(mode, 10.0)
+    eng_list = [e for e in engine_list(mode)
+                if (use_proxy or e not in NO_PROXY_DEAD) and ENGINE_MISS.get(e, 0) < 4]
+    if not eng_list:                            # sab dead → kam se kam 2 try karo
+        eng_list = [e for e in engine_list(mode)
+                    if use_proxy or e not in NO_PROXY_DEAD][:2] or engine_list(mode)[:2]
+    eng_to = ENGINE_TIMEOUT.get(mode, 8.0)
+    _dead_engines = set()
     st = {"scanned": 0, "total": len(dorks), "raw": 0, "unique": 0,
           "errors": 0, "filtered": 0, "engine_hits": defaultdict(int),
           "junk": 0, "mismatch": 0, "cc": 0, "api": 0, "gj": 0,
           "relaxed": 0, "mode": mode, "engines": len(eng_list),
-          "aborted": 0, "wb": 0, "empty_streak": 0}
+          "aborted": 0, "wb": 0, "empty_streak": 0, "time_up": 0,
+          "engines_used": len(eng_list), "dead": []}
     ABORT_AFTER = max(8, int(sget("parse_abort_after", 15) or 15))
+    _t_start = time.time()
     seen, out = set(), []
 
     # 1) site: dorks -> Common Crawl (free, bahut zyada URLs)
@@ -2807,7 +2836,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     async with aiohttp.ClientSession(connector=conn) as session:
         # 2) optional API keys (agar user ne daale hain)
         if k["serpapi"] or k["serper"] or k["brave"] or (k["cse_key"] and k["cse_cx"]):
-            for dork in dorks[:60]:
+            for dork in dorks[:200]:
                 got = []
                 if k["serper"]:
                     got = await serper_search(session, dork, num=20)
@@ -2832,6 +2861,12 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
         for i, dork in enumerate(dorks, 1):
             st["scanned"] = i
             if len(out) >= max_urls:
+                break
+            # ⏱ time budget — 1000 dork pe ghanton na atko, jitna mila wahi de do
+            if budget and (time.time() - _t_start) > budget:
+                st["time_up"] = 1
+                logger.warning("parse_deep: time budget %.0fs — %d dorks pe ruka",
+                               budget, i)
                 break
             # 🛑 15 dorks tak kuch nahi mila + engines fail → 1000 dork zaya na karo
             if not out and i > ABORT_AFTER and st["errors"] >= ABORT_AFTER * 2:
@@ -2866,11 +2901,17 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                 order.sort(key=lambda e: ENGINE_MISS.get(e, 0) >= 3)
                 got_any = 0
                 for eng in order:
+                    if eng in _dead_engines:        # is run me pehle hi fail hua
+                        continue
                     proxy = _pick_proxy() if use_proxy else None
                     urls = await fetch_engine(session, eng, dork, proxy, page=page,
                                               timeout=eng_to)
                     if not urls:
                         st["errors"] += 1          # engine block/empty (proxy/IP)
+                        if ENGINE_MISS.get(eng, 0) >= 3 and eng not in _dead_engines:
+                            _dead_engines.add(eng)      # 4th time try bhi nahi
+                            st["dead"].append(eng)
+                            logger.info("parse_deep: %s dead — skip is run", eng)
                         continue
                     st["engine_hits"][eng] += len(urls)
                     st["raw"] += len(urls)
@@ -3078,10 +3119,19 @@ def dumps_list(limit: int = 12) -> list:
         return []
 
 
+def reply_msg(update):
+    """Message jispe reply bhejna hai — callback query me bhi kaam karta hai."""
+    m = getattr(update, "effective_message", None)
+    if m is None or not hasattr(m, "reply_text"):
+        q = getattr(update, "callback_query", None)
+        m = getattr(q, "message", None) or m
+    return m
+
+
 async def send_file(update, path: str, caption: str = ""):
     try:
         with open(path, "rb") as f:
-            await update.effective_message.reply_document(document=f,
+            await reply_msg(update).reply_document(document=f,
                                                           filename=os.path.basename(path),
                                                           caption=caption[:1000])
         return True
@@ -3547,6 +3597,8 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_parse_deep(update, context)
         if rest == "eng":
             return await cb_parse_engine(update, context)
+        if rest == "limit":
+            return await cb_parse_limit(update, context)
         if rest == "crawl":
             return await cb_deep_crawl(update, context,
                                        context.user_data.get("last_urls") or [])
@@ -4771,6 +4823,10 @@ async def tool_parse(update, context):
         [InlineKeyboardButton("📥 USE LAST %d DORKS" % len(last), callback_data="pr:last")],
         [InlineKeyboardButton("✍️ MANUAL DORK", callback_data="pr:manual")],
         [InlineKeyboardButton("🌊 DEEP CRAWL (last URLs)", callback_data="pr:crawl")],
+        [InlineKeyboardButton("🎯 URL LIMIT: %s"
+                              % ("SAB" if not int(sget("parse_url_limit", 0) or 0)
+                                 else fmt(int(sget("parse_url_limit", 0)))),
+                              callback_data="pr:limit")],
         [InlineKeyboardButton("🎛 %s" % ENGINE_LABEL[mode].split(" ", 1)[-1],
                               callback_data="pr:eng")],
         [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
@@ -4780,6 +4836,10 @@ async def tool_parse(update, context):
            + "\n" + KV("Engines", "<code>%s</code>" % ", ".join(engine_list(mode)), "⚙️")
            + "\n" + KV("Free Google", "✅ ON (no key)" if gj_enabled() else "⚪ OFF", "🐦")
            + "\n" + KV("Proxy", ("✅ %d alive" % len(pool)) if pool else "⚪ none — no-proxy mode", "🧅")
+           + "\n" + KV("Dorks ready", "<code>%s</code>" % fmt(len(last)), "🎯")
+           + "\n" + KV("URL limit", ("<b>SAB</b> — jitna mile utna"
+                                      if not int(sget("parse_url_limit", 0) or 0)
+                                      else "<code>%s</code>" % fmt(int(sget("parse_url_limit", 0)))), "🌐")
            + "\n\n" + P("DDG • Mojeek • Marginalia bina proxy chalte hain. "
                            "Google/Yandex/Startpage proxy ke bina block karte hain.")
            + "\n\n" + B("Dork list bhejo") + "\n"
@@ -4806,6 +4866,22 @@ async def cb_parse_engine(update, context):
     return await tool_parse(update, context)
 
 
+async def launch_deep(update, context, dorks, note: str = ""):
+    """Bina kuch poochhe — poore dorks + auto URL limit se scan shuru."""
+    dorks = _uniq([str(d).strip() for d in (dorks or []) if str(d).strip()])
+    if not dorks:
+        await reply_msg(update).reply_text("❌ Dork nahi mile. DORKER chalao.")
+        return
+    context.user_data["parse_dorks"] = dorks          # SAARE dorks — koi cap nahi
+    if note:
+        try:
+            await reply_msg(update).reply_text(note, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+    await_clear(context)
+    return await input_deep_max(update, context, "")
+
+
 async def cb_parse_last(update, context):
     q = update.callback_query
     dorks = context.user_data.get("last_dorks") or []
@@ -4815,14 +4891,27 @@ async def cb_parse_last(update, context):
         except Exception:
             pass
         return
-    context.user_data["parse_dorks"] = dorks[:30]
     try:
-        await q.edit_message_text(H("PARSER") + "\n\nKitne URLs chahiye? <b>Number bhejo</b>\n"
-                                  "<i>Recommended: 100</i>", parse_mode=ParseMode.HTML,
-                                  reply_markup=kb_back("m:parse"))
+        await q.answer("Poora scan — %d dorks" % len(dorks))
     except Exception:
         pass
-    await_set(context, "parse_max")
+    return await launch_deep(update, context, dorks)
+
+
+async def cb_parse_limit(update, context):
+    """🎯 URL limit cycle — SAB → 5k → 20k → 50k → 1L → SAB."""
+    order = [0, 5000, 20000, 50000, 100000]
+    try:
+        cur = int(sget("parse_url_limit", 0) or 0)
+    except Exception:
+        cur = 0
+    nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else 0
+    sset("parse_url_limit", nxt)
+    try:
+        await update.callback_query.answer("URL limit: %s" % ("SAB (jitna mile)" if not nxt else fmt(nxt)))
+    except Exception:
+        pass
+    return await tool_parse(update, context)
 
 
 async def cb_parse_manual(update, context):
@@ -4844,37 +4933,38 @@ async def cb_parse_deep(update, context):
         except Exception:
             pass
         return
-    context.user_data["parse_dorks"] = dorks[:1000]
-    doms = domains_from_dorks(dorks)
-    extra = ("\n🌐 <b>%d domain</b> mile → Common Crawl se bhi URLs aayenge" % len(doms)) if doms else ""
     try:
-        await q.edit_message_text(
-            H("DEEP SCAN", "sab dorks • poore stats") + "\n\n"
-            "🎯 Dorks: <b>%d</b>%s\n\n"
-            "Max URLs kitne chahiye? <b>Number bhejo</b> (10 – 100000)\n"
-            "<i>Recommended: 5000 (bada number = zyada time)</i>" % (len(dorks), extra),
-            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
+        await q.answer("Poora scan — %d dorks" % len(dorks))
     except Exception:
         pass
-    await_set(context, "deep_max")
+    return await launch_deep(update, context, dorks)
 
 
 async def input_deep_max(update, context, text: str):
+    """text khaali = auto (jitna mile utna). Number diya to wahi limit."""
     import re as _re
-    try:
-        mx = int(_re.sub(r"[^0-9]", "", text) or "5000")
-    except Exception:
-        mx = 5000
-    mx = max(50, min(100000, mx))
     pf = _take_pending(context, "deep_max", "parse_max")
     if pf:
         context.user_data["parse_dorks"] = pf
     dorks = context.user_data.get("parse_dorks") or context.user_data.get("last_dorks") or []
     if not dorks:
-        await update.effective_message.reply_text("❌ Dork nahi mile. DORKER chalao.")
+        await reply_msg(update).reply_text("❌ Dork nahi mile. DORKER chalao.")
         return
-    msg = await update.effective_message.reply_text(
-        "🚀 <b>DEEP SCAN chalu…</b>\n0 / %d dorks" % len(dorks), parse_mode=ParseMode.HTML)
+    _num = _re.sub(r"[^0-9]", "", text or "")
+    if _num:
+        mx = max(50, min(200000, int(_num)))
+        _auto = False
+    else:                                    # koi sawaal nahi — auto max
+        mx = parse_url_limit(len(dorks))
+        _auto = True
+    budget = parse_budget()
+    msg = await reply_msg(update).reply_text(
+        "🚀 <b>DEEP SCAN chalu…</b>\n"
+        "🎯 Dorks: <b>%s</b>\n"
+        "🌐 URL limit: <b>%s</b>\n"
+        "⏱ Budget: <b>%s min</b>\n\n<i>Jitna mil jayega utna — 0 / %s dorks</i>"
+        % (fmt(len(dorks)), ("SAB (auto)" if _auto else fmt(mx)),
+           ("%.0f" % (budget / 60)), fmt(len(dorks))), parse_mode=ParseMode.HTML)
     t0 = time.time()
     last = {"t": 0.0}
 
@@ -4890,11 +4980,13 @@ async def input_deep_max(update, context, text: str):
                 "Raw URLs: <code>%s</code>\n"
                 "Unique  : <code>%s</code>\n"
                 "Engines : <code>%s</code>\n"
-                "Blocked : <code>%s</code>\n\n"
+                "Blocked : <code>%s</code>\n"
+                "⏱ Baaki : <code>%s</code>\n\n"
                 "[%s] <b>%.0f%%</b>"
                 % (F("DEEP PARSER — RUNNING", T()["head"]), T()["div"][:20],
                    st["scanned"], st["total"], fmt(st["raw"]), fmt(st["unique"]),
                    fmt(st.get("engines", 5)), fmt(st.get("errors", 0)),
+                   ("%.0f min" % max(0, (budget - (time.time() - t0)) / 60)),
                    bar(pct, 22), pct),
                 parse_mode=ParseMode.HTML)
         except Exception:
@@ -4902,7 +4994,7 @@ async def input_deep_max(update, context, text: str):
 
     res = await parse_deep(dorks, max_urls=mx, pages=int(sget("parse_pages", 1) or 1),
                            use_proxy=None, progress=prog,
-                           mode=user_mode(context))
+                           mode=user_mode(context), budget=budget)
     took = time.time() - t0
     st = res["stats"]
     urls = res["urls"]
@@ -4917,7 +5009,7 @@ async def input_deep_max(update, context, text: str):
             "🐦 Google (free): <code>%s</code>\n"
             "🔑 API: <code>%s</code>\n"
             "⚙️ Engines: <code>%s</code>\n\n"
-            "%s\n%s\n%s\n%s\n\n"
+            "%s\n%s\n%s\n%s\n%s\n\n"
             "[%s] <b>100%%</b>\n\n"
             "📦 <b>Files ready</b>"
             % (st["scanned"], st["total"], fmt(st["raw"]), fmt(st["unique"]),
@@ -4927,6 +5019,10 @@ async def input_deep_max(update, context, text: str):
                KV("Filtered", "<code>%s</code> (junk %s • mismatch %s)"
                   % (fmt(st["filtered"]), fmt(st["junk"]), fmt(st["mismatch"])), "🚫"),
                KV("Engines mode", "<b>%s</b> — badalne ke liye <code>/engines</code>" % engines_mode(), "🎛"),
+               (KV("Ruka", "⏱ time budget khatam — jitna mila utna diya", "⏱")
+                if st.get("time_up") else
+                (KV("Ruka", "🛑 %d dorks pe 0 URL — engines block" % st["scanned"], "🛑")
+                 if st.get("aborted") else KV("Pura", "✅ saare %d dorks scan hue" % st["scanned"], "✅"))),
                bar(100, 22)))
     try:
         await msg.delete()
@@ -4975,15 +5071,24 @@ async def input_parse_dorks(update, context, text: str):
                                                   reply_markup=kb_back("m:parse"))
         await_set(context, "parse_dorks")
         return
-    dorks = [x.strip() for x in text.split("\n") if x.strip()][:50]
+    dorks = []
+    for _ln in str(text or "").splitlines():
+        _ln = _ln.strip()
+        if not _ln:
+            continue
+        # 1 line = 1 dork. Sirf "|" aur comma+space pe alag karo.
+        for _p in re.split(r"\s*\|\s*|,(?=\s)", _ln):
+            _p = _p.strip()
+            if _p:
+                dorks.append(_p)
+    dorks = _uniq(dorks)[:20000]                   # 1000 / 10000 — sab chalega
     if not dorks:
         await update.effective_message.reply_text("❌ Koi dork nahi mila.")
         return
     context.user_data["parse_dorks"] = dorks
-    await update.effective_message.reply_text(
-        H("PARSER") + "\n\n<b>%d dorks</b> mile.\nKitne URLs chahiye? Number bhejo\n"
-        "<i>Recommended: 100</i>" % len(dorks), parse_mode=ParseMode.HTML,
-        reply_markup=kb_back("m:parse"))
+    return await launch_deep(update, context, dorks,
+                             note="✅ <b>%s dorks</b> mile — poora scan, koi limit nahi."
+                                  % fmt(len(dorks)))
 
 
 async def input_parse_max(update, context, text: str):
@@ -7685,6 +7790,8 @@ BATCH_KEYS = {
     "want":    ("want_alive", 0, 100000, "Target alive (0 = saare)", 0, "🎯"),
     "conc":    ("concurrency", 50, 1000, "Parallel check", 400, "⚡"),
     "timeout": ("check_timeout", 3, 30, "Proxy check timeout (s)", 6, "⏱"),
+    "limit":   ("parse_url_limit", 0, 200000, "URL limit (0 = SAB)", 0, "🌐"),
+    "budget":  ("parse_budget", 60, 7200, "Scan time budget (min→sec)", 1800, "⏳"),
 }
 
 
@@ -7692,15 +7799,24 @@ def batch_card() -> str:
     rows = []
     for k, (skey, lo, hi, label, dflt, emoji) in BATCH_KEYS.items():
         val = sget(skey, dflt)
-        rows.append(KV(label, "<code>%s</code>" % ("" if val is None else fmt(val)),
-                       emoji))
+        if val is None:
+            shown = "-"
+        elif skey == "parse_budget":
+            shown = "%s min" % fmt(max(1, int(val) // 60))
+        elif skey == "parse_url_limit" and not int(val or 0):
+            shown = "SAB (jitna mile)"
+        else:
+            shown = fmt(val)
+        rows.append(KV(label, "<code>%s</code>" % shown, emoji))
     return (H("BATCH SETTINGS", "admin") + "\n\n" + "\n".join(rows) + "\n\n"
             "<b>Set karne ke liye:</b>\n"
             "<code>/batch proxy 4000</code>\n"
             "<code>/batch inj 500</code>\n"
             "<code>/batch want 0</code> — 0 matlab saare proxies check karo\n"
             "<code>/batch conc 600</code>\n"
-            "<code>/batch timeout 8</code>\n\n"
+            "<code>/batch timeout 8</code>\n"
+            "<code>/batch limit 0</code> — 0 = jitna mile utna (SAB)\n"
+            "<code>/batch budget 20</code> — 20 minute scan chalega\n\n"
             "<i>Proxy batch 60k proxies ko chhota-chhota check karta hai: 4k → agla 4k → … "
             "jab tak sab na ho. Phone pe 2000–4000 best hai.</i>")
 
@@ -7727,6 +7843,8 @@ async def cmd_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("❌ Number do, jaise <code>4000</code>.",
                                                   parse_mode=ParseMode.HTML)
         return
+    if skey == "parse_budget":
+        v = v * 60                              # minutes me maanga hai
     v = max(lo, min(hi, v))
     sset(skey, v)
     await update.effective_message.reply_text(

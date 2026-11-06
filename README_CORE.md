@@ -1,6 +1,35 @@
-# 🐍 PYTHON SNAKE CORE — v2.6
+# 🐍 PYTHON SNAKE CORE — v2.7
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🎯 v2.7 — 1,000 dorks = 1,000 scan (koi "kitne URLs?" nahi)
+
+Aapne 1,000 dork ki file bheji thi, bot ne **50** bataye — code me `[:50]` ka
+hardcoded cap tha aur phir "kitne URLs chahiye?" poochta tha. Dono gaye.
+
+- ✅ **Saare dorks** use hote hain — 50 / 30 wale caps hata diye (1 se 20,000 tak)
+- ✅ **Koi URL count ka sawaal nahi** — `URL limit: SAB (jitna mile utna)`
+- ✅ **Timeout ki jagah budget** — default **30 min** scan, `⏱ Baaki: 22 min` live dikhta hai
+- ✅ Time khatam → jo URLs mile wahi de deta hai (`⏱ Ruka: time budget khatam`)
+- ✅ Progress card me `⏱ Baaki` + `Blocked` + engine-wise wajah
+- ✅ Parse card me `Dorks ready` + `URL limit` dikhta hai
+- ⚡ **Fast engines** — block hone wale engine (Google/Yandex/Startpage/Brave/Qwant/Ecosia)
+  bina proxy try hi nahi hote; jo 3 baar fail ho wo **poori run me skip** (time bachta hai)
+
+```bash
+cd ~/snake && ./update.sh && ./restart.sh
+```
+
+Control (admin se, agar chahiye):
+```
+/batch limit 0        # 0 = jitna mile utna (default)
+/batch limit 20000    # ya fix limit
+/batch budget 60      # 60 minute tak scan chale
+```
+
+Aur parser screen me naya button: **🎯 URL LIMIT: SAB** (cycle: SAB → 5k → 20k → 50k → 1L)
 
 ---
 
