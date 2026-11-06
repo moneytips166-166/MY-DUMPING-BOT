@@ -38,7 +38,8 @@ import html as _html
 import string
 from datetime import datetime, timedelta
 from collections import OrderedDict, defaultdict, deque
-from urllib.parse import urlparse, parse_qs, unquote, quote_plus, urljoin
+from urllib.parse import (urlparse, urlunparse, parse_qs, parse_qsl, urlencode,
+                           unquote, quote_plus, urljoin)
 
 try:
     import aiohttp
@@ -1467,9 +1468,12 @@ def inject_targets(urls: list, payload: str = "", params: list = None) -> list:
         info = url_reverse(raw)
         pnames = info.get("params") or []
         if pnames:
+            u = urlparse(raw)
+            pairs = parse_qsl(u.query, keep_blank_values=True)
             for p in pnames[:6]:
-                sep = "&" if "?" in raw else "?"
-                out.append("%s%s%s=%s" % (raw.split("?")[0], sep, p, quote_plus(pl)))
+                newpairs = [(k, (pl if k == p else v)) for k, v in pairs]
+                out.append(urlunparse(u._replace(query=urlencode(newpairs, quote_via=quote_plus),
+                                                 fragment="")))
         else:
             base = raw.split("?")[0].rstrip("/")
             for p in params[:6]:
@@ -1819,7 +1823,7 @@ def inj_batch_size() -> int:
         v = int(sget("inj_batch", 200) or 200)
     except Exception:
         v = 200
-    return max(20, min(5000, v))
+    return max(1, min(5000, v))
 
 
 def want_alive_n() -> int:
@@ -7676,19 +7680,20 @@ async def _cmd_intent_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 BATCH_KEYS = {
-    "proxy":  ("proxy_batch", 200, 20000, "Proxy check batch"),
-    "inj":    ("inj_batch", 20, 5000, "Injector batch"),
-    "want":   ("want_alive", 0, 100000, "Target alive (0 = saare)"),
-    "conc":   ("concurrency", 50, 1000, "Parallel check"),
-    "timeout": ("check_timeout", 3, 30, "Proxy check timeout (s)"),
+    "proxy":   ("proxy_batch", 200, 20000, "Proxy check batch", 4000, "📦"),
+    "inj":     ("inj_batch", 1, 5000, "Injector batch", 200, "💉"),
+    "want":    ("want_alive", 0, 100000, "Target alive (0 = saare)", 0, "🎯"),
+    "conc":    ("concurrency", 50, 1000, "Parallel check", 400, "⚡"),
+    "timeout": ("check_timeout", 3, 30, "Proxy check timeout (s)", 6, "⏱"),
 }
 
 
 def batch_card() -> str:
     rows = []
-    for k, (skey, lo, hi, label) in BATCH_KEYS.items():
-        rows.append(KV(label, "<code>%s</code>" % fmt(sget(skey, 0) if skey != "proxy_batch"
-                                                      else proxy_batch_size()), "📦"))
+    for k, (skey, lo, hi, label, dflt, emoji) in BATCH_KEYS.items():
+        val = sget(skey, dflt)
+        rows.append(KV(label, "<code>%s</code>" % ("" if val is None else fmt(val)),
+                       emoji))
     return (H("BATCH SETTINGS", "admin") + "\n\n" + "\n".join(rows) + "\n\n"
             "<b>Set karne ke liye:</b>\n"
             "<code>/batch proxy 4000</code>\n"
@@ -7715,7 +7720,7 @@ async def cmd_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ <b>Ye key nahi hai.</b>\n\nSahi: <code>%s</code>"
             % ", ".join(BATCH_KEYS), parse_mode=ParseMode.HTML)
         return
-    skey, lo, hi, label = BATCH_KEYS[key]
+    skey, lo, hi, label = BATCH_KEYS[key][:4]
     try:
         v = int(float(val))
     except Exception:

@@ -546,6 +546,12 @@ def test_batch():
         eq(calls, [2], "duplicate hata")
     finally:
         core.check_proxies = real
+    # injector: query intact + per-param payload
+    it = core.inject_targets(["https://a.com/x?id=5&name=bob"], "'")
+    ok(all(u.startswith("https://a.com/x?") for u in it), "injector query intact")
+    ok(any("id=%27&name=bob" in u for u in it), "id inject")
+    ok(any("id=5&name=%27" in u for u in it), "name inject")
+    ok(all("&id=" not in u for u in it), "no broken separator")
     # /batch card
     txt = core.batch_card()
     contains(txt, "ʙᴀᴛᴄʜ")
