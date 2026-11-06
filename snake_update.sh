@@ -155,11 +155,11 @@ LINES="$(wc -l < "$BOT" 2>/dev/null | tr -d ' ')"
 echo ""
 echo "  📦 Version : ${VER:-?}  (${LINES:-?} lines)"
 case "${VER:-}" in
-  v2.4)
-    echo "  ✅ v2.4 — EK file system: bot.py (+ DBF copy), koi patch nahi"
+  v2.5)
+    echo "  ✅ v2.5 — parser diagnostics (asli wajah) + DDG Lite + early-abort + Wayback fallback"
     ;;
-  v2.3|v2.2|v2.1|v2.0)
-    echo "  ⚠️  ${VER} lag raha hai — v2.4 chahiye (dobara ./update.sh chalao)"
+  v2.4|v2.3|v2.2|v2.1|v2.0)
+    echo "  ⚠️  ${VER} lag raha hai — v2.5 chahiye (dobara ./update.sh chalao)"
     ;;
   *)
     echo "  ⚠️  Purana version lag raha hai — dobara ./update.sh chalao"

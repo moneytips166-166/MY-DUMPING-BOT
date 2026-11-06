@@ -62,7 +62,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.4"
+VERSION = "v2.5"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1849,6 +1849,7 @@ JUNK_EXT = {".css", ".js", ".woff", ".woff2", ".ttf", ".eot", ".ico", ".svg", ".
 
 ENGINE_URLS = {
     "ddg":       "https://html.duckduckgo.com/html/?q={q}&s={p}",
+    "ddgl":      "https://lite.duckduckgo.com/lite/?q={q}&s={p}",
     "bing":      "https://www.bing.com/search?q={q}&first={p}&count=30&setlang=en",
     "mojeek":    "https://www.mojeek.com/search?q={q}&s={p}",
     "yahoo":     "https://search.yahoo.com/search?p={q}&b={p}&n=30",
@@ -1864,6 +1865,7 @@ ENGINE_URLS = {
 
 # (start, step) — har engine ka pagination offset
 ENGINE_PAGE = {
+    "ddgl": (0, 10),
     "ddg": (0, 30), "bing": (1, 10), "mojeek": (0, 10), "yahoo": (1, 10),
     "google": (0, 30), "brave": (0, 20), "startpage": (1, 10), "yandex": (0, 10),
     "qwant": (1, 10), "ecosia": (1, 10), "marginalia": (0, 10), "searx": (1, 1),
@@ -1875,15 +1877,36 @@ ENGINE_ORDER = ["sxng", "ddg", "bing", "mojeek", "yahoo", "brave", "startpage",
 
 # ── Kitne engines? Termux/phone pe kam = fast. Ye 3 bina proxy bhi chalte hain ──
 ENGINE_SETS = {
-    "fast":   ["ddg", "mojeek", "marginalia"],
-    "normal": ["ddg", "mojeek", "marginalia", "bing", "sxng"],
+    "fast":   ["ddgl", "ddg", "mojeek"],
+    "normal": ["ddgl", "ddg", "mojeek", "marginalia", "bing"],
     "max":    list(ENGINE_ORDER),
 }
-ENGINE_LABEL = {"fast": "⚡ FAST — 3 engines (bina proxy)", 
+ENGINE_LABEL = {"fast": "⚡ FAST — 3 engines (bina proxy)",
                 "normal": "⚖️ NORMAL — 5 engines",
                 "max": "🐢 MAX — 13 engines (proxy chahiye)"}
 ENGINE_TIMEOUT = {"fast": 8.0, "normal": 10.0, "max": 15.0}
 ENGINE_MISS = {}      # engine -> consecutive empty/blocked count
+ENGINE_LAST = {}      # engine -> (reason, time) — /enginetest + 0-URL card me dikhta hai
+
+
+def engine_reason(err: str) -> str:
+    """Raw error ko insaan wali bhasha me."""
+    e = (err or "").lower()
+    if not err:
+        return "—"
+    if e.startswith("http 403") or e.startswith("http 429"):
+        return "blocked (IP/rate limit)"
+    if e.startswith("http"):
+        return err
+    if "timeout" in e or "timed out" in e:
+        return "timeout"
+    if "name" in e or "dns" in e or "resolve" in e or "getaddrinfo" in e:
+        return "DNS fail"
+    if "ssl" in e or "certificate" in e:
+        return "SSL error"
+    if "0 result" in e:
+        return "page aayi, 0 results"
+    return err[:40]
 
 
 def engines_mode() -> str:
@@ -2042,11 +2065,16 @@ def _clean_url(u: str) -> str:
 def extract_urls(engine: str, body: str) -> list:
     """Engine ke HTML se result URLs nikaalo."""
     out = []
-    if engine == "ddg":
+    if engine in ("ddg", "ddgl"):
         for m in re.finditer(r'uddg=([A-Za-z0-9%._~\-]+)', body):
             out.append(unquote(m.group(1)))
         for m in re.finditer(r'class="result__a"[^>]+href="([^"]+)"', body):
             out.append(_html.unescape(m.group(1)))
+        for m in re.finditer(r'class="result-link"[^>]*href="([^"]+)"', body):
+            out.append(_html.unescape(m.group(1)))
+        if engine == "ddgl":                       # lite page: seedhe links
+            for m in re.finditer(r'<a[^>]+href="(https?://[^"]+)"[^>]*>', body):
+                out.append(_html.unescape(m.group(1)))
     elif engine == "bing":
         for m in re.finditer(r'<h2[^>]*>\s*<a[^>]+href="(https?://[^"]+)"', body):
             out.append(m.group(1))
@@ -2123,17 +2151,27 @@ async def fetch_engine(session, engine: str, dork: str, proxy=None,
                 if r.status != 200:
                     if r.status in (403, 429, 503):
                         ENGINE_MISS[engine] = ENGINE_MISS.get(engine, 0) + 1
-                    return []
+                    if attempt == 2 or r.status not in (403, 429, 503, 500, 502, 503):
+                        ENGINE_LAST[engine] = ("HTTP %s" % r.status, time.time())
+                        return []
+                    await asyncio.sleep(0.3)
+                    continue
                 body = await r.text(errors="ignore")
                 if not body:
+                    ENGINE_LAST[engine] = ("empty body", time.time())
                     return []
                 urls = extract_urls(engine, body)
                 if not urls:
                     ENGINE_MISS[engine] = ENGINE_MISS.get(engine, 0) + 1
+                    ENGINE_LAST[engine] = ("0 results", time.time())
+                else:
+                    ENGINE_LAST[engine] = ("ok", time.time())
                 return urls
-        except Exception:
+        except Exception as exc:
             if attempt == 2:
                 ENGINE_MISS[engine] = ENGINE_MISS.get(engine, 0) + 1
+                ENGINE_LAST[engine] = (type(exc).__name__ + ": " + str(exc)[:60],
+                                       time.time())
                 return []
             await asyncio.sleep(0.15)
 
@@ -2602,16 +2640,41 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     st = {"scanned": 0, "total": len(dorks), "raw": 0, "unique": 0,
           "errors": 0, "filtered": 0, "engine_hits": defaultdict(int),
           "junk": 0, "mismatch": 0, "cc": 0, "api": 0, "gj": 0,
-          "relaxed": 0, "mode": mode, "engines": len(eng_list)}
+          "relaxed": 0, "mode": mode, "engines": len(eng_list),
+          "aborted": 0, "wb": 0, "empty_streak": 0}
+    ABORT_AFTER = max(8, int(sget("parse_abort_after", 15) or 15))
     seen, out = set(), []
 
     # 1) site: dorks -> Common Crawl (free, bahut zyada URLs)
     doms = domains_from_dorks(dorks)
     if doms:
-        for dom in doms[:8]:
-            got = await cc_urls(dom, limit=min(2000, max_urls), proxy=None)
+
+        async def _one_dom(dom):
+            """CC → khaali to Wayback. Har step par hard timeout (mobile net)."""
+            got = []
+            try:
+                got = await asyncio.wait_for(
+                    cc_urls(dom, limit=min(2000, max_urls), proxy=None), timeout=15)
+            except Exception:
+                got = []
+            if got:
+                return got, 0
+            try:
+                wb = await asyncio.wait_for(
+                    wayback_urls(dom, limit=min(1000, max_urls), proxy=None), timeout=12)
+            except Exception:
+                wb = []
+            return wb, len(wb)
+
+        got_all = await asyncio.gather(*[_one_dom(d) for d in doms[:8]],
+                                       return_exceptions=True)
+        for res in got_all:
+            if isinstance(res, Exception) or not res:
+                continue
+            got, wbn = res
+            st["wb"] += wbn
             st["raw"] += len(got)
-            st["cc"] += len(got)
+            st["cc"] += len(got) - wbn
             for u in got:
                 k = u.split("#")[0]
                 if k not in seen:
@@ -2653,6 +2716,11 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
         for i, dork in enumerate(dorks, 1):
             st["scanned"] = i
             if len(out) >= max_urls:
+                break
+            # 🛑 15 dorks tak kuch nahi mila + engines fail → 1000 dork zaya na karo
+            if not out and i > ABORT_AFTER and st["errors"] >= ABORT_AFTER * 2:
+                st["aborted"] = 1
+                logger.warning("parse_deep: %d dorks pe 0 URLs — abort", i)
                 break
             # free Google — har dork pe page 0 se, budget khatam hone tak
             if (i <= gj_budget and gj_enabled() and gj_alive()
@@ -4689,11 +4757,13 @@ async def input_deep_max(update, context, text: str):
                 "Scanned : <code>%d/%d</code>\n"
                 "Raw URLs: <code>%s</code>\n"
                 "Unique  : <code>%s</code>\n"
-                "Engines : <code>%s</code>\n\n"
+                "Engines : <code>%s</code>\n"
+                "Blocked : <code>%s</code>\n\n"
                 "[%s] <b>%.0f%%</b>"
                 % (F("DEEP PARSER — RUNNING", T()["head"]), T()["div"][:20],
                    st["scanned"], st["total"], fmt(st["raw"]), fmt(st["unique"]),
-                   fmt(st.get("engines", 5)), bar(pct, 22), pct),
+                   fmt(st.get("engines", 5)), fmt(st.get("errors", 0)),
+                   bar(pct, 22), pct),
                 parse_mode=ParseMode.HTML)
         except Exception:
             pass
@@ -4743,14 +4813,24 @@ async def input_deep_max(update, context, text: str):
             pass
     else:
         await update.effective_message.reply_text(
-            (H("0 URLs", "kyun?") + "\n\n"
+            (H("0 URLs", ("%d dorks ke baad ruk gaya" % st["scanned"])
+               if st.get("aborted") else "kyun?") + "\n\n"
              + KV("Mode", "<b>%s</b>" % engines_mode(), "🎛") + "\n"
-             + KV("Engine block", "<code>%s</code>" % fmt(st["errors"]), "⚠️") + "\n\n"
-             + B("Sabse pehle ye karo") + "\n"
-             + "1️⃣ <code>/engines fast</code> — 3 engines jo bina proxy chalte hain\n"
-             + "2️⃣ 🧅 PROXY ENGINE se proxy add karo\n"
-             + "3️⃣ Dork simple karo (<code>site:x inurl:login</code>)\n\n"
-             + "<i>Google/Yandex/Startpage bina proxy block karte hain — DDG/Mojeek/Marginalia nahi.</i>"),
+             + KV("Engine block", "<code>%s</code>" % fmt(st["errors"]), "⚠️") + "\n"
+             + KV("Common Crawl", "<code>%s</code>" % fmt(st.get("cc", 0)), "🌐") + "\n"
+             + KV("Wayback", "<code>%s</code>" % fmt(st.get("wb", 0)), "🕰") + "\n\n"
+             + B("Engine-wise asli reason") + "\n"
+             + ("\n".join("❌ <b>%s</b> — <code>%s</code>"
+                          % (esc(ENGINE_LABEL.get(e, e)),
+                             esc(engine_reason(ENGINE_LAST[e][0]) if e in ENGINE_LAST
+                                 else "is run me test nahi hua"))
+                          for e in engine_list(user_mode(context))[:6]) or "—")
+             + "\n\n" + B("Ab ye karo") + "\n"
+             + "1️⃣ <code>/enginetest</code> — kaun sa engine chal raha hai, wajah ke saath\n"
+             + "2️⃣ <code>/engines fast</code> — ddgl • ddg • mojeek\n"
+             + "3️⃣ 🧅 PROXY ENGINE se proxy add karo (Jio/Airtel pe kuch engines block hote hain)\n"
+             + "4️⃣ Dork simple karo: <code>site:x.in inurl:login</code>\n\n"
+             + "<i>Google/Yandex/Startpage bina proxy block karte hain. DDG Lite/Mojeek aam taur pe chalte hain.</i>"),
             parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
     await update.effective_message.reply_text("⬅️ Menu", reply_markup=kb_back("m:home"))
     await_clear(context)
@@ -7351,12 +7431,14 @@ async def cmd_enginetest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if isinstance(r, Exception) or not r:
             continue
         eng, cnt, took = r
+        reason = engine_reason((ENGINE_LAST.get(eng) or ("", 0))[0])
         if cnt:
             alive += 1
-            lines.append("✅ <b>%s</b> — <code>%d URLs • %.1fs</code>" % (esc(eng), cnt, took))
+            lines.append("✅ <b>%s</b> — <code>%d URLs • %.1fs</code>"
+                         % (esc(eng), cnt, took))
         else:
             dead += 1
-            lines.append("❌ <b>%s</b> — <code>blocked / 0</code>" % esc(eng))
+            lines.append("❌ <b>%s</b> — <code>%s</code>" % (esc(eng), esc(reason)))
     card = (H("ENGINE TEST", "%d ✅ • %d ❌" % (alive, dead)) + "\n\n"
             + "\n".join(lines) + "\n\n"
             + KV("Mode", "<b>%s</b>" % ENGINE_LABEL[mode], "🎛") + "\n"
@@ -7366,7 +7448,9 @@ async def cmd_enginetest(update: Update, context: ContextTypes.DEFAULT_TYPE):
                (B("Jo ❌ hai") + "\n"
                 + P("Wo engine aapke IP pe block hai — proxy ke bina nahi chalega.") + "\n"
                 + P("Sirf chalne wale engines pe chalao:") + "\n"
-                + "<code>/engines fast</code> (ddg • mojeek • marginalia)")))
+                + "<code>/engines fast</code> (ddgl • ddg • mojeek)") + "\n\n"
+                + KV("Net", "Agar sab ❌ + DNS fail" if dead == len(engs) else "kuch engines ok",
+                     "📶")))
     try:
         await msg.edit_text(card, parse_mode=ParseMode.HTML,
                             reply_markup=RK([

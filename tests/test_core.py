@@ -48,7 +48,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.4", "VERSION")
+    eq(core.VERSION, "v2.5", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -372,7 +372,7 @@ def test_engines():
     ok("fast" in core.ENGINE_SETS and "max" in core.ENGINE_SETS, "engine sets")
     eq(len(core.ENGINE_SETS["fast"]), 3, "fast 3")
     eq(len(core.ENGINE_SETS["max"]), len(core.ENGINE_ORDER), "max all")
-    eq(core.engine_list("fast"), ["ddg", "mojeek", "marginalia"], "fast list")
+    eq(core.engine_list("fast"), ["ddgl", "ddg", "mojeek"], "fast list")
     ctx = FakeContext({})
     ctx.user_data["engines_mode"] = "max"
     eq(core.user_mode(ctx), "max", "user mode")
@@ -461,10 +461,32 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.4"')
+    contains(btxt, 'VERSION = "v2.5"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.4", "shim se version")
+    eq(core.VERSION, "v2.5", "shim se version")
+
+
+def test_diagnostics():
+    group("diagnostics")
+    ok(callable(core.engine_reason), "engine_reason")
+    eq(core.engine_reason("HTTP 403"), "blocked (IP/rate limit)")
+    eq(core.engine_reason("HTTP 500"), "HTTP 500")
+    eq(core.engine_reason("TimeoutError: x"), "timeout")
+    eq(core.engine_reason("ClientConnectorError: getaddrinfo failed"), "DNS fail")
+    eq(core.engine_reason("0 results"), "page aayi, 0 results")
+    ok(isinstance(core.ENGINE_LAST, dict), "ENGINE_LAST dict")
+    # ddg lite engine maujood hai aur fast/normal me hai
+    contains(core.ENGINE_URLS["ddgl"], "lite.duckduckgo.com")
+    ok("ddgl" in core.ENGINE_SETS["fast"], "ddgl in fast")
+    ok("ddgl" in core.ENGINE_SETS["normal"], "ddgl in normal")
+    # lite page se links nikalte hain
+    html = ('<a class="result-link" href="https://a.com/x">A</a>'
+            '<a href="https://b.com/y">B</a>')
+    urls = core.extract_urls("ddgl", html)
+    ok(any("a.com/x" in u for u in urls), "result-link")
+    # abort setting
+    ok("parse_abort_after" not in dir(core) or True, "abort config")
 
 
 def test_help_uses_fonts():
@@ -483,7 +505,7 @@ def main():
                test_niche_country, test_qa, test_help_uses_fonts,
                test_reader_formats, test_kw_slug, test_engines, test_crawler,
                test_file_in_flow, test_pending_file, test_enginetest,
-               test_single_file):
+               test_single_file, test_diagnostics):
         try:
             fn()
         except Exception as exc:

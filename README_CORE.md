@@ -1,6 +1,26 @@
-# 🐍 PYTHON SNAKE CORE — v2.4
+# 🐍 PYTHON SNAKE CORE — v2.5
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🩺 v2.5 — "0 URLs kyun?" ka seedha jawab
+
+Aapke phone pe kuch engines block hain — parser galat nahi tha, bot **ab wajah batata hai**.
+
+- 🔬 `/enginetest` — har engine ke saamne asli wajah: `blocked (IP/rate limit)`, `timeout`, `DNS fail`, `page aayi, 0 results`
+- 🪶 **DDG Lite** engine add (`lite.duckduckgo.com`) — halka page, mobile net pe zyada chance
+- 🛑 **Early abort** — 15 dork tak 0 URLs + engines fail → ruk jata hai (1000 dork zaya nahi)
+- 🕰 **Wayback CDX fallback** — `site:` dork pe Common Crawl khaali ho to Wayback se URLs
+- 📉 Parse card me ab `Blocked` bhi dikhta hai, 0-URL card me **engine-wise asli wajah**
+
+```bash
+cd ~/snake && ./update.sh && ./restart.sh
+```
+
+Phir `/ping` → `📦 Core: v2.5` aur `/enginetest` chalao.
+
+> **Sach:** bina proxy sab kaam kare, iski guarantee nahi. Jio/Airtel ke kuch IP pe DDG/Mojeek block hote hain — us case me proxy ya apna SearXNG hi asli hal hai. Bot ab jhooth nahi bolta ki "sab chal raha hai".
 
 ---
 
