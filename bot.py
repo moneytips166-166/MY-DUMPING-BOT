@@ -33,6 +33,7 @@ import asyncio
 import hashlib
 import logging
 import zipfile
+import base64
 import html as _html
 import string
 from datetime import datetime, timedelta
@@ -1851,6 +1852,7 @@ ENGINE_URLS = {
     "ddg":       "https://html.duckduckgo.com/html/?q={q}&s={p}",
     "ddgl":      "https://lite.duckduckgo.com/lite/?q={q}&s={p}",
     "bing":      "https://www.bing.com/search?q={q}&first={p}&count=30&setlang=en",
+    "bingr":     "https://www.bing.com/search?q={q}&format=rss&first={p}",
     "mojeek":    "https://www.mojeek.com/search?q={q}&s={p}",
     "yahoo":     "https://search.yahoo.com/search?p={q}&b={p}&n=30",
     "brave":     "https://search.brave.com/search?q={q}&offset={p}",
@@ -1866,19 +1868,21 @@ ENGINE_URLS = {
 # (start, step) — har engine ka pagination offset
 ENGINE_PAGE = {
     "ddgl": (0, 10),
-    "ddg": (0, 30), "bing": (1, 10), "mojeek": (0, 10), "yahoo": (1, 10),
+    "ddg": (0, 30), "bing": (1, 10), "bingr": (1, 10),
+    "mojeek": (0, 10), "yahoo": (1, 10),
     "google": (0, 30), "brave": (0, 20), "startpage": (1, 10), "yandex": (0, 10),
     "qwant": (1, 10), "ecosia": (1, 10), "marginalia": (0, 10), "searx": (1, 1),
     "sxng": (1, 1),
 }
 
-ENGINE_ORDER = ["sxng", "ddg", "bing", "mojeek", "yahoo", "brave", "startpage",
-                "yandex", "qwant", "ecosia", "google", "marginalia", "searx"]
+ENGINE_ORDER = ["sxng", "ddgl", "ddg", "bing", "bingr", "mojeek", "yahoo", "brave",
+                "startpage", "yandex", "qwant", "ecosia", "google", "marginalia",
+                "searx"]
 
 # ── Kitne engines? Termux/phone pe kam = fast. Ye 3 bina proxy bhi chalte hain ──
 ENGINE_SETS = {
     "fast":   ["ddgl", "ddg", "mojeek"],
-    "normal": ["ddgl", "ddg", "mojeek", "marginalia", "bing"],
+    "normal": ["ddgl", "ddg", "bingr", "mojeek", "marginalia"],
     "max":    list(ENGINE_ORDER),
 }
 ENGINE_LABEL = {"fast": "⚡ FAST — 3 engines (bina proxy)",
@@ -1894,6 +1898,8 @@ def engine_reason(err: str) -> str:
     e = (err or "").lower()
     if not err:
         return "—"
+    if e == "ok":
+        return "results mile, dork se match nahi"
     if e.startswith("http 403") or e.startswith("http 429"):
         return "blocked (IP/rate limit)"
     if e.startswith("http"):
@@ -2035,10 +2041,30 @@ def _strip_track(query: str) -> str:
     return "&".join(keep)
 
 
+def _bing_unwrap(u: str) -> str:
+    """bing.com/ck/a?...&u=a1<base64url> → asli URL. Warna wahi wapas."""
+    try:
+        if "bing.com/ck/a" not in u:
+            return u
+        q = parse_qs(urlparse(u).query)
+        raw = (q.get("u") or [""])[0]
+        if not raw.startswith("a1"):
+            return u
+        b = raw[2:]
+        b += "=" * (-len(b) % 4)
+        dec = base64.urlsafe_b64decode(b.encode()).decode("utf-8", "ignore")
+        return dec if dec.startswith("http") else u
+    except Exception:
+        return u
+
+
 def _clean_url(u: str) -> str:
     u = _html.unescape(u or "").strip().strip('"\'')
     if u.startswith("//"):
         u = "https:" + u
+    if not u.startswith("http"):
+        return ""
+    u = _bing_unwrap(u)
     if not u.startswith("http"):
         return ""
     try:
@@ -2080,6 +2106,14 @@ def extract_urls(engine: str, body: str) -> list:
             out.append(m.group(1))
         for m in re.finditer(r'<cite[^>]*>(.*?)</cite>', body, re.S):
             out.append(re.sub(r"<[^>]+>", "", m.group(1)))
+    elif engine == "bingr":                        # RSS — seedhe <link>
+        for m in re.finditer(r"<item>(.*?)</item>", body, re.S):
+            for lm in re.finditer(r"<link>\s*(https?://[^<\s]+)\s*</link>",
+                                  m.group(1)):
+                out.append(_html.unescape(lm.group(1)))
+        if not out:
+            for m in re.finditer(r"<link>\s*(https?://[^<\s]+)\s*</link>", body):
+                out.append(_html.unescape(m.group(1)))
     elif engine == "mojeek":
         for m in re.finditer(r'<a[^>]+class="[^"]*\bob\b[^"]*"[^>]+href="([^"]+)"', body):
             out.append(m.group(1))
@@ -2475,7 +2509,7 @@ async def gjerm_search(session, dork: str, pages: int = 1) -> list:
                     headers={"User-Agent": random.choice(UA_LIST),
                              "Accept": "application/json"},
                     ssl=False, allow_redirects=True,
-                    timeout=aiohttp.ClientTimeout(total=45)) as r:
+                    timeout=aiohttp.ClientTimeout(total=12)) as r:
                 st["last"] = time.time()
                 if r.status != 200:
                     st["fail"] += 1
@@ -2711,7 +2745,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                             out.append(kk)
 
         # 3) saare dorks, saare engines — koi early stop nahi
-        gj_budget = min(40, len(dorks))          # free Google ki limit (slow endpoint)
+        gj_budget = min(20, len(dorks))          # free Google — 12s timeout, 20 dork kaafi
         gj_deadline = time.time() + 120
         for i, dork in enumerate(dorks, 1):
             st["scanned"] = i

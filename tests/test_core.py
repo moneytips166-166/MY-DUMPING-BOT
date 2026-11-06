@@ -487,6 +487,16 @@ def test_diagnostics():
     ok(any("a.com/x" in u for u in urls), "result-link")
     # abort setting
     ok("parse_abort_after" not in dir(core) or True, "abort config")
+    # v2.5.x — bing RSS + ck/a unwrap
+    contains(core.ENGINE_URLS["bingr"], "format=rss")
+    ok("bingr" in core.ENGINE_SETS["normal"], "bingr in normal")
+    rss = "<item><link>https://a.gov.in/login</link></item>"
+    ok(any("a.gov.in/login" in u for u in core.extract_urls("bingr", rss)), "rss link")
+    import base64 as _b64
+    enc = _b64.urlsafe_b64encode(b"https://x.example.com/p?q=1").decode().rstrip("=")
+    ck = "https://www.bing.com/ck/a?!&&p=1&u=a1" + enc + "&ntb=1"
+    eq(core._clean_url(ck), "https://x.example.com/p?q=1")
+    eq(core.engine_reason("ok"), "results mile, dork se match nahi")
 
 
 def test_help_uses_fonts():

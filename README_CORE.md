@@ -10,6 +10,8 @@ Aapke phone pe kuch engines block hain — parser galat nahi tha, bot **ab wajah
 
 - 🔬 `/enginetest` — har engine ke saamne asli wajah: `blocked (IP/rate limit)`, `timeout`, `DNS fail`, `page aayi, 0 results`
 - 🪶 **DDG Lite** engine add (`lite.duckduckgo.com`) — halka page, mobile net pe zyada chance
+- 📡 **Bing RSS** engine (`format=rss`) — HTML se halka, block kam; `bing.com/ck/a` redirects decode hote hain
+- ⏱ Free Google endpoint ka timeout 45s → **12s** (mobile pe parser atakta nahi)
 - 🛑 **Early abort** — 15 dork tak 0 URLs + engines fail → ruk jata hai (1000 dork zaya nahi)
 - 🕰 **Wayback CDX fallback** — `site:` dork pe Common Crawl khaali ho to Wayback se URLs
 - 📉 Parse card me ab `Blocked` bhi dikhta hai, 0-URL card me **engine-wise asli wajah**
