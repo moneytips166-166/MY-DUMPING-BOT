@@ -36,8 +36,8 @@ import zipfile
 import html as _html
 import string
 from datetime import datetime, timedelta
-from collections import OrderedDict, defaultdict
-from urllib.parse import urlparse, parse_qs, unquote, quote_plus
+from collections import OrderedDict, defaultdict, deque
+from urllib.parse import urlparse, parse_qs, unquote, quote_plus, urljoin
 
 try:
     import aiohttp
@@ -62,7 +62,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.1"
+VERSION = "v2.2"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1068,6 +1068,18 @@ def kw_clean(x) -> str:
     return " ".join(words[:6])[:70]
 
 
+URL_OP_RE = re.compile(r"(?:inurl|allinurl|inanchor)\s*:\s*\"?$")
+_NON_SLUG = re.compile(r"[^a-z0-9]+")
+
+
+def kw_slug(kw) -> str:
+    """Keyword ka URL form — space ki jagah '-'.
+    Google URL me space nahi hota, isliye inurl: ke liye yehi sahi hai.
+    'shopify store' -> 'shopify-store'
+    """
+    return _NON_SLUG.sub("-", str(kw or "").lower()).strip("-")[:70]
+
+
 def kw_cores(items, limit: int = 800) -> list:
     """Seeds YA keyword list -> unique cores (max 800)."""
     if isinstance(items, str):
@@ -1493,6 +1505,16 @@ PROXY_SOURCES = [
     ("text", "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks5&timeout=10000&country=all"),
     ("text", "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks4&timeout=10000&country=all"),
     ("text", "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text"),
+    # ── ProxyScrape (proxyscrape.com/free-proxy-list) — protocol ke saath
+    ("text", "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=protocolipport&format=text&timeout=10000"),
+    ("text", "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=socks5&proxy_format=protocolipport&format=text&timeout=10000"),
+    ("text", "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=socks4&proxy_format=protocolipport&format=text&timeout=10000"),
+    ("text", "https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=http&proxy_format=protocolipport&format=text&timeout=10000"),
+    # ── ProxyScrape GitHub mirrors (site ki hi published lists) ──
+    ("text", "https://cdn.jsdelivr.net/gh/proxyscrape/free-proxy-list@main/proxies/protocols/http/data.txt"),
+    ("text", "https://cdn.jsdelivr.net/gh/proxyscrape/free-proxy-list@main/proxies/protocols/socks5/data.txt"),
+    ("text", "https://raw.githubusercontent.com/proxyscrape/free-proxy-list/main/proxies/protocols/http/data.txt"),
+    ("text", "https://raw.githubusercontent.com/proxyscrape/free-proxy-list/main/proxies/protocols/socks4/data.txt"),
     ("text", "https://www.proxy-list.download/api/v1/get?type=http"),
     ("text", "https://www.proxy-list.download/api/v1/get?type=https"),
     ("text", "https://www.proxy-list.download/api/v1/get?type=socks5"),
@@ -1560,6 +1582,10 @@ def parse_proxies(text: str) -> list:
                     rows = [j]
             for r in rows:
                 if not isinstance(r, dict):
+                    continue
+                raw_proxy = str(r.get("proxy") or "").strip()
+                if raw_proxy.startswith(("http", "socks")):
+                    out.append(raw_proxy)
                     continue
                 ip = str(r.get("ip") or r.get("host") or r.get("ipAddress") or "").strip()
                 port = r.get("port") or r.get("portNumber") or ""
@@ -1822,7 +1848,39 @@ ENGINE_PAGE = {
 
 ENGINE_ORDER = ["sxng", "ddg", "bing", "mojeek", "yahoo", "brave", "startpage",
                 "yandex", "qwant", "ecosia", "google", "marginalia", "searx"]
+
+# ── Kitne engines? Termux/phone pe kam = fast. Ye 3 bina proxy bhi chalte hain ──
+ENGINE_SETS = {
+    "fast":   ["ddg", "mojeek", "marginalia"],
+    "normal": ["ddg", "mojeek", "marginalia", "bing", "sxng"],
+    "max":    list(ENGINE_ORDER),
+}
+ENGINE_LABEL = {"fast": "⚡ FAST — 3 engines (bina proxy)", 
+                "normal": "⚖️ NORMAL — 5 engines",
+                "max": "🐢 MAX — 13 engines (proxy chahiye)"}
+ENGINE_TIMEOUT = {"fast": 8.0, "normal": 10.0, "max": 15.0}
 ENGINE_MISS = {}      # engine -> consecutive empty/blocked count
+
+
+def engines_mode() -> str:
+    """Kaunsa mode chal raha hai — 'fast' | 'normal' | 'max'."""
+    m = str(sget("engines_mode", "normal") or "normal").lower()
+    return m if m in ENGINE_SETS else "normal"
+
+
+def engine_list(mode: str = None) -> list:
+    return list(ENGINE_SETS.get(mode or engines_mode(), ENGINE_SETS["normal"]))
+
+
+def user_mode(context=None) -> str:
+    """User ka apna mode (agar chuna hai) warna global default."""
+    try:
+        m = str((context.user_data.get("engines_mode") if context else "") or "").lower()
+        if m in ENGINE_SETS:
+            return m
+    except Exception:
+        pass
+    return engines_mode()
 
 # ── SearXNG — public instances (searx.space se khud update hote hain) ────────
 SEARX_FALLBACK = [
@@ -2417,9 +2475,12 @@ def _pick_proxy() -> str:
 
 
 async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list = None,
-                use_proxy: bool = True, progress=None, strict: bool = True) -> dict:
+                use_proxy=None, progress=None, strict: bool = True,
+                mode: str = None) -> dict:
     """Dork list → real URLs. Engine rotate + proxy rotate + 2 round retry."""
-    engines = engines or ENGINE_ORDER
+    if use_proxy is None:                       # auto — proxy ho to use, warna bina
+        use_proxy = bool(PROXIES or load_proxy_pool())
+    engines = engines or engine_list(mode)
     max_urls = max(1, min(20000, int(max_urls or 200)))
     pages = max(1, min(20, int(pages or 1)))
     found = []
@@ -2500,8 +2561,8 @@ async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list 
 
 # ── DEEP SCAN — sab dorks, poore stats (competitor jaisa card) ───────────────
 async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
-                     use_proxy: bool = True, strict: bool = True,
-                     progress=None) -> dict:
+                     use_proxy=None, strict: bool = True,
+                     progress=None, mode: str = None) -> dict:
     """Har dork scan karo, junk hatao, aur poore stats do:
 
     scanned / raw / unique / errors / filtered / engines
@@ -2509,9 +2570,15 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     dorks = [str(d).strip() for d in (dorks or []) if str(d).strip()]
     max_urls = max(10, min(100000, int(max_urls or 5000)))
     pages = max(1, min(10, int(pages or 1)))
+    if use_proxy is None:                       # auto
+        use_proxy = bool(PROXIES or load_proxy_pool())
+    mode = mode if mode in ENGINE_SETS else engines_mode()
+    eng_list = engine_list(mode)
+    eng_to = ENGINE_TIMEOUT.get(mode, 10.0)
     st = {"scanned": 0, "total": len(dorks), "raw": 0, "unique": 0,
           "errors": 0, "filtered": 0, "engine_hits": defaultdict(int),
-          "junk": 0, "mismatch": 0, "cc": 0, "api": 0, "gj": 0}
+          "junk": 0, "mismatch": 0, "cc": 0, "api": 0, "gj": 0,
+          "relaxed": 0, "mode": mode, "engines": len(eng_list)}
     seen, out = set(), []
 
     # 1) site: dorks -> Common Crawl (free, bahut zyada URLs)
@@ -2586,24 +2653,27 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
             for page in range(pages):
                 if len(out) >= max_urls:
                     break
-                order = list(ENGINE_ORDER)
+                order = list(eng_list)
                 random.shuffle(order)
                 order.sort(key=lambda e: ENGINE_MISS.get(e, 0) >= 3)
                 got_any = 0
-                for eng in order[:4]:
+                for eng in order:
                     proxy = _pick_proxy() if use_proxy else None
-                    urls = await fetch_engine(session, eng, dork, proxy, page=page)
+                    urls = await fetch_engine(session, eng, dork, proxy, page=page,
+                                              timeout=eng_to)
                     if not urls:
-                        st["errors"] += 1
+                        st["errors"] += 1          # engine block/empty (proxy/IP)
                         continue
                     st["engine_hits"][eng] += len(urls)
                     st["raw"] += len(urls)
                     got_any += 1
+                    if strict:
+                        matched = [u for u in urls if dork_match(u, dork)]
+                        if matched:
+                            urls = matched
+                        else:                      # strict me kuch nahi mila → relaxed
+                            st["relaxed"] += 1
                     for u in urls:
-                        if strict and not dork_match(u, dork):
-                            st["mismatch"] += 1
-                            st["filtered"] += 1
-                            continue
                         kk = u.split("#")[0]
                         if kk in seen:
                             st["junk"] += 1
@@ -2625,6 +2695,146 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     st["filtered"] = max(st["filtered"], st["raw"] - st["unique"])
     return {"urls": out, "stats": st}
 
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🌊 DEEP URL CRAWLER — sabse fast, bina proxy
+#  URL list → uske andar ke saare links + parameters (depth optional)
+# ═══════════════════════════════════════════════════════════════════════════════
+LINK_ATTR_RE = re.compile(
+    r"""(?:href|src|action|data-href|data-url|data-src|formaction)\s*=\s*["']([^"'>\s]{3,500})["']""",
+    re.I)
+RAW_URL_RE = re.compile(r"""https?://[^\s"'<>\\]{6,300}""")
+PARAM_RE = re.compile(r"[?&]([A-Za-z0-9_\-\[\]\.]{1,40})=")
+
+
+def _abs_url(base: str, link: str) -> str:
+    link = _html.unescape((link or "").strip())
+    if not link or link.startswith(("#", "javascript:", "mailto:", "tel:", "data:")):
+        return ""
+    if link.startswith("//"):
+        link = "https:" + link
+    if not link.startswith("http"):
+        try:
+            link = urljoin(base, link)
+        except Exception:
+            return ""
+    return _clean_url(link)
+
+
+def url_params(u: str) -> list:
+    """?id=5&cat=2 → ['id', 'cat'] (query me '?' nahi hota, isliye parse_qs)."""
+    try:
+        q = urlparse(u).query or ""
+        if not q:
+            return []
+        return _uniq(list(parse_qs(q, keep_blank_values=True).keys()))[:40]
+    except Exception:
+        return []
+
+
+async def deep_url_crawl(seeds: list, limit: int = 3000, concurrency: int = 40,
+                         levels: int = 0, timeout: float = 8.0,
+                         max_pages: int = 1500, progress=None) -> dict:
+    """URLs → unke andar ke saare links (deep), parameters ke saath.
+
+    levels 0  = sirf diye hue URLs fetch karo (fastest)
+    levels 1  = unme jo links mile unko bhi fetch karo (2 hop, deep)
+    """
+    seeds = [str(x).strip() for x in (seeds or []) if str(x).strip()]
+    norm = []
+    for u in seeds:
+        u = _html.unescape(str(u)).strip()
+        if not u.startswith("http"):
+            u = "https://" + u.lstrip("/")
+        try:                          # seed ko junk-filter se nahi guzarte
+            p = urlparse(u)
+            if not p.hostname or len(u) > 500:
+                continue
+            norm.append(u.split("#")[0])
+        except Exception:
+            continue
+    st = {"pages_ok": 0, "pages_fail": 0, "found": 0, "params": 0,
+          "seeds": len(norm), "domains": 0}
+    out, seen, param_seen = [], set(), set()
+    queue = deque(norm)
+    crawled = set()
+    lock = asyncio.Lock()
+    last = {"t": 0.0}
+    conn = aiohttp.TCPConnector(limit=max(10, concurrency), ssl=False,
+                                ttl_dns_cache=600, force_close=True)
+    hdrs = dict(UA)
+    hdrs["Accept"] = "text/html,application/xhtml+xml,*/*"
+
+    async def push(link: str, level: int):
+        if not link or link in seen:
+            return
+        seen.add(link)
+        out.append(link)
+        for p in url_params(link):
+            if p not in param_seen:
+                param_seen.add(p)
+                st["params"] += 1
+        if levels and level < levels and link not in crawled:
+            queue.append(link)
+
+    async def worker(session):
+        while True:
+            async with lock:
+                if not queue or len(out) >= limit or st["pages_ok"] + st["pages_fail"] >= max_pages:
+                    return
+                u = queue.popleft()
+            if u in crawled:
+                continue
+            crawled.add(u)
+            try:
+                async with session.get(u, headers=hdrs, ssl=False, allow_redirects=True,
+                                       timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                    ctype = (r.headers.get("Content-Type") or "").lower()
+                    if r.status != 200 or ("html" not in ctype and "text" not in ctype):
+                        st["pages_fail"] += 1
+                        continue
+                    body = await r.text(errors="ignore")
+            except Exception:
+                st["pages_fail"] += 1
+                continue
+            st["pages_ok"] += 1
+            links = []
+            for m in LINK_ATTR_RE.finditer(body[:400000]):
+                links.append(m.group(1))
+            for m in RAW_URL_RE.finditer(body[:400000]):
+                links.append(m.group(0))
+            for raw in links:
+                a = _abs_url(u, raw)
+                if not a:
+                    continue
+                async with lock:
+                    if len(out) >= limit:
+                        break
+                    await push(a, 1)
+            if progress and time.time() - last["t"] > 2.5:
+                last["t"] = time.time()
+                try:
+                    await progress(st)
+                except Exception:
+                    pass
+
+    async with aiohttp.ClientSession(connector=conn) as session:
+        tasks = [asyncio.create_task(worker(session))
+                 for _ in range(max(4, min(80, concurrency)))]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async with lock:
+        st["found"] = len(out)
+        hosts = set()
+        for u in out[:20000]:
+            try:
+                hosts.add(urlparse(u).hostname or "")
+            except Exception:
+                pass
+        st["domains"] = len(hosts)
+    return {"urls": out, "params": sorted(param_seen), "stats": st}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  DUMPER — sab kuch file me
@@ -2870,6 +3080,14 @@ def help_text() -> str:
             + tag("THEME") + "\n"
             + "Admin <code>/theme</code> se font + divider + icon badal sakta hai "
               "(%d themes).\n\n" % len(THEMES)
+            + tag("ENGINES") + "\n"
+            + "Phone/Termux pe slow lage to: <code>/engines fast</code> — "
+              "sirf 3 engines (DDG • Mojeek • Marginalia, bina proxy).\n"
+              "Normal 5, Max 13. PARSER screen pe 🎛 button se bhi badal sakte ho.\n\n"
+            + tag("FILE FORMATS") + "\n"
+            + "txt • csv • tsv • json • log • html • xlsx • docx • pptx • zip • gz — "
+              "extension na ho to bhi chalega. Jo flow khula ho (GEN/PRO/KW/PARSER), "
+              "file seedha usme chali jayegi.\n\n"
             + tag("SERP APIs") + "\n"
             + "Free + paid API list (rate, limit, kahan se milega): <code>/apis</code>\n"
             + "Apni key lagana: <code>/setkey serper KEY</code>\n\n"
@@ -3119,6 +3337,11 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_parse_manual(update, context)
         if rest == "deep":
             return await cb_parse_deep(update, context)
+        if rest == "eng":
+            return await cb_parse_engine(update, context)
+        if rest == "crawl":
+            return await cb_deep_crawl(update, context,
+                                       context.user_data.get("last_urls") or [])
     elif head == "rd":
         if rest == "last":
             return await cb_rand_last(update, context)
@@ -3238,7 +3461,7 @@ async def input_gen_count(update, context, text: str):
          "%s"
          % (KV("Count", "<code>%s</code>" % fmt(n), "✅"),
             B("Ab Keywords Bhejo"),
-            P("Comma ya line se alag karo"),
+            P("Comma ya line se alag karo — ya seedha FILE bhej do (.txt/.csv/.json/.xlsx)"),
             P("Har keyword pe universal HQ templates chalengi"))),
         parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
     await_set(context, "gen_kw")
@@ -3875,7 +4098,9 @@ async def tool_kw(update, context):
            % (B("Do tarike — dono chalte hain"),
               B("Seed bhejo"), P("2-3 topic"),
               B("Apne keywords paste karo"), P("ek line me ek — unhi se aur naye banenge"),
-              KV("Agla step", "kitne chahiye (max 100,000)")))
+              KV("Agla step", "kitne chahiye (max 100,000)"))
+           + "\n\n" + P("💡 Poori keywords ki file bhi bhej sakte ho — "
+                           ".txt .csv .json .xlsx .docx sab chalta hai."))
     try:
         await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK([
             [InlineKeyboardButton("📦 NICHE PACKS (ready HQ)", callback_data="kw:niche")],
@@ -4295,23 +4520,46 @@ async def _run_inject(update, context, urls):
 async def tool_parse(update, context):
     q = update.callback_query
     last = context.user_data.get("last_dorks") or []
+    mode = user_mode(context)
+    pool = PROXIES or load_proxy_pool()
     kb = RK([
         [InlineKeyboardButton("🚀 DEEP SCAN (LAST DORKS)", callback_data="pr:deep")],
         [InlineKeyboardButton("📥 USE LAST %d DORKS" % len(last), callback_data="pr:last")],
         [InlineKeyboardButton("✍️ MANUAL DORK", callback_data="pr:manual")],
+        [InlineKeyboardButton("🌊 DEEP CRAWL (last URLs)", callback_data="pr:crawl")],
+        [InlineKeyboardButton("🎛 %s" % ENGINE_LABEL[mode].split(" ", 1)[-1],
+                              callback_data="pr:eng")],
         [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
     ])
-    txt = (H("PARSER", "asli engines = asli URLs") + "\n\n"
-           "Engines: DDG • Bing • Mojeek • Yahoo • Brave • Startpage • Google\n"
-           "🐦 Free Google: %s\n"
-           "Proxy: %s\n\n"
-           "Dork list bhejo (ek line me ek) — ya upar se LAST DORKS chuno."
-           % ("✅ ON (no key)" if gj_enabled() else "⚪ OFF",
-              "✅ %d ready" % len(PROXIES or load_proxy_pool()) if (PROXIES or load_proxy_pool()) else "⚪ none (no-proxy mode)"))
+    txt = (H("PARSER", "kam engines = fast") + "\n\n"
+           + KV("Mode", "<b>%s</b>" % ENGINE_LABEL[mode], "🎛")
+           + "\n" + KV("Engines", "<code>%s</code>" % ", ".join(engine_list(mode)), "⚙️")
+           + "\n" + KV("Free Google", "✅ ON (no key)" if gj_enabled() else "⚪ OFF", "🐦")
+           + "\n" + KV("Proxy", ("✅ %d alive" % len(pool)) if pool else "⚪ none — no-proxy mode", "🧅")
+           + "\n\n" + P("DDG • Mojeek • Marginalia bina proxy chalte hain. "
+                           "Google/Yandex/Startpage proxy ke bina block karte hain.")
+           + "\n\n" + B("Dork list bhejo") + "\n"
+           + P("Ek line me ek — ya file bhej do. Last dorks bhi use kar sakte ho.")
+           + "\n\n<code>/engines fast</code> se aur fast.")
     try:
         await q.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
     except Exception:
         pass
+
+
+async def cb_parse_engine(update, context):
+    """PARSER ka mode button — fast → normal → max → fast (per user)."""
+    order = ["fast", "normal", "max"]
+    cur = user_mode(context)
+    nxt = order[(order.index(cur) + 1) % 3] if cur in order else "fast"
+    context.user_data["engines_mode"] = nxt
+    try:
+        await update.callback_query.answer("%s chun liya — %d engines"
+                                           % (ENGINE_LABEL[nxt], len(ENGINE_SETS[nxt])),
+                                           show_alert=False)
+    except Exception:
+        pass
+    return await tool_parse(update, context)
 
 
 async def cb_parse_last(update, context):
@@ -4394,17 +4642,18 @@ async def input_deep_max(update, context, text: str):
                 "Scanned : <code>%d/%d</code>\n"
                 "Raw URLs: <code>%s</code>\n"
                 "Unique  : <code>%s</code>\n"
-                "Errors  : <code>%s</code>\n\n"
+                "Engines : <code>%s</code>\n\n"
                 "[%s] <b>%.0f%%</b>"
                 % (F("DEEP PARSER — RUNNING", T()["head"]), T()["div"][:20],
                    st["scanned"], st["total"], fmt(st["raw"]), fmt(st["unique"]),
-                   fmt(st["errors"]), bar(pct, 22), pct),
+                   fmt(st.get("engines", 5)), bar(pct, 22), pct),
                 parse_mode=ParseMode.HTML)
         except Exception:
             pass
 
     res = await parse_deep(dorks, max_urls=mx, pages=int(sget("parse_pages", 1) or 1),
-                           use_proxy=bool(PROXIES or load_proxy_pool()), progress=prog)
+                           use_proxy=None, progress=prog,
+                           mode=user_mode(context))
     took = time.time() - t0
     st = res["stats"]
     urls = res["urls"]
@@ -4414,19 +4663,21 @@ async def input_deep_max(update, context, text: str):
     card = (H("DEEP PARSER — COMPLETE", "%.1fs" % took) + "\n\n"
             "Scanned: <code>%d/%d</code> dorks\n"
             "Raw URLs: <code>%s</code>\n"
-            "Unique URLs: <code>%s</code>\n"
-            "⚠️ Errors: <code>%s</code>\n\n"
-            "🚫 Filtered: <code>%s</code>\n"
-            "   <i>(junk %s • dork-mismatch %s)</i>\n\n"
+            "Unique URLs: <code>%s</code>\n\n"
             "🌐 Common Crawl: <code>%s</code>\n"
             "🐦 Google (free): <code>%s</code>\n"
             "🔑 API: <code>%s</code>\n"
             "⚙️ Engines: <code>%s</code>\n\n"
+            "%s\n%s\n%s\n%s\n\n"
             "[%s] <b>100%%</b>\n\n"
             "📦 <b>Files ready</b>"
             % (st["scanned"], st["total"], fmt(st["raw"]), fmt(st["unique"]),
-               fmt(st["errors"]), fmt(st["filtered"]), fmt(st["junk"]),
-               fmt(st["mismatch"]), fmt(st["cc"]), fmt(st.get("gj", 0)), fmt(st["api"]), esc(eng),
+               fmt(st["cc"]), fmt(st.get("gj", 0)), fmt(st["api"]), esc(eng),
+               KV("Engine block", "yahi 'errors' the — <code>%s</code> (IP/proxy block)" % fmt(st["errors"]), "⚠️"),
+               KV("Relaxed", "<code>%s</code> baar strict me 0 mila to bina filter liya" % fmt(st.get("relaxed", 0)), "⚖️"),
+               KV("Filtered", "<code>%s</code> (junk %s • mismatch %s)"
+                  % (fmt(st["filtered"]), fmt(st["junk"]), fmt(st["mismatch"])), "🚫"),
+               KV("Engines mode", "<b>%s</b> — badalne ke liye <code>/engines</code>" % engines_mode(), "🎛"),
                bar(100, 22)))
     try:
         await msg.delete()
@@ -4445,9 +4696,15 @@ async def input_deep_max(update, context, text: str):
             pass
     else:
         await update.effective_message.reply_text(
-            "❌ 0 URLs — sab engines block/empty the.\n"
-            "👉 🧅 PROXY ENGINE se proxies add karo, phir dobara.",
-            reply_markup=kb_back("m:parse"))
+            (H("0 URLs", "kyun?") + "\n\n"
+             + KV("Mode", "<b>%s</b>" % engines_mode(), "🎛") + "\n"
+             + KV("Engine block", "<code>%s</code>" % fmt(st["errors"]), "⚠️") + "\n\n"
+             + B("Sabse pehle ye karo") + "\n"
+             + "1️⃣ <code>/engines fast</code> — 3 engines jo bina proxy chalte hain\n"
+             + "2️⃣ 🧅 PROXY ENGINE se proxy add karo\n"
+             + "3️⃣ Dork simple karo (<code>site:x inurl:login</code>)\n\n"
+             + "<i>Google/Yandex/Startpage bina proxy block karte hain — DDG/Mojeek/Marginalia nahi.</i>"),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
     await update.effective_message.reply_text("⬅️ Menu", reply_markup=kb_back("m:home"))
     await_clear(context)
 
@@ -4502,7 +4759,7 @@ async def input_parse_max(update, context, text: str):
             pass
 
     res = await parse(dorks, max_urls=mx, pages=sget("parse_pages", 1),
-                      use_proxy=bool(PROXIES or load_proxy_pool()), progress=prog)
+                      use_proxy=None, progress=prog, mode=user_mode(context))
     took = time.time() - t0
     urls = res["urls"]
     context.user_data["last_urls"] = urls
@@ -4974,17 +5231,229 @@ def classify_lines(lines: list) -> str:
     return "keywords"
 
 
-def read_lines(raw: bytes) -> list:
-    txt = raw.decode("utf-8", "ignore")
-    out = []
-    for line in txt.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        line = line.strip()
-        if not line or line.startswith("#"):
+def _decode_bytes(raw: bytes) -> str:
+    """Kisi bhi encoding me file aaye — padh lo."""
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except Exception:
             continue
-        out.append(line)
+    return raw.decode("utf-8", "ignore")
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _xlsx_lines(raw: bytes) -> list:
+    """XLSX → lines (zipfile + regex, koi library nahi)."""
+    import io
+    out = []
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        names = z.namelist()
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            ss = z.read("xl/sharedStrings.xml").decode("utf-8", "ignore")
+            shared = [_html.unescape(_TAG_RE.sub("", m))
+                      for m in re.findall(r"<si>(.*?)</si>", ss, re.S)]
+        sheets = [n for n in names if re.match(r"xl/worksheets/sheet\d+\.xml$", n)]
+        for n in sheets[:4]:
+            sheet = z.read(n).decode("utf-8", "ignore")
+            for row in re.findall(r"<row[^>]*>(.*?)</row>", sheet, re.S):
+                vals = []
+                for attrs, body in re.findall(r"<c\b([^>]*)>(.*?)</c>", row, re.S):
+                    val = _html.unescape(_TAG_RE.sub("", body)).strip()
+                    if 't="s"' in attrs and val.isdigit():
+                        idx = int(val)
+                        val = shared[idx] if idx < len(shared) else ""
+                    if val:
+                        vals.append(val)
+                if vals:
+                    out.append(" ".join(vals))
+    return out
+
+
+def _doc_lines(raw: bytes) -> list:
+    """DOCX / PPTX → lines (zip + XML)."""
+    import io
+    out = []
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        targets = [n for n in z.namelist()
+                   if n in ("word/document.xml",) or re.match(r"ppt/slides/slide\d+\.xml$", n)]
+        for n in targets[:20]:
+            xml = z.read(n).decode("utf-8", "ignore")
+            xml = re.sub(r"</(?:w:p|a:p)>", "\n", xml)
+            for line in _TAG_RE.sub("", xml).split("\n"):
+                line = _html.unescape(line).strip()
+                if line:
+                    out.append(line)
+    return out
+
+
+def _json_lines(txt: str) -> list:
+    """JSON / NDJSON / API response → values ki list."""
+    out = []
+
+    def walk(x, depth=0):
+        if depth > 8:
+            return
+        if isinstance(x, str):
+            v = x.strip()
+            if v and not v.isdigit():
+                out.append(v)
+        elif isinstance(x, (list, tuple)):
+            for i in x:
+                walk(i, depth + 1)
+        elif isinstance(x, dict):
+            for key in ("url", "link", "href", "keyword", "kw", "dork",
+                        "proxy", "ip", "value", "data", "results", "urls"):
+                if key in x:
+                    walk(x[key], depth + 1)
+            for k, v in x.items():
+                if k in ("url", "link", "href", "keyword", "kw", "dork",
+                         "proxy", "ip", "value", "data", "results", "urls"):
+                    continue
+                walk(v, depth + 1)
+        elif isinstance(x, (int, float)):
+            return
+    txt = (txt or "").strip()
+    try:
+        walk(json.loads(txt))
+        return out
+    except Exception:
+        pass
+    # NDJSON — ek line me ek JSON
+    for line in txt.splitlines():
+        line = line.strip().rstrip(",")
+        if line.startswith(("{", "[")):
+            try:
+                walk(json.loads(line if not line.startswith("[") else line))
+            except Exception:
+                continue
+    if out:
+        return out
+    # last try: "url": "..." patterns
+    return [m for m in re.findall(r'"(?:url|link|href|keyword|value)"\s*:\s*"([^"]{3,300})"', txt)]
+
+
+_BULLET_RE = re.compile(r"^\s*(?:[-*•·>]+|\d{1,4}[.)\]])\s+")
+_INLINE_COMMENT = re.compile(r"\s+#.*$")
+
+
+def _clean_item(line: str) -> str:
+    x = _html.unescape((line or "").strip())
+    x = x.strip().strip('"\'').strip()
+    x = _BULLET_RE.sub("", x)
+    x = x.strip().strip('"\'').strip()
+    x = _INLINE_COMMENT.sub("", x)
+    return " ".join(x.split())
+
+
+def read_any_file(raw: bytes, name: str = "file.txt") -> tuple:
+    """KISI BHI format ki file → (items, meta). Koi library nahi chahiye.
+
+    Support: txt / csv / tsv / list / json / ndjson / log / xml / html /
+             xlsx / xlsm / docx / pptx / zip / gz / bina extension
+    """
+    name = (name or "file.txt").lower()
+    meta = {"format": "text", "raw": 0, "junk": 0}
+    lines = []
+
+    # 1) gzip
+    if raw[:2] == b"\x1f\x8b":
+        try:
+            import gzip as _gz
+            raw = _gz.decompress(raw)
+            meta["format"] = "gzip"
+        except Exception:
+            return [], meta
+
+    # 2) zip family (xlsx / docx / pptx / zip)
+    if raw[:2] == b"PK":
+        try:
+            if name.endswith((".xlsx", ".xlsm", ".xls")):
+                lines = _xlsx_lines(raw)
+                meta["format"] = "xlsx"
+            elif name.endswith((".docx", ".pptx")):
+                lines = _doc_lines(raw)
+                meta["format"] = "docx" if name.endswith(".docx") else "pptx"
+            else:
+                lines = _xlsx_lines(raw) or _doc_lines(raw)
+                if lines:
+                    meta["format"] = "zip→sheet/doc"
+                else:
+                    import io
+                    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                        for n in z.namelist():
+                            if n.lower().endswith((".txt", ".csv", ".list", ".json")):
+                                lines.extend(_decode_bytes(z.read(n)).splitlines())
+                    meta["format"] = "zip"
+            if not lines:
+                return [], meta
+        except Exception:
+            return [], meta
+    else:
+        txt = _decode_bytes(raw)
+        head = txt.lstrip()[:1]
+        low = name.rsplit(".", 1)[-1] if "." in name else ""
+        if head in ("[", "{") or low in ("json", "ndjson"):
+            lines = _json_lines(txt)
+            if lines:
+                meta["format"] = "json" if head in ("[", "{") else "json-lines"
+            else:
+                lines = txt.splitlines()
+        elif low in ("html", "htm") or txt.lstrip()[:6].lower() in ("<html", "<!doct"):
+            hrefs = re.findall(r'href=["\']([^"\']{4,300})["\']', txt, re.I)
+            body = _html.unescape(_TAG_RE.sub("\n", txt))
+            lines = hrefs + [x.strip() for x in body.splitlines() if x.strip()]
+            meta["format"] = "html"
+        else:
+            lines = txt.splitlines()
+            meta["format"] = (low or "text")
+        # CSV / TSV / semicolon — sirf tab split karo jab dorks na hon
+        delim = None
+        if low in ("csv",):
+            delim = ","
+        elif low in ("tsv", "tab"):
+            delim = "\t"
+        if delim is None and lines:
+            sample = [x for x in lines[:400] if x.strip()]
+            if sample:
+                comma = sum(1 for x in sample if "," in x) / len(sample)
+                dork_like = sum(1 for x in sample if DORK_OP.search(x)) / len(sample)
+                if comma > 0.6 and dork_like < 0.2:
+                    delim = ","
+        if delim:
+            split = []
+            for x in lines:
+                split.extend([p for p in x.split(delim)])
+            lines = split
+            meta["format"] = "csv" if delim == "," else "tsv"
+
+    meta["raw"] = len(lines)
+    out, seen = [], set()
+    for x in lines:
+        c = _clean_item(x)
+        if not c or c.startswith(("#", "//", ";", "%")):
+            continue
+        low = c.lower()
+        if low.startswith(("python snake", "py thon snake")):     # apni hi banner line
+            continue
+        if len(c) > 2000:
+            c = c[:2000]
+        key = c if len(c) < 400 else c[:400]
+        if key in seen:
+            meta["junk"] += 1
+            continue
+        seen.add(key)
+        out.append(c)
         if len(out) >= FILE_MAX_LINES:
             break
-    return out
+    return out, meta
+
+
+def read_lines(raw: bytes) -> list:
+    """Purana API — ab read_any_file ka shortcut."""
+    return read_any_file(raw)[0]
 
 
 def kb_file(kind: str) -> InlineKeyboardMarkup:
@@ -4995,7 +5464,9 @@ def kb_file(kind: str) -> InlineKeyboardMarkup:
                 [InlineKeyboardButton("💉 INJECTOR", callback_data="f:inj")],
                 [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]]
     elif kind == "urls":
-        rows = [[InlineKeyboardButton("🔗 URL REVERSE", callback_data="f:rev")],
+        rows = [[InlineKeyboardButton("🌊 DEEP CRAWL (fast)", callback_data="f:crawl")],
+                [InlineKeyboardButton("🌊🌊 DEEP 2 LEVEL", callback_data="f:crawl2")],
+                [InlineKeyboardButton("🔗 URL REVERSE", callback_data="f:rev")],
                 [InlineKeyboardButton("💉 INJECTOR", callback_data="f:inj"),
                  InlineKeyboardButton("🧹 CLEAN + DEDUPE", callback_data="f:clean")],
                 [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]]
@@ -5006,8 +5477,18 @@ def kb_file(kind: str) -> InlineKeyboardMarkup:
     return RK(rows)
 
 
+# file ko seedha in flows me daal sakte hain (text chahiye, number nahi)
+FILE_FLOW_TEXT = {"gen_kw", "dpgen_kw", "kw_input", "qa_keywords",
+                  "qa_dorks", "qa_urls", "rev_urls", "inj_urls", "parse_dorks",
+                  "rand_items", "pro_combo", "pro_domains", "pro_params",
+                  "pro_filetypes", "pro_sfilters", "pro_pfilters"}
+# count wale steps — file se count nahi nikalte
+FILE_FLOW_COUNT = {"gen_count", "dpgen_count", "kw_count", "dork_count",
+                   "parse_max", "deep_max"}
+
+
 async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User .txt bheje — dorks / URLs / keywords — auto detect + actions."""
+    """Koi bhi file (txt/csv/json/xlsx/docx/…) — dorks / URLs / keywords — auto detect."""
     uid = update.effective_user.id
     doc = getattr(update.message, "document", None)
     if not doc:
@@ -5020,17 +5501,12 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(need_key_text(uid), parse_mode=ParseMode.HTML,
                                         reply_markup=kb_needkey())
         return
-    await_clear(context)          # file bhejna = naya intent
+    wait = await_get(context)          # koi input prompt khula hai kya?
     name = doc.file_name or "file.txt"
     size = int(doc.file_size or 0)
     if size > FILE_MAX:
         await update.message.reply_text(
             "❌ File bahut badi hai (%.1f MB). Max 8 MB." % (size / 1024 / 1024))
-        return
-    if not re.search(r"\.(txt|csv|list|dork|urls?|lst)$", name, re.I):
-        await update.message.reply_text(
-            "❌ Sirf <code>.txt</code> / <code>.csv</code> / <code>.list</code> bhejo.\n"
-            "<i>Word/PDF support nahi hai.</i>", parse_mode=ParseMode.HTML)
         return
     msg = await update.message.reply_text("📂 File padh raha hoon…")
     try:
@@ -5043,13 +5519,45 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         return
-    lines = read_lines(raw)
+    lines, fmeta = read_any_file(raw, name)
     if not lines:
         try:
-            await msg.edit_text("❌ File khaali hai (ya sirf comments).")
+            await msg.edit_text(
+                "❌ File se kuch nahi nikla (khaali / binary).\n"
+                "<i>Supported: txt, csv, tsv, json, log, html, xlsx, docx, pptx, zip, gz — "
+                "ya bina extension bhi.</i>", parse_mode=ParseMode.HTML)
         except Exception:
             pass
         return
+
+    # ── 1) koi flow khula hai? File ko seedha usme daal do ──
+    if wait in FILE_FLOW_TEXT and AWAIT_HANDLERS.get(wait):
+        try:
+            await msg.edit_text(
+                (H("FILE ACCEPTED", "flow me daal rahe hain") + "\n\n"
+                 + KV("File", "<code>%s</code>" % esc(name)[:40], "📄")
+                 + "\n" + KV("Lines", "<code>%s</code>" % fmt(len(lines)), "📊")
+                 + "\n" + KV("Format", "<b>%s</b>" % esc(fmeta.get("format", "text")), "🏷")
+                 + "\n" + KV("Duplicate", "<code>%s</code> hataye" % fmt(fmeta.get("junk", 0)), "🧹")),
+                parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+        await_clear(context)
+        return await AWAIT_HANDLERS[wait](update, context, "\n".join(lines))
+    if wait in FILE_FLOW_COUNT:
+        try:
+            await msg.edit_text(
+                (H("FILE MILI — PAR COUNT CHAHIYE", "%s lines" % fmt(len(lines))) + "\n\n"
+                 + P("Abhi number wala step khula hai.") + "\n\n"
+                 + B("Number bhejo") + "\n"
+                 + "<i>File baad me — pehle count, phir file/text.</i>"),
+                parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+        await_set(context, wait)
+        return
+
+    await_clear(context)          # file bhejna = naya intent (koi flow khula nahi tha)
     kind = classify_lines(lines)
     context.user_data["file_items"] = lines
     context.user_data["file_kind"] = kind
@@ -5068,17 +5576,101 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     card = (H("FILE LOADED", "%s • %s" % (label, esc(name)[:40])) + "\n\n"
             "📄 Lines   : <code>%s</code>\n"
             "📦 Size    : <code>%.1f KB</code>\n"
-            "🏷 Type    : <b>%s</b>\n"
+            "🏷 Format  : <b>%s</b>\n"
+            "🧹 Duplicate: <code>%s</code> hataye\n"
             "⚙️ Operators: <code>%d</code>%s\n\n"
             "<b>Preview:</b>\n%s\n\n"
             "👇 Kya karna hai?"
-            % (fmt(len(lines)), size / 1024, label, ops, extra,
+            % (fmt(len(lines)), size / 1024, esc(fmeta.get("format", "text")),
+               fmt(fmeta.get("junk", 0)), ops, extra,
                short_list(lines[:6], 6)))
     try:
         await msg.delete()
     except Exception:
         pass
     await update.message.reply_text(card, parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
+
+
+async def cb_deep_crawl(update, context, seeds: list, levels: int = 0):
+    """DEEP URL CRAWLER — seed URLs → andar ke saare links (bina proxy)."""
+    q = update.callback_query
+    seeds = [x for x in (seeds or []) if str(x).startswith("http")][:500] or list(seeds or [])[:500]
+    if not seeds:
+        try:
+            await q.answer("Pehle URLs bhejo", show_alert=True)
+        except Exception:
+            pass
+        return
+    msg = None
+    try:
+        msg = await q.edit_message_text(
+            (H("DEEP URL CRAWL", "chalu…") + "\n\n"
+             + KV("Seeds", "<code>%s</code>" % fmt(len(seeds)), "🌱")
+             + "\n" + KV("Levels", "<code>%d</code>" % (levels + 1), "🌊")
+             + "\n" + KV("Proxy", "<b>nahi chahiye</b>", "🧅")),
+            parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
+    t0 = time.time()
+    last = {"t": 0.0}
+
+    async def prog(st):
+        if msg is None or time.time() - last["t"] < 2.5:
+            return
+        last["t"] = time.time()
+        try:
+            await msg.edit_text(
+                (H("DEEP URL CRAWL", "chalu…") + "\n\n"
+                 + KV("Pages", "<code>%d ok • %d fail</code>"
+                      % (st["pages_ok"], st["pages_fail"]), "📄")
+                 + "\n" + KV("URLs mile", "<code>%s</code>" % fmt(st["found"]), "🔗")
+                 + "\n" + KV("Params", "<code>%s</code>" % fmt(st["params"]), "🔢")),
+                parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+
+    res = await deep_url_crawl(seeds, levels=levels, progress=prog)
+    took = time.time() - t0
+    st = res["stats"]
+    urls = res["urls"]
+    context.user_data["last_urls"] = urls
+    if not urls:
+        try:
+            await msg.edit_text(
+                (H("DEEP CRAWL — 0", "%.1fs" % took) + "\n\n"
+                 + "❌ Kuch nahi mila. Pages fail: <code>%s</code>\n\n"
+                 % fmt(st["pages_fail"])
+                 + P("Sites block kar rahi hongi ya JS se load hoti hain.")),
+                parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
+        except Exception:
+            pass
+        return
+    card = (H("DEEP URL CRAWL — DONE", "%.1fs" % took) + "\n\n"
+            + KV("Pages", "<code>%d ok • %d fail</code>"
+                 % (st["pages_ok"], st["pages_fail"]), "📄")
+            + "\n" + KV("URLs", "<code>%s</code> unique" % fmt(len(urls)), "🔗")
+            + "\n" + KV("Domains", "<code>%s</code>" % fmt(st["domains"]), "🌐")
+            + "\n" + KV("Params", "<code>%s</code>" % fmt(st["params"]), "🔢")
+            + "\n" + KV("Speed", "<code>%.0f URLs/sec</code>"
+                 % (len(urls) / max(0.2, took)), "⚡")
+            + "\n\n<b>Top 8:</b>\n" + short_list(urls[:8], 8))
+    try:
+        if msg:
+            await msg.edit_text(card, parse_mode=ParseMode.HTML,
+                                reply_markup=RK([
+                                    [InlineKeyboardButton("🔗 URL REVERSE", callback_data="f:rev")],
+                                    [InlineKeyboardButton("💉 INJECTOR", callback_data="f:inj")],
+                                    [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
+                                ]))
+    except Exception:
+        pass
+    path, cnt = dump_text(urls, "crawl", "PYTHON SNAKE — deep url crawl")
+    await send_file(update, path, "🌊 %d URLs • %d pages" % (cnt, st["pages_ok"]))
+    if res["params"]:
+        ppath, pcnt = dump_text(res["params"], "crawl_params",
+                                "PYTHON SNAKE — params (deep crawl)")
+        await send_file(update, ppath, "🔢 %d parameters" % pcnt)
+    await_clear(context)
 
 
 async def cb_file(update, context, action: str):
@@ -5091,6 +5683,10 @@ async def cb_file(update, context, action: str):
         except Exception:
             pass
         return
+
+    if action in ("crawl", "crawl2"):
+        return await cb_deep_crawl(update, context, items,
+                                   levels=1 if action == "crawl2" else 0)
 
     if action == "deep":
         context.user_data["parse_dorks"] = items[:1000]
@@ -5486,20 +6082,7 @@ def pro_render(tpl: str, kw: str, cfg: dict = None, idx: int = 0) -> str:
     nb = str(random.randint(1, 9)) * random.choice([1, 2, 3]) + str(random.randint(0, 99))
     co = _pick(cfg["combos"], idx)
     out = str(tpl)
-    # KW ka shape: operator ke baad quote, warna hyphen (space dork todta hai)
-    pos = out.find("(KW)")
-    prev = out[pos - 1] if pos > 0 else ""
-    nxt = out[pos + 4] if pos >= 0 and pos + 4 < len(out) else ""
-    already_q = (prev == '"' and nxt == '"')          # template me "(KW)" pehle se
-    if already_q:
-        kw_form = kw
-    elif prev and prev in ':"':
-        kw_form = '"%s"' % kw
-    elif " " in kw:
-        kw_form = kw.replace(" ", "-")
-    else:
-        kw_form = kw
-    out = out.replace("(KW)", kw_form)
+    # pehle baaki placeholders bharo, KW sabse aakhir me (operator pata chale)
     out = out.replace("(DE)", de)
     out = out.replace("(PF)", pf)
     out = out.replace("(PT)", pt)
@@ -5507,7 +6090,34 @@ def pro_render(tpl: str, kw: str, cfg: dict = None, idx: int = 0) -> str:
     out = out.replace("(SF)", sf)
     out = out.replace("(NB)", nb)
     out = out.replace("(CO)", co)
+
+    # KW ka shape — sabse important quality factor
+    pos = out.find("(KW)")
+    prev = out[pos - 1] if pos > 0 else ""
+    nxt = out[pos + 4] if pos >= 0 and pos + 4 < len(out) else ""
+    before = out[:pos] if pos > 0 else ""
+    url_op = bool(URL_OP_RE.search(before))           # inurl:/allinurl:/inanchor:
+    already_q = (prev == '"' and nxt == '"')          # template me "(KW)" pehle se
+    if url_op:
+        # URL me space nahi hota → gap hata ke slug (zyada real matches)
+        kw_form = kw_slug(kw) or kw
+        out = out.replace('"(KW)"', "(KW)")           # inurl:"..." ke quotes hatao
+    elif already_q:
+        kw_form = kw.replace('"', " ")
+    elif prev and prev in ':"':
+        kw_form = '"%s"' % kw
+    elif " " in kw:
+        url_side = ((nxt and nxt in ".-_/?:") or (prev and prev in ".-_/?"))
+        if url_side:                                  # path/URL ke andar → slug
+            kw_form = kw_slug(kw)
+        else:                                         # normal search → quoted phrase
+            kw_form = '"%s"' % kw
+    else:
+        kw_form = kw
+    out = out.replace("(KW)", kw_form)
     # ".index" / "?id" jaisa shape theek karo
+    # inurl:"shopify-store" → inurl:shopify-store (quotes ki zaroorat nahi)
+    out = re.sub(r'(inurl|allinurl|inanchor):"([^"]{1,90})"', r"\1:\2", out)
     out = re.sub(r"(?<![\w:])\." + r"(?=\.)", ".", out)
     out = re.sub(r"\?\.", "?", out)
     out = " ".join(out.split())
@@ -6534,6 +7144,7 @@ async def _post_init(app) -> None:
             BotCommand("ping", "🏓 Bot zinda?"),
             BotCommand("gtest", "🐦 Free Google test"),
             BotCommand("apis", "🔑 SERP API list"),
+            BotCommand("engines", "⚡ Parser speed (kam engines)"),
             BotCommand("fresh", "🆕 Fresh dork history"),
             BotCommand("admin", "👑 Admin panel"),
         ])
@@ -6554,6 +7165,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("setkey", cmd_setkey))
     app.add_handler(CommandHandler("apis", cmd_apis))
+    app.add_handler(CommandHandler("engines", cmd_engines))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CommandHandler("theme", cmd_theme))
     app.add_handler(CommandHandler("ban", cmd_ban))
@@ -6635,6 +7247,43 @@ async def _self_check(app) -> None:
     except Exception as exc:
         logger.warning("admin online msg fail: %s", exc)
 
+
+
+def engines_text(context=None) -> str:
+    cur = user_mode(context)
+    rows = []
+    for key in ("fast", "normal", "max"):
+        mark = "✅ " if key == cur else ""
+        rows.append("   %s<b>%s</b> — <code>%s</code>"
+                    % (mark, ENGINE_LABEL[key], ", ".join(ENGINE_SETS[key])))
+    return (H("ENGINES MODE", ENGINE_LABEL[cur]) + "\n\n"
+            + "\n".join(rows) + "\n\n"
+            + B("Kaise badlein") + "\n"
+            + "<code>/engines fast</code> — 3 engines (phone pe sabse fast)\n"
+            + "<code>/engines normal</code> — 5 engines\n"
+            + "<code>/engines max</code> — 13 engines (proxy chahiye)\n\n"
+            + "<i>DDG • Mojeek • Marginalia bina proxy chalte hain. "
+              "Google/Yandex/Startpage bina proxy block karte hain — isliye slow + errors.</i>")
+
+
+async def cmd_engines(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ /engines fast|normal|max — kitne search engines chalein."""
+    arg = str((context.args or [""])[0] or "").lower().strip()
+    if arg in ENGINE_SETS:
+        context.user_data["engines_mode"] = arg
+        if is_admin(update.effective_user.id):
+            sset("engines_mode", arg)
+            extra = "\n<i>(admin — sab users ka default bhi set)</i>"
+        else:
+            extra = ""
+        await update.effective_message.reply_text(
+            (H("MODE SET", ENGINE_LABEL[arg]) + "\n\n"
+             + KV("Engines", "<code>%s</code>" % ", ".join(ENGINE_SETS[arg]), "⚙️")
+             + "\n" + KV("Proxy", "zaroori nahi" if arg != "max" else "recommended", "🧅")
+             + "\n\n" + B("Ab PARSER chalao") + extra),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
+        return
+    await update.effective_message.reply_text(engines_text(context), parse_mode=ParseMode.HTML)
 
 
 async def _cmd_intent_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):

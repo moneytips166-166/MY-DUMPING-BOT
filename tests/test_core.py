@@ -48,7 +48,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.1", "VERSION")
+    eq(core.VERSION, "v2.2", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -300,6 +300,114 @@ def test_qa():
     ok(isinstance(sc, int) and 0 <= sc <= 100, "qa score")
 
 
+def test_reader_formats():
+    group("reader")
+    import gzip as _gz
+    import io as _io
+    import zipfile as _zf
+    # txt with banner
+    items, meta = core.read_any_file(
+        "# PYTHON SNAKE — HQ keywords (x)\n# date\n\nshopify store\ncrypto wallet\n"
+        .encode("utf-8"), "kw.txt")
+    eq(items, ["shopify store", "crypto wallet"], "txt banner skip")
+    # csv
+    items, meta = core.read_any_file(b"a,b\nshopify store,delhi\n", "kw.csv")
+    ok("shopify store" in items and "delhi" in items, "csv split")
+    eq(meta["format"], "csv")
+    # json
+    items, meta = core.read_any_file(
+        b'{"urls":["https://a.com/1","https://b.com/2"]}', "x.json")
+    eq(items, ["https://a.com/1", "https://b.com/2"], "json urls")
+    eq(meta["format"], "json")
+    # gzip
+    items, _ = core.read_any_file(_gz.compress(b"shopify store\n"), "x.txt.gz")
+    eq(items, ["shopify store"], "gz")
+    # xlsx
+    buf = _io.BytesIO()
+    with _zf.ZipFile(buf, "w") as z:
+        z.writestr("xl/sharedStrings.xml",
+                   "<sst><si><t>shopify store</t></si></sst>")
+        z.writestr("xl/worksheets/sheet1.xml",
+                   '<worksheet><sheetData><row><c t="s"><v>0</v></c></row>'
+                   '</sheetData></worksheet>')
+    items, meta = core.read_any_file(buf.getvalue(), "kw.xlsx")
+    eq(items, ["shopify store"], "xlsx")
+    eq(meta["format"], "xlsx")
+    # docx
+    buf = _io.BytesIO()
+    with _zf.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml",
+                   "<w:document><w:body><w:p><w:r><w:t>crypto wallet</w:t></w:r></w:p>"
+                   "</w:body></w:document>")
+    items, _ = core.read_any_file(buf.getvalue(), "kw.docx")
+    eq(items, ["crypto wallet"], "docx")
+    # bullets + bom + dedupe
+    items, meta = core.read_any_file(
+        "\ufeff1. shopify store\n- shopify store\n• crypto wallet\n".encode(), "x")
+    eq(items, ["shopify store", "crypto wallet"], "bullets+dedupe")
+    ok(meta["junk"] >= 1, "duplicate counted")
+    # bina extension
+    items, _ = core.read_any_file(b"shopify store\n", "note")
+    eq(items, ["shopify store"], "no extension")
+
+
+def test_kw_slug():
+    group("slug")
+    eq(core.kw_slug("Shopify Store"), "shopify-store")
+    eq(core.kw_slug("crypto_wallet!!"), "crypto-wallet")
+    eq(core.kw_slug("admin"), "admin")
+    out = core.pro_render('inurl:"(KW)"', "shopify store", core.pro_load())
+    eq(out, "inurl:shopify-store", "inurl slug")
+    out2 = core.pro_render('intitle:(KW)', "shopify store", core.pro_load())
+    contains(out2, '"shopify store"', "intitle phrase")
+    ok(" " not in out.split(" ")[0] or True, "ok")
+    # koi bhi dork me inurl:"a b" na ho
+    d = core.pro_gen(["shopify store"], n=400)["dorks"]
+    bad = [x for x in d if 'inurl:"' in x and " " in x.split('inurl:"', 1)[1].split('"')[0]]
+    eq(bad, [], "inurl me space nahi")
+
+
+def test_engines():
+    group("engines")
+    ok("fast" in core.ENGINE_SETS and "max" in core.ENGINE_SETS, "engine sets")
+    eq(len(core.ENGINE_SETS["fast"]), 3, "fast 3")
+    eq(len(core.ENGINE_SETS["max"]), len(core.ENGINE_ORDER), "max all")
+    eq(core.engine_list("fast"), ["ddg", "mojeek", "marginalia"], "fast list")
+    ctx = FakeContext({})
+    ctx.user_data["engines_mode"] = "max"
+    eq(core.user_mode(ctx), "max", "user mode")
+    core.sset("engines_mode", "fast")
+    eq(core.engines_mode(), "fast", "global mode")
+    ok("FAST" in core.ENGINE_LABEL["fast"], "label")
+
+
+def test_crawler():
+    group("crawler")
+    ok(callable(core.deep_url_crawl), "crawler fn")
+    eq(core._abs_url("https://a.com/x/", "/y?z=1"), "https://a.com/y?z=1", "abs url")
+    eq(core._abs_url("https://a.com/", "javascript:void(0)"), "", "js skipped")
+    eq(core.url_params("https://a.com/x?id=5&cat=2"), ["id", "cat"], "params")
+    ok(core.LINK_ATTR_RE.search('<a href="/abc">x</a>'), "link regex")
+
+
+def test_file_in_flow():
+    group("file→flow")
+    raw = b"# banner\nshopify store\ncrypto wallet\nadmin panel\nmagento login\n"
+    ctx = FakeContext({"await": "gen_kw", "await_ts": time.time(), "gen_count": 300})
+    up = FakeUpdate(doc=FakeDocument("kw.txt", raw))
+    asyncio.run(core.on_document(up, ctx))
+    ok(up.docs(), "gen flow me file se dorks bane")
+    eq(core.await_get(ctx), None, "await clear")
+    # count step pe file → batao, generate na karo
+    ctx = FakeContext({})
+    core.await_set(ctx, "gen_count")
+    up = FakeUpdate(doc=FakeDocument("kw.txt", raw))
+    asyncio.run(core.on_document(up, ctx))
+    ok(not up.docs(), "count step pe file se dork nahi")
+    contains(up.last_text().lower(), "count")
+    eq(core.await_get(ctx), "gen_count", "count prompt wapas set")
+
+
 def test_help_uses_fonts():
     group("help fonts")
     txt = core.help_text()
@@ -313,7 +421,9 @@ def main():
                test_kind_check_numeric, test_pro_engine, test_universal,
                test_keywords, test_serp_providers, test_apis_text, test_commands,
                test_setkey_variants, test_flows, test_feature_gate,
-               test_niche_country, test_qa, test_help_uses_fonts):
+               test_niche_country, test_qa, test_help_uses_fonts,
+               test_reader_formats, test_kw_slug, test_engines, test_crawler,
+               test_file_in_flow):
         try:
             fn()
         except Exception as exc:

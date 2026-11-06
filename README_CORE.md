@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v2.1
+# 🐍 PYTHON SNAKE CORE — v2.2
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -108,6 +108,58 @@ Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
 
 ---
+
+## ✨ v2.2 — HAR FORMAT + FAST PARSER + DEEP CRAWLER
+
+### 📂 File = har format, aur seedha flow me
+Pehle: GEN/PRO flow me "keywords bhejo" ke waqt file bhejne se flow **cancel** ho jata tha.
+Ab: jo flow khula hai (GEN • PRO • HQ KW • PARSER • QA • REVERSE • INJECTOR • PRO config),
+**file seedha usme chali jati hai**.
+
+Supported (koi library nahi chahiye — sab Python built-in):
+`txt` • `csv` • `tsv` • `json` / `ndjson` • `log` • `html` • `xlsx` • `docx` • `pptx` •
+`zip` • `gz` • **bina extension** bhi.
+Saath me: BOM, bullets (`- * •`), numbering (`1.`), quotes, comments (`# //`), duplicates —
+sab khud saaf.
+
+### 🔤 Keyword ka gap — sach + fix
+**Sach:** haan, aadha sach. `inurl:` me **space kabhi match nahi karta** (URL me space hota hi nahi),
+isliye wahan keyword ko **hyphen** karna zaroori hai. `intitle:` / `intext:` me ulta — wahan
+**quoted phrase** zyada HQ hota hai.
+
+Ab bot khud decide karta hai:
+| Template | Output |
+|---|---|
+| `inurl:(KW)` | `inurl:shopify-store` ✅ |
+| `intitle:(KW)` | `intitle:"shopify store"` ✅ |
+| `(KW) (CO)` | `"shopify store" email:pass` ✅ |
+| pehle (galat) | `inurl:"shopify store"` → 0 results ❌ |
+
+### ⚡ Engines — phone pe fast
+Termux/phone pe 13 engines = slow + block. Ab 3 modes:
+```
+/engines fast     → ddg, mojeek, marginalia   (bina proxy chalte hain)
+/engines normal   → + bing, searxng           (default)
+/engines max      → saare 13                  (proxy chahiye)
+```
+PARSER screen pe 🎛 button se tap-tap me badal jata hai (per user).
+
+### 🔍 Parser — "errors" ka sach
+- Default: **proxy ho to use, warna bina proxy** (auto) — pehle zyada "errors" isi se aate the
+- "⚠️ Errors" ab **"Engine block"** — matlab us engine ne IP/proxy block kiya, dork me kharabi nahi
+- **Relaxed fallback**: strict match me 0 mila to usi dork ke URLs liye jate hain (0-result fix)
+- `DEEP PARSER` card me per-engine hits, relaxed count, filtered breakdown — sab dikhta hai
+
+### 🧅 ProxyScrape add
+`proxyscrape.com/free-proxy-list` ke apne endpoints + unki GitHub lists — sources **45 → 53**.
+`protocolipport` format bhi parse hota hai (`http://1.2.3.4:8080`).
+
+### 🌊 DEEP URL CRAWLER (naya)
+URLs do → har page ke andar ke **saare links + parameters** nikaal ke file de deta hai.
+- 40 parallel requests, **bina proxy**, 8s timeout
+- 2 level (seed → andar ke links → unke andar) optional
+- Live progress: pages ok/fail • URLs • params
+- Buttons: file card me `🌊 DEEP CRAWL` / `🌊🌊 DEEP 2 LEVEL`, PARSER me `🌊 DEEP CRAWL (last URLs)`
 
 ## ✨ v2.1 — FLOW FIX + SERP API HUB
 
