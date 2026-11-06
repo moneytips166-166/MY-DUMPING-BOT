@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v1.7
+# 🐍 PYTHON SNAKE CORE — v1.8
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -108,6 +108,78 @@ Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
 
 ---
+
+## 🚀 v1.8 — HQ KEYWORDS v2 + 100K LIMIT + FRESH SYSTEM
+
+### 🔑 HQ KEYWORDS — naya flow (seed YA apne keywords)
+Pehle: seed do → bina poochhe tukke se keywords. **Ab:**
+
+```
+1) Seeds bhejo  →  shopify store, crypto wallet
+   YA apne keywords paste karo (ek line me ek)
+2) Count batao  →  1 – 100,000
+3) Keywords mile →  scored + sorted + file
+```
+
+| Cheez | Pehle | Ab |
+|---|---|---|
+| 1 seed se kitne | **81** 😴 | **35,800+** |
+| Keyword list do | "kuch nahi bana" | usi se **1 lakh tak naye** |
+| Count poochta | ❌ | ✅ (max 1,00,000) |
+| 1 lakh banane ka time | — | **0.06 sec** ⚡ |
+| Quality report | ❌ | ✅ avg + buckets + top/worst |
+| Result buttons | ❌ | 🎯 Dorks banao · 📊 Quality · 🔁 Aur (fresh) |
+
+**Result screen:** 🎯 **DORKS BANAO** (keywords se real dorks),
+📊 **QUALITY REPORT** (🔥80+ … 🔴<25 + `HQ only 80+` file), 🔁 **AUR** (naya fresh batch).
+
+### 🎯 DORKER — naye modes + 1 lakh limit
+```
+📄 PAGE-TYPES   🗂 EXTENSIONS   🔧 PARAMETERS
+🔗 INURL        🌐 SITE         🎯 NICHE
+🎲 MIXED (HQ)   🆕 FRESH DORKS (purane skip)
+```
+- **🔗 INURL** — `inurl:product.php`, `allinurl:`, `inurl:"…"`, `inurl:?id=`
+- **🌐 SITE** — domain/TLD bhejo (`gov.in`, `.pk`, `auto`) → `site:gov.in inurl:login` type dorks
+- **Limit 5,000 → 1,00,000** (mixed 1 lakh = **1.1 sec**)
+- 🆕 **FRESH mode** — pehle bane dorks skip, sirf naye → **fresh URLs**
+
+### 🆕 FRESH SYSTEM (duplicate dorks khatam)
+- Har bane dork **history me** jaata hai (`data/dork_seen.txt`, hashed)
+- FRESH mode / "🆕 AUR FRESH" purane skip karta hai → **0 overlap**
+- 1 lakh fresh dorks = **2.6 sec**
+- `4,00,000` history par purane auto-trim
+```text
+/fresh            ← history stats
+/fresh clear      ← reset (sab dobara naya)
+```
+
+### 📂 Keywords FILE bhejne par
+Pehle: `KEYWORDS ➪ DORKS` + `INJECTOR` (hata diye ✅)
+Ab: **📊 QUALITY CHECK** (score + `80+ only` file) aur **🔁 EXPAND** (count poochh ke aur banata hai)
+
+### 📋 Purane bot se kya restore hua
+Purane `bot_fixed.py` me ye keyword/dork features the — jo ab wapas hain:
+
+| Purana feature | Ab kahan |
+|---|---|
+| `kw_get_count` (count step) | ✅ HQ KEYWORDS → count |
+| `dork_get_keywords_file/text` | ✅ 🎯 DORKS BANAO (keywords se) |
+| keyword quality checker | ✅ 📊 QUALITY REPORT + `80+ only` file |
+| `parser_get_dorks_file` | ✅ file upload → 🚀 DEEP SCAN |
+| `dump_get_dorks` / `dump_multiple` | ✅ 📦 DUMPER (txt/json/zip) |
+| proxy bulk check | ✅ 🧅 PROXY ENGINE (400 parallel) |
+| — | ➕ inurl/site modes, fresh system, free Google |
+
+### ⚡ Speed (Termux par bhi tez)
+| Kaam | Time |
+|---|---|
+| 1 lakh keywords | 0.06 s |
+| 1 lakh dorks (mixed) | 1.1 s |
+| 1 lakh dorks FRESH | 2.6 s |
+| Quality report (1 lakh) | 0.34 s |
+
+> `parse_deep` ka max URLs bhi **50,000 → 1,00,000** ho gaya.
 
 ## 🐦 v1.7 — FREE GOOGLE (ijerm, koi key nahi)
 

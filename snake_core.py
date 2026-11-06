@@ -63,7 +63,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v1.7"
+VERSION = "v1.8"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -125,6 +125,85 @@ def jsave(name: str, obj) -> bool:
     except Exception as exc:
         logger.warning("save %s fail: %s", name, exc)
         return False
+
+
+# ── FRESH system — pehle bane dorks yaad rakho (repeat na ho) ────────────────
+SEEN_FILE = os.path.join(DATA_DIR, "dork_seen.txt")
+_SEEN = None
+_SEEN_LIMIT = 400000
+
+
+def dork_hash(x) -> str:
+    return hashlib.sha1(" ".join(str(x or "").lower().split()).encode("utf-8", "ignore")).hexdigest()[:12]
+
+
+def dork_seen() -> set:
+    """Pehle generate hue dorks ke hashes (memory cache)."""
+    global _SEEN
+    if _SEEN is None:
+        try:
+            with open(SEEN_FILE, encoding="utf-8", errors="ignore") as f:
+                _SEEN = {ln.strip() for ln in f if ln.strip()}
+        except Exception:
+            _SEEN = set()
+    return _SEEN
+
+
+def dork_seen_count() -> int:
+    return len(dork_seen())
+
+
+def dork_seen_add(dorks) -> int:
+    """Naye dorks history me daalo. Returns kitne naye the."""
+    seen = dork_seen()
+    new = []
+    for d in dorks or []:
+        h = dork_hash(d)
+        if h and h not in seen:
+            seen.add(h)
+            new.append(h)
+    if not new:
+        return 0
+    try:
+        with open(SEEN_FILE, "a", encoding="utf-8") as f:
+            f.write("\n".join(new) + "\n")
+    except Exception:
+        return 0
+    if len(seen) > _SEEN_LIMIT:
+        dork_seen_trim()
+    return len(new)
+
+
+def dork_seen_trim(keep: int = None) -> int:
+    """File bahut badi ho gayi to purane half hata do."""
+    global _SEEN
+    keep = int(keep or (_SEEN_LIMIT // 2))
+    try:
+        with open(SEEN_FILE, encoding="utf-8", errors="ignore") as f:
+            lines = [ln.strip() for ln in f if ln.strip()]
+    except Exception:
+        return 0
+    if len(lines) <= keep:
+        return 0
+    lines = lines[-keep:]
+    try:
+        with open(SEEN_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except Exception:
+        return 0
+    _SEEN = set(lines)
+    return len(lines)
+
+
+def dork_seen_clear() -> int:
+    global _SEEN
+    n = len(dork_seen())
+    try:
+        open(SEEN_FILE, "w").close()
+    except Exception:
+        pass
+    _SEEN = set()
+    return n
 
 
 USERS = jload("users", {})          # uid -> {name, joined, banned, runs}
@@ -505,25 +584,51 @@ NICHES = {
     "db": ["database", "sql", "mysql", "phpmyadmin", "dump", "backup", "schema"],
 }
 
-KW_PRE = ["", "best", "cheap", "top", "new", "pro", "free", "premium", "buy", "get",
+KW_PRE = ["best", "cheap", "top", "new", "pro", "free", "premium", "buy", "get",
           "download", "online", "fast", "safe", "trusted", "verified", "instant",
-          "unlimited", "private", "secure", "real", "legit", "working", "fresh"]
+          "unlimited", "private", "secure", "real", "legit", "working", "fresh",
+          "latest", "official", "custom", "advanced", "simple", "easy", "full"]
 
-KW_SUF = ["", "online", "shop", "store", "site", "hub", "zone", "world", "point",
-          "plus", "pro", "max", "lab", "works", "base", "central", "market", "planet",
-          "express", "direct", "deal", "deals", "offer", "offers", "sale", "cheap",
-          "review", "reviews", "guide", "tips", "list", "lists", "finder", "finder"]
+KW_SUF = ["online", "shop", "store", "site", "hub", "zone", "world", "point",
+          "plus", "pro", "max", "lab", "works", "base", "central", "market",
+          "planet", "express", "direct", "deal", "deals", "offer", "offers",
+          "sale", "review", "reviews", "guide", "tips", "list", "lists",
+          "finder", "portal", "cloud", "app"]
 
-KW_INTENT = ["", "price", "cost", "buy", "download", "free", "app", "apk", "login",
+KW_INTENT = ["price", "cost", "buy", "download", "free", "app", "apk", "login",
              "signup", "account", "service", "provider", "company", "near me",
-             "2024", "2025", "2026", "best", "review", "vs", "alternative",
-             "how to", "guide", "tutorial", "tool", "software", "script", "api"]
+             "review", "alternative", "how to", "guide", "tutorial", "tool",
+             "software", "script", "api", "documentation", "template", "demo",
+             "trial", "pricing"]
+
+KW_TAIL = ["for beginners", "for business", "for sale", "for free", "near me",
+           "in india", "in usa", "in uk", "online free", "free download",
+           "full version", "latest version", "source code", "with source code",
+           "script download", "template free", "wordpress plugin", "laravel",
+           "django", "node js", "react", "python script", "php script",
+           "api docs", "pdf download", "excel sheet", "csv file", "json api",
+           "sql database", "admin panel", "login page", "dashboard",
+           "control panel", "user manual", "setup guide", "configuration",
+           "backup", "database dump", "export csv", "import data", "reports",
+           "analytics", "invoice", "payment gateway", "checkout page",
+           "shopping cart", "order tracking", "inventory system", "crm",
+           "erp", "saas", "demo download", "pricing plans", "features list",
+           "comparison", "alternatives list", "top 10", "directory list",
+           "user complaints", "scam or legit", "trusted site", "best deal",
+           "discount code", "coupon code", "free trial", "software download",
+           "apk download", "mobile app", "desktop app", "web app",
+           "chrome extension", "api key", "developer docs", "support page",
+           "help center", "knowledge base"]
+
+KW_YEARS = ["2026", "2027"]
+KW_MAX = 100000
+DORK_MAX = 100000
 
 KW_BAD = {"", "a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or",
           "is", "are", "was", "be", "it", "this", "that", "with", "from", "by"}
 
 DORK_TEMPLATES = [
-    'inurl:("{p}")',
+    'inurl:{f} {p}= ext:{e}',
     'inurl:"{p}="',
     'inurl:{f}?{p}=',
     'allinurl:"{f}?{p}="',
@@ -568,14 +673,21 @@ def gen_extensions() -> list:
 
 
 def gen_params() -> list:
-    """Base params + real-world variants (prefix/suffix)."""
+    """Base params + real-world variants (sirf sensible ones)."""
     out = []
     for p in PARAMS_BASE:
+        p = str(p).strip()
+        if not p or p.endswith("_id") or p.endswith("id"):
+            out.append(p)
+            out.append(p + "[]")
+            continue
         out.append(p)
         out.append(p + "_id")
         out.append(p + "id")
         out.append(p + "[]")
-    return _uniq(out)
+    # junk shapes hatao: x_id_id=, xxidid=, x__id=
+    bad = re.compile(r"(_id_id|idid|__|\[\]\[\])$", re.I)
+    return _uniq([x for x in out if x and not bad.search(x)])
 
 
 def db_counts() -> dict:
@@ -677,97 +789,408 @@ def quality_label(score: int) -> str:
     return "🔴 TRASH"
 
 
-def make_dork(mode: str, n: int = 50, niche: str = "", tld: str = "") -> list:
-    """Real dork generator. mode: page|ext|param|mixed|niche|hq"""
-    n = max(1, min(5000, int(n or 50)))
-    pts = gen_page_types()
-    prs = gen_params()
-    exts = gen_extensions()
-    tmpl = DORK_TEMPLATES
-    pool = []
+_PAGE_TYPES_CACHE = None
+NICHE_WORDS = ["admin", "login", "dashboard", "panel", "backup", "config", "upload",
+               "download", "invoice", "order", "product", "category", "search",
+               "profile", "account", "settings", "api", "database", "report",
+               "payment", "checkout", "cart", "user", "admin.php", "index.php"]
 
+
+def _all_niche_words() -> list:
+    out = []
+    for vs in NICHES.values():
+        out.extend(vs)
+    return _uniq(out) or list(NICHE_WORDS)
+
+
+def make_dork(mode: str = "mixed", n: int = 50, niche: str = "", tld: str = "",
+              domain: str = "", exclude=None, fresh: bool = False) -> list:
+    """Dork generator v2 — 100000 tak, fresh mode (purane dorks skip).
+
+    mode: page | ext | param | inurl | site | niche | mixed
+    """
+    n = max(1, min(DORK_MAX, int(n or 50)))
+    prs = gen_params()
+    exts = list(EXTENSIONS)
+    words = NICHE_WORDS
+    ex = set(exclude or ())
+    if fresh:
+        ex |= dork_seen()
+    out, seen = [], set(ex)
+
+    def add(x):
+        x = " ".join(str(x).split())
+        if not x or len(x) > 200 or x in seen:
+            return False
+        if ex and dork_hash(x) in ex:
+            return False
+        seen.add(x)
+        out.append(x)
+        return True
+
+    def full():
+        return len(out) >= n
+
+    mode = (mode or "mixed").lower()
+    doms = [d.strip().lstrip(".").lower()
+            for d in re.split(r"[,\s]+", str(domain or "")) if d.strip()]
+    if tld and not doms:
+        doms = [tld.strip().lstrip(".").lower()]
+
+    # ── PAGE-TYPES ────────────────────────────────────────────────────────────
     if mode == "page":
-        f = random.choice(PAGE_FILES)
-        d = random.choice(PAGE_DIRS)
-        pool.append("inurl:%s%s" % (d, f))
-        pool.append('inurl:"%s%s"' % (d, f))
-        pool.append("allinurl:%s%s" % (d, f))
-        pool.append("inurl:%s%s -site:github.com" % (d, f))
-        base = "%s%s" % (d, f)
-        while len(pool) < n * 6:
-            p = random.choice(prs)
-            pool.append("inurl:%s?%s=" % (base, p))
-            pool.append('"%s?%s="' % (base, p))
+        for d in PAGE_DIRS:
+            for f in PAGE_FILES:
+                add("inurl:%s%s" % (d, f))
+                if full():
+                    return _dork_finish(out, n)
+        for d in PAGE_DIRS:
+            for f in PAGE_FILES:
+                add('inurl:"%s%s"' % (d, f))
+                add("allinurl:%s%s" % (d, f))
+                if full():
+                    return _dork_finish(out, n)
+        for d in PAGE_DIRS:
+            for f in PAGE_FILES:
+                for p in prs[:40]:
+                    add("inurl:%s%s?%s=" % (d, f, p))
+                    if full():
+                        return _dork_finish(out, n)
+
+    # ── EXTENSIONS ────────────────────────────────────────────────────────────
     elif mode == "ext":
         for e in exts:
-            pool.append("filetype:%s" % e)
-            pool.append("ext:%s" % e)
-        while len(pool) < n * 6:
-            p = random.choice(prs)
-            pool.append("filetype:%s inurl:%s=" % (random.choice(exts), p))
+            add("filetype:%s" % e)
+            add("ext:%s" % e)
+        for e in exts:
+            for p in prs:
+                add("filetype:%s inurl:%s=" % (e, p))
+                if full():
+                    return _dork_finish(out, n)
+        for e in exts:
+            for f in PAGE_FILES:
+                for d in PAGE_DIRS[:24]:
+                    add("filetype:%s inurl:%s%s" % (e, d, f))
+                    if full():
+                        return _dork_finish(out, n)
+
+    # ── PARAMETERS ────────────────────────────────────────────────────────────
     elif mode == "param":
         for p in prs:
-            pool.append("inurl:%s=" % p)
-        while len(pool) < n * 6:
-            f = random.choice(PAGE_FILES)
-            p = random.choice(prs)
-            pool.append("inurl:%s?%s=" % (f, p))
-            pool.append('"%s?%s="' % (f, p))
+            add("inurl:%s=" % p)
+            add('inurl:"%s="' % p)
+        for p in prs:
+            for f in PAGE_FILES:
+                add("inurl:%s?%s=" % (f, p))
+                if full():
+                    return _dork_finish(out, n)
+        for p in prs:
+            for d in PAGE_DIRS[:30]:
+                for f in PAGE_FILES[:20]:
+                    add("inurl:%s%s?%s=" % (d, f, p))
+                    if full():
+                        return _dork_finish(out, n)
+
+    # ── INURL (naya) ──────────────────────────────────────────────────────────
+    elif mode == "inurl":
+        for f in PAGE_FILES:
+            add("inurl:%s" % f)
+            add('inurl:"%s"' % f)
+            add("allinurl:%s" % f)
+        for d in PAGE_DIRS:
+            if not d:
+                continue
+            add("inurl:%s" % d.rstrip("/"))
+            for f in PAGE_FILES[:60]:
+                add("inurl:%s%s" % (d, f))
+                if full():
+                    return _dork_finish(out, n)
+        for f in PAGE_FILES:
+            for p in prs:
+                add("inurl:%s?%s=" % (f, p))
+                if full():
+                    return _dork_finish(out, n)
+        for d in PAGE_DIRS:
+            for f in PAGE_FILES:
+                for p in prs[:30]:
+                    add("inurl:%s%s?%s=" % (d, f, p))
+                    if full():
+                        return _dork_finish(out, n)
+
+    # ── SITE (naya) ───────────────────────────────────────────────────────────
+    elif mode == "site":
+        if not doms:
+            doms = random.sample(TLDS, min(6, len(TLDS)))
+        for dom in doms:
+            for f in PAGE_FILES:
+                add("site:%s inurl:%s" % (dom, f))
+            for p in prs[:150]:
+                add("site:%s inurl:%s=" % (dom, p))
+            for e in exts:
+                add("site:%s ext:%s" % (dom, e))
+                add("site:%s filetype:%s" % (dom, e))
+            for w in words:
+                add("site:%s intitle:%s" % (dom, w))
+                add("site:%s intext:%s" % (dom, w))
+                if full():
+                    return _dork_finish(out, n)
+            for f in PAGE_FILES[:60]:
+                for p in prs[:60]:
+                    add("site:%s inurl:%s?%s=" % (dom, f, p))
+                    if full():
+                        return _dork_finish(out, n)
+            for w in words:
+                for p in prs[:60]:
+                    add("site:%s intext:%s inurl:%s=" % (dom, w, p))
+                    if full():
+                        return _dork_finish(out, n)
+            for d in PAGE_DIRS[:30]:
+                for f in PAGE_FILES[:30]:
+                    add("site:%s inurl:%s%s" % (dom, d, f))
+                    if full():
+                        return _dork_finish(out, n)
+            if full():
+                return _dork_finish(out, n)
+
+    # ── NICHE ─────────────────────────────────────────────────────────────────
     elif mode == "niche":
-        kws = NICHES.get(niche) or [v for vs in NICHES.values() for v in vs]
+        kws = NICHES.get(niche) or _all_niche_words()
         for k in kws:
-            pool.append("inurl:%s" % k)
-            pool.append("intitle:%s" % k)
-            pool.append("intext:%s inurl:%s=" % (k, random.choice(prs)))
-    else:  # mixed / hq
-        for _ in range(n * 8):
-            f = random.choice(PAGE_FILES)
-            d = random.choice(PAGE_DIRS)
-            p = random.choice(prs)
-            e = random.choice(exts)
-            k = random.choice([v for vs in NICHES.values() for v in vs])
-            t = random.choice(tmpl)
+            add("inurl:%s" % k)
+            add("intitle:%s" % k)
+            add("allintitle:%s" % k)
+        for k in kws:
+            for p in prs:
+                add("intext:%s inurl:%s=" % (k, p))
+                if full():
+                    return _dork_finish(out, n)
+        for k in kws:
+            for f in PAGE_FILES:
+                for d in PAGE_DIRS[:16]:
+                    add("inurl:%s%s intext:%s" % (d, f, k))
+                    if full():
+                        return _dork_finish(out, n)
+
+    # ── MIXED / HQ ────────────────────────────────────────────────────────────
+    else:
+        tpls = DORK_TEMPLATES
+        i, stall = 0, 0
+        while not full() and stall < n * 4 + 5000:
+            before = len(out)
+            f = PAGE_FILES[i % len(PAGE_FILES)]
+            d = PAGE_DIRS[(i // 5) % len(PAGE_DIRS)]
+            p = prs[(i // 7) % len(prs)]
+            e = exts[(i // 11) % len(exts)]
+            k = words[(i // 13) % len(words)]
+            t = TLDS[(i // 17) % len(TLDS)]
+            tpl = tpls[i % len(tpls)]
             try:
-                s = t.format(f=f, p=p, d=d, e=e, k=k, t=(tld or random.choice(TLDS)))
+                s2 = tpl.format(f=f, p=p, d=d, e=e, k=k, t=t)
             except Exception:
-                s = "inurl:%s?%s=" % (f, p)
-            pool.append(s)
+                s2 = "inurl:%s?%s=" % (f, p)
+            add(s2)
+            if len(out) == before:
+                stall += 1
+            else:
+                stall = 0
+            i += 1
 
-    pool = [x for x in _uniq(pool) if x and len(x) <= 200]
-    if tld and mode != "mixed":
-        pool += ["site:.%s %s" % (tld, x.replace("inurl:", "").split()[0]) for x in pool[: n // 2]]
-    random.shuffle(pool)
-    # quality se sort karke top n
-    scored = sorted(((score_dork(x)[0], x) for x in pool), key=lambda z: -z[0])
-    return [x for _, x in scored[:n]]
+    if tld and mode not in ("site", "mixed"):
+        base = list(out)
+        for x in base[: max(0, n // 3)]:
+            add("site:.%s %s" % (tld.strip().lstrip("."), x))
+            if full():
+                break
+    return _dork_finish(out, n)
 
 
-def make_keywords(seeds: str, n: int = 60) -> list:
-    """HQ keyword generator — seed se modifiers + score + filter."""
-    seeds_l = [s.strip().lower() for s in re.split(r"[,\n;|]+", seeds or "") if s.strip()]
-    if not seeds_l:
-        return []
-    n = max(1, min(2000, int(n or 60)))
+def _dork_finish(pool: list, n: int) -> list:
+    """Quality sort + top n."""
+    pool = _uniq(pool)
+    if len(pool) > n:
+        scored = sorted(((score_dork(x)[0], x) for x in pool), key=lambda z: -z[0])
+        pool = [x for _, x in scored[:n]]
+    else:
+        pool = sorted(pool, key=lambda x: -score_dork(x)[0])
+    return pool
+
+
+def dork_gen(mode: str = "mixed", n: int = 50, niche: str = "", tld: str = "",
+             domain: str = "", fresh: bool = False, mark: bool = True) -> dict:
+    """Dork banao + fresh history handle karo. Returns dict."""
+    dorks = make_dork(mode, n=n, niche=niche, tld=tld, domain=domain, fresh=fresh)
+    new_cnt = dork_seen_add(dorks) if (mark and dorks) else 0
+    return {"dorks": dorks, "new": new_cnt, "seen": dork_seen_count(),
+            "asked": n, "mode": mode, "fresh": fresh}
+
+
+def kw_clean(x) -> str:
+    """Keyword/seed ko saaf karo — lowercase, extra spaces hatao."""
+    x = " ".join(str(x or "").lower().split())
+    x = re.sub(r"[^a-z0-9 \-']", " ", x)
+    words = [w for w in x.split() if w not in KW_BAD]
+    return " ".join(words[:6])[:70]
+
+
+def kw_cores(items, limit: int = 800) -> list:
+    """Seeds YA keyword list -> unique cores (max 800)."""
+    if isinstance(items, str):
+        items = re.split(r"[,\n;|]+", items)
     out = []
-    for s in seeds_l:
-        words = [w for w in re.findall(r"[a-z0-9]+", s) if w not in KW_BAD]
-        if not words:
+    for it in items or []:
+        c = kw_clean(it)
+        if len(c) < 3:
             continue
-        core = " ".join(words[:5])
+        out.append(c)
+        if len(out) >= limit * 3:
+            break
+    return _uniq(out)[:limit]
+
+
+def kw_capacity(cores) -> int:
+    """In cores se max kitne unique keywords ban sakte hain (approx)."""
+    per = (1 + len(KW_PRE) + len(KW_SUF) + len(KW_INTENT) + len(KW_TAIL)
+           + len(KW_PRE) * len(KW_SUF) + len(KW_PRE) * len(KW_INTENT)
+           + len(KW_SUF) * len(KW_INTENT) + len(KW_PRE) * len(KW_TAIL)
+           + len(KW_TAIL) * len(KW_INTENT)
+           + len(KW_PRE) * len(KW_SUF) * len(KW_INTENT)
+           + len(KW_YEARS) * (len(KW_PRE) + len(KW_SUF) + len(KW_INTENT)))
+    return per * max(1, len(cores))
+
+
+def make_keywords(items, n: int = 200, exclude=None) -> list:
+    """HQ keyword generator v2 — seeds YA keyword list se, 100000 tak.
+
+    Layers simple->complex; early-exit hone par bhi quality theek rahe.
+    """
+    cores = kw_cores(items)
+    if not cores:
+        return []
+    n = max(1, min(KW_MAX, int(n or 200)))
+    seen = set(exclude or ())
+    out = []
+
+    def add(x):
+        x = " ".join(str(x).split())
+        if not x or x in seen or not (3 <= len(x) <= 70):
+            return False
+        seen.add(x)
+        out.append(x)
+        return True
+
+    def full():
+        return len(out) >= n
+
+    # L0 — original cores
+    for c in cores:
+        add(c)
+        if full():
+            return out
+    # L1 — pre + core
+    for c in cores:
+        for pre in KW_PRE:
+            add(pre + " " + c)
+            if full():
+                return out
+    # L2 — core + suf
+    for c in cores:
+        for suf in KW_SUF:
+            add(c + " " + suf)
+            if full():
+                return out
+    # L3 — core + intent
+    for c in cores:
+        for it in KW_INTENT:
+            add(c + " " + it)
+            if full():
+                return out
+    # L4 — core + tail (dorking-friendly long forms)
+    for c in cores:
+        for t in KW_TAIL:
+            add(c + " " + t)
+            if full():
+                return out
+    # L5 — pre + core + suf
+    for c in cores:
         for pre in KW_PRE:
             for suf in KW_SUF:
-                if not pre and not suf:
-                    continue
-                if pre:
-                    out.append((pre + " " + core).strip())
-                if suf:
-                    out.append((core + " " + suf).strip())
-        for it in KW_INTENT:
-            if it:
-                out.append((core + " " + it).strip())
-    out = _uniq([x for x in out if x and 3 <= len(x) <= 70])
-    scored = sorted(((score_keyword(x)[0], x) for x in out), key=lambda z: -z[0])
-    return [x for _, x in scored[:n]]
+                add("%s %s %s" % (pre, c, suf))
+                if full():
+                    return out
+    # L6 — pre + core + intent
+    for c in cores:
+        for pre in KW_PRE:
+            for it in KW_INTENT:
+                add("%s %s %s" % (pre, c, it))
+                if full():
+                    return out
+    # L7 — core + suf + intent
+    for c in cores:
+        for suf in KW_SUF:
+            for it in KW_INTENT:
+                add("%s %s %s" % (c, suf, it))
+                if full():
+                    return out
+    # L8 — pre + core + tail
+    for c in cores:
+        for pre in KW_PRE:
+            for t in KW_TAIL:
+                add("%s %s %s" % (pre, c, t))
+                if full():
+                    return out
+    # L9 — core + tail + intent
+    for c in cores:
+        for t in KW_TAIL:
+            for it in KW_INTENT:
+                add("%s %s %s" % (c, t, it))
+                if full():
+                    return out
+    # L10 — pre + core + suf + intent (sabse bada pool)
+    for c in cores:
+        for pre in KW_PRE:
+            for suf in KW_SUF:
+                for it in KW_INTENT:
+                    add("%s %s %s %s" % (pre, c, suf, it))
+                    if full():
+                        return out
+    # L11 — year variants
+    for c in cores:
+        for y in KW_YEARS:
+            for mod in KW_PRE[:10]:
+                add("%s %s %s" % (mod, c, y))
+                if full():
+                    return out
+            for mod in KW_SUF[:10]:
+                add("%s %s %s" % (c, mod, y))
+                if full():
+                    return out
+    return out
+
+
+def kw_quality(kws) -> dict:
+    """Keyword quality report — buckets + avg + top/worst."""
+    kws = list(kws or [])
+    if not kws:
+        return {"total": 0, "avg": 0.0, "top": [], "worst": []}
+    pairs = [(score_keyword(k)[0], k) for k in kws]
+    scores = [p[0] for p in pairs]
+    b = {"b80": 0, "b65": 0, "b45": 0, "b25": 0, "b0": 0}
+    for sc in scores:
+        if sc >= 80:
+            b["b80"] += 1
+        elif sc >= 65:
+            b["b65"] += 1
+        elif sc >= 45:
+            b["b45"] += 1
+        elif sc >= 25:
+            b["b25"] += 1
+        else:
+            b["b0"] += 1
+    top = [k for _, k in sorted(pairs, key=lambda z: -z[0])[:10]]
+    worst = [k for _, k in sorted(pairs, key=lambda z: z[0])[:5]]
+    d = {"total": len(kws), "avg": sum(scores) / len(scores), "top": top, "worst": worst}
+    d.update(b)
+    return d
 
 
 def score_keyword(kw: str) -> tuple:
@@ -1981,7 +2404,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     scanned / raw / unique / errors / filtered / engines
     """
     dorks = [str(d).strip() for d in (dorks or []) if str(d).strip()]
-    max_urls = max(10, min(50000, int(max_urls or 5000)))
+    max_urls = max(10, min(100000, int(max_urls or 5000)))
     pages = max(1, min(10, int(pages or 1)))
     st = {"scanned": 0, "total": len(dorks), "raw": 0, "unique": 0,
           "errors": 0, "filtered": 0, "engine_hits": defaultdict(int),
@@ -2303,8 +2726,8 @@ def help_text() -> str:
     th = T()
     items = [
         ("🔍", "PARSER", "dork do, 13 asli search engines se REAL URLs. Proxy rotate + strict match."),
-        ("🎯", "DORKER", "page-type / extension / parameter / mixed / niche dorks, quality score ke saath."),
-        ("🔑", "HQ KEYWORDS", "seed topic do, scored + filtered high-quality keyword list."),
+        ("🎯", "DORKER", "page / ext / param / inurl / site / niche / mixed — 100k tak, FRESH mode ke saath."),
+        ("🔑", "HQ KEYWORDS", "seed ya apne keywords do → count batao (max 100k) → scored HQ list."),
         ("🔗", "URL REVERSE", "URL paste karo → domain, path, extension, parameters + uske dorks."),
         ("💉", "INJECTOR", "67 payloads (SQLi/LFI/XSS/SSRF/redirect/SSTI) × har param."),
         ("📦", "DUMPER", "saari bani hui files — txt / json / zip."),
@@ -2319,7 +2742,11 @@ def help_text() -> str:
             + ("\n\n".join(body)) + "\n\n"
             + tag("FILE UPLOAD") + "\n"
             + "Koi .txt bhejo (dorks / URLs / keywords) — bot khud pehchan ke "
-              "Deep Scan, Reverse, Inject, Clean sab dega.\n\n"
+              "Deep Scan, Reverse, Clean, Quality Check sab dega.\n\n"
+            + tag("FRESH SYSTEM") + "\n"
+            + "DORKER me 🆕 <b>FRESH DORKS</b> — pehle bane dorks skip hote hain, "
+              "har baar naye dorks = fresh URLs. <code>/fresh</code> se status, "
+              "<code>/fresh clear</code> se reset.\n\n"
             + tag("THEME") + "\n"
             + "Admin <code>/theme</code> se font + divider + icon badal sakta hai "
               "(%d themes).\n\n" % len(THEMES)
@@ -2382,6 +2809,26 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await cb_file(update, context, data[2:])
         except Exception as exc:
             logger.exception("file action %s fail: %s", data, exc)
+            try:
+                await q.edit_message_text("❌ Error: <code>%s</code>" % esc(str(exc)[:200]),
+                                          parse_mode=ParseMode.HTML, reply_markup=kb_back())
+            except Exception:
+                pass
+            return
+
+    # ── keyword actions ──
+    if data.startswith("kw:"):
+        if not access_ok(uid):
+            try:
+                await q.edit_message_text(need_key_text(uid), reply_markup=kb_needkey(),
+                                          parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            return
+        try:
+            return await cb_kw_action(update, context, data[3:])
+        except Exception as exc:
+            logger.exception("kw action %s fail: %s", data, exc)
             try:
                 await q.edit_message_text("❌ Error: <code>%s</code>" % esc(str(exc)[:200]),
                                           parse_mode=ParseMode.HTML, reply_markup=kb_back())
@@ -2479,6 +2926,8 @@ async def _route_tool_cb(update, context, data: str):
     if head == "dd":
         if rest.startswith("mode:"):
             return await cb_dork_mode(update, context, rest[5:])
+        if rest == "more":
+            return await cb_dork_more(update, context)
     elif head == "pr":
         if rest == "last":
             return await cb_parse_last(update, context)
@@ -2515,8 +2964,10 @@ DORK_MODES = {
     "page":  ("📄 PAGE-TYPES", "inurl:product.php, shop/item.php …"),
     "ext":   ("🗂 EXTENSIONS", "filetype:php, filetype:sql …"),
     "param": ("🔧 PARAMETERS", "inurl:id=, inurl:page= …"),
-    "mixed": ("🎲 MIXED (HQ)", "saare templates random"),
+    "inurl": ("🔗 INURL", "inurl:, allinurl:, inurl:?id= …"),
+    "site":  ("🌐 SITE", "site:gov.in inurl:login …"),
     "niche": ("🎯 NICHE", "niche ke hisaab se"),
+    "mixed": ("🎲 MIXED (HQ)", "saare templates random"),
 }
 
 
@@ -2524,10 +2975,13 @@ async def tool_dork(update, context):
     q = update.callback_query
     rows = [[InlineKeyboardButton(label, callback_data="dd:mode:" + k)]
             for k, (label, _d) in DORK_MODES.items()]
+    rows.append([InlineKeyboardButton("🆕 FRESH DORKS (purane skip)", callback_data="dd:mode:fresh")])
     rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
     txt = (H("DORKER", "type chuno") + "\n\n" +
            "\n".join("%s — <i>%s</i>" % (label, desc) for label, desc in DORK_MODES.values()) +
-           "\n\n<b>Count</b> agla step me poochhunga (1-5000).")
+           "\n\n<b>Count</b> agla step me (1 – %s)" % fmt(DORK_MAX) +
+           "\n🆕 <b>FRESH</b> — pehle bane dorks skip honge (fresh URLs ke liye)" +
+           "\n\n📚 History: <code>%s</code> dorks yaad hain" % fmt(dork_seen_count()))
     try:
         await q.edit_message_text(txt, reply_markup=RK(rows),
                                   parse_mode=ParseMode.HTML)
@@ -2537,11 +2991,30 @@ async def tool_dork(update, context):
 
 async def cb_dork_mode(update, context, mode: str):
     q = update.callback_query
+    fresh = False
+    if mode == "fresh":
+        mode, fresh = "mixed", True
     context.user_data["dork_mode"] = mode
-    label = DORK_MODES.get(mode, ("?", ""))[0]
+    context.user_data["dork_fresh"] = fresh
+    context.user_data.pop("dork_domain", None)
+    label = DORK_MODES.get(mode, ("FRESH DORKS", ""))[0]
+    if mode == "site":
+        txt = (H("DORKER — SITE", "domain bhejo") + "\n\n"
+               "Domain ya TLD bhejo (comma se multiple):\n"
+               "<code>gov.in</code>  •  <code>.pk</code>  •  <code>example.com, gov.in</code>\n\n"
+               "<i>Ya <code>auto</code> bhejo — random TLDs use honge.</i>")
+        try:
+            await q.edit_message_text(txt, reply_markup=kb_back("m:dork"),
+                                      parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+        context.user_data["await"] = "dork_domain"
+        return
     txt = (H("DORKER — %s" % label) + "\n\n"
-           "Kitne dork chahiye? <b>Number bhejo</b> (1-5000)\n"
-           "<i>Recommended: 50</i>")
+           "Kitne dork chahiye? <b>Number bhejo</b> (1 – %s)\n"
+           "<i>Recommended: 500 • Max: %s</i>%s"
+           % (fmt(DORK_MAX), fmt(DORK_MAX),
+              "\n🆕 Fresh mode: purane dorks skip" if fresh else ""))
     try:
         await q.edit_message_text(txt, reply_markup=kb_back("m:dork"), parse_mode=ParseMode.HTML)
     except Exception:
@@ -2549,35 +3022,124 @@ async def cb_dork_mode(update, context, mode: str):
     context.user_data["await"] = "dork_count"
 
 
+async def input_dork_domain(update, context, text: str):
+    dom = (text or "").strip()
+    if dom.lower() in ("auto", "-"):
+        dom = ""
+    context.user_data["dork_domain"] = dom
+    txt = (H("DORKER — SITE", dom or "auto TLD") + "\n\n"
+           "Kitne dork chahiye? <b>Number bhejo</b> (1 – %s)\n"
+           "<i>Ek domain se ~6,000 tak bante hain. Zyada ke liye "
+           "multiple domains bhejo (comma se).</i>" % fmt(DORK_MAX))
+    await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
+                                              reply_markup=kb_back("m:dork"))
+    context.user_data["await"] = "dork_count"
+
+
 async def input_dork_count(update, context, text: str):
     try:
-        n = int(re.sub(r"[^0-9]", "", text) or "50")
+        n = int(re.sub(r"[^0-9]", "", text or "") or "500")
     except Exception:
-        n = 50
-    n = max(1, min(5000, n))
+        n = 500
+    n = max(1, min(DORK_MAX, n))
     mode = context.user_data.get("dork_mode", "mixed")
-    msg = await update.effective_message.reply_text("⏳ %d dorks ban rahe hain…" % n)
+    fresh = bool(context.user_data.get("dork_fresh"))
+    dom = context.user_data.get("dork_domain") or ""
+    niche = context.user_data.get("dork_niche") or ""
+    msg = await update.effective_message.reply_text(
+        "⏳ %s dorks ban rahe hain…%s" % (fmt(n), " (fresh)" if fresh else ""))
     t0 = time.time()
-    dorks = make_dork(mode, n=n)
-    context.user_data["last_dorks"] = dorks
+    res = dork_gen(mode, n=n, niche=niche, domain=dom, fresh=fresh)
+    dorks = res["dorks"]
     took = time.time() - t0
+    if not dorks:
+        await msg.edit_text(
+            "❌ Fresh mode me kuch naya nahi mila — history bhara hua hai.\n"
+            "👉 <code>/freshclear</code> se history saaf karo, ya naya mode chuno.",
+            parse_mode=ParseMode.HTML)
+        return
+    context.user_data["last_dorks"] = dorks
+    context.user_data["last_dork_mode"] = mode
+    context.user_data["last_dork_n"] = n
     scores = [score_dork(d)[0] for d in dorks]
     avg = sum(scores) / len(scores) if scores else 0
     path, cnt = dump_text(dorks, "dorks_" + mode, "PYTHON SNAKE — %s dorks" % mode)
-    top = short_list(dorks[:10], 10)
-    txt = (H("DORKER — DONE", "%s mode" % mode) + "\n\n"
+    extra = ""
+    if dom:
+        extra = "\n🌐 Domain  : <code>%s</code>" % esc(dom[:50])
+    if cnt < n:
+        extra += "\n⚠️ <i>Is mode se max %s hi bane (fresh/history ke baad).</i>" % fmt(cnt)
+    txt = (H("DORKER — DONE", "%s %s" % (mode, "FRESH" if fresh else "")) + "\n\n"
+           "🔢 Manga     : <code>%s</code>\n"
            "✅ Bane      : <code>%s</code>\n"
+           "🆕 Naye      : <code>%s</code>\n"
            "⭐ Avg score : <code>%.0f/100</code>\n"
+           "📚 History   : <code>%s</code>%s\n"
            "⏱ Time      : <code>%.2fs</code>\n\n"
-           "<b>Top 10:</b>\n%s" % (fmt(cnt), avg, took, top))
+           "<b>Top 10:</b>\n%s"
+           % (fmt(n), fmt(cnt), fmt(res["new"]), avg, fmt(res["seen"]), extra, took,
+              short_list(dorks[:10], 10)))
     try:
         await msg.delete()
     except Exception:
         pass
-    await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
-                                              reply_markup=kb_back("m:dork"))
-    await send_file(update, path, "🎯 %d dorks • avg %.0f/100" % (cnt, avg))
+    for ch in chunk_lines(txt)[:2]:
+        await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
+    await update.effective_message.reply_text(
+        "👇 Aage kya?",
+        reply_markup=RK([
+            [InlineKeyboardButton("🆕 AUR FRESH", callback_data="dd:more")],
+            [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep"),
+             InlineKeyboardButton("📥 PARSE", callback_data="m:parse")],
+            [InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")],
+        ]))
+    await send_file(update, path, "🎯 %s dorks • avg %.0f/100" % (fmt(cnt), avg))
     context.user_data.pop("await", None)
+
+
+async def cb_dork_more(update, context):
+    """dd:more — same mode, naya fresh batch."""
+    q = update.callback_query
+    mode = context.user_data.get("last_dork_mode") or "mixed"
+    n = int(context.user_data.get("last_dork_n") or 500)
+    dom = context.user_data.get("dork_domain") or ""
+    try:
+        await q.edit_message_text("🆕 Fresh batch ban raha hai… (%s × %s)" % (mode, fmt(n)),
+                                  parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
+    res = dork_gen(mode, n=n, domain=dom, fresh=True)
+    dorks = res["dorks"]
+    if not dorks:
+        try:
+            await q.edit_message_text(
+                "❌ Fresh batch khaali — history bhar gayi.\n"
+                "👉 <code>/freshclear</code> chalao.",
+                parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
+        except Exception:
+            pass
+        return
+    context.user_data["last_dorks"] = dorks
+    path, cnt = dump_text(dorks, "fresh_" + mode, "PYTHON SNAKE — fresh dorks")
+    scores = [score_dork(d)[0] for d in dorks]
+    avg = sum(scores) / len(scores) if scores else 0
+    try:
+        await q.edit_message_text(
+            (H("FRESH BATCH", "%s naye dorks" % fmt(cnt)) + "\n\n"
+             "🆕 History me add: <code>%s</code>\n"
+             "📚 Total history  : <code>%s</code>\n"
+             "⭐ Avg score      : <code>%.0f/100</code>\n\n"
+             "<b>Top 6:</b>\n%s" % (fmt(res["new"]), fmt(res["seen"]), avg,
+                                    short_list(dorks[:6], 6))),
+            parse_mode=ParseMode.HTML,
+            reply_markup=RK([
+                [InlineKeyboardButton("🆕 AUR FRESH", callback_data="dd:more")],
+                [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep")],
+                [InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")],
+            ]))
+    except Exception:
+        pass
+    await send_file(update, path, "🎯 %s fresh dorks" % fmt(cnt))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2585,50 +3147,221 @@ async def input_dork_count(update, context, text: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 async def tool_kw(update, context):
     q = update.callback_query
-    txt = (H("HQ KEYWORD GENERATOR") + "\n\n"
-           "Seed topic(s) bhejo — comma se alag kar sakte ho:\n\n"
-           "<code>shopify store, crypto wallet, apk download</code>\n\n"
-           "<i>Jitne seed, utni zyada keywords.</i>")
+    txt = (H("HQ KEYWORD GENERATOR", "seeds ya apne keywords") + "\n\n"
+           "📌 <b>Do tarike — dono chalte hain:</b>\n\n"
+           "1️⃣ <b>Seed</b> bhejo (2-3 topic):\n"
+           "   <code>shopify store, crypto wallet, apk download</code>\n\n"
+           "2️⃣ <b>Apne keywords paste karo</b> (ek line me ek) —\n"
+           "   unhi se aur naye keywords banenge\n\n"
+           "➡️ Agla step: kitne chahiye (<b>max 100,000</b>)")
     try:
         await q.edit_message_text(txt, reply_markup=kb_back(), parse_mode=ParseMode.HTML)
     except Exception:
         pass
-    context.user_data["await"] = "kw_seeds"
+    context.user_data["await"] = "kw_input"
 
 
-async def input_kw_seeds(update, context, text: str):
-    seeds = text.strip()
-    if len(seeds) < 2:
-        await update.effective_message.reply_text("❌ Seed chhota hai. Dobara bhejo.")
+async def input_kw_input(update, context, text: str):
+    """Step 1 — seeds YA keywords accept karo, phir count poochho."""
+    items = [x.strip() for x in re.split(r"[\n,;|]+", text or "") if x.strip()]
+    cores = kw_cores(items)
+    if not cores:
+        await update.effective_message.reply_text(
+            "❌ Kuch samajh nahi aaya. Seeds bhejo (jaise <code>shopify store</code>)",
+            parse_mode=ParseMode.HTML)
         return
-    msg = await update.effective_message.reply_text("⏳ Keywords generate ho rahe hain…")
+    context.user_data["kw_items"] = items[:2000]
+    context.user_data["kw_cores"] = cores[:800]
+    cap = kw_capacity(cores)
+    kind = "KEYWORDS" if len(items) > 3 else "SEEDS"
+    preview = short_list(cores[:6], 6)
+    txt = (H("HQ KEYWORDS — COUNT", "%d %s mile" % (len(cores), kind)) + "\n\n"
+           "🔎 Detect : <b>%s</b> (%d lines)\n"
+           "📊 Max    : <code>%s</code> keywords is input se\n\n"
+           "<b>Preview:</b>\n%s\n\n"
+           "🔢 Kitne keywords chahiye? <b>Number bhejo</b>\n"
+           "<i>1 – 100,000 • Recommended: 5,000</i>"
+           % (kind, len(items), fmt(min(cap, KW_MAX)), preview))
+    await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
+                                              reply_markup=kb_back("m:kw"))
+    context.user_data["await"] = "kw_count"
+
+
+async def input_kw_count(update, context, text: str):
+    """Step 2 — count lo, generate karo, file bhejo."""
+    try:
+        n = int(re.sub(r"[^0-9]", "", text or "") or "5000")
+    except Exception:
+        n = 5000
+    n = max(1, min(KW_MAX, n))
+    items = context.user_data.get("kw_items") or []
+    if not items:
+        await update.effective_message.reply_text(
+            "❌ Pehle seeds/keywords bhejo — 🏠 menu → 🔑 HQ KEYWORDS",
+            reply_markup=kb_back("m:kw"))
+        return
+    msg = await update.effective_message.reply_text("⏳ %s keywords ban rahe hain…" % fmt(n))
     t0 = time.time()
-    kws = make_keywords(seeds, n=200)
+    kws = make_keywords(items, n=n)
     took = time.time() - t0
     if not kws:
         await msg.edit_text("❌ Kuch nahi bana — seed check karo.")
         return
-    scores = [score_keyword(k)[0] for k in kws]
-    avg = sum(scores) / len(scores)
-    path, cnt = dump_text(kws, "keywords", "PYTHON SNAKE — HQ keywords (%s)" % seeds[:60])
+    qrep = kw_quality(kws)
     context.user_data["last_kws"] = kws
-    txt = (H("HQ KEYWORDS — DONE") + "\n\n"
-           "🌱 Seeds   : <code>%s</code>\n"
-           "✅ Bane    : <code>%s</code>\n"
+    context.user_data["last_kw_items"] = items
+    context.user_data["last_kw_n"] = n
+    path, cnt = dump_text(kws, "keywords",
+                          "PYTHON SNAKE — HQ keywords (%s)" % str(items[0])[:50])
+    txt = (H("HQ KEYWORDS — DONE", "%s bane" % fmt(cnt)) + "\n\n"
+           "🌱 Input   : <code>%d lines</code>\n"
+           "🔢 Manga   : <code>%s</code>\n"
+           "✅ Bane    : <code>%s</code> unique\n"
            "⭐ Avg     : <code>%.0f/100</code>\n"
-           "🔥 80+     : <code>%d</code>\n"
+           "🔥 80+     : <code>%s</code>\n"
            "⏱ Time    : <code>%.2fs</code>\n\n"
-           "<b>Top 10:</b>\n%s"
-           % (esc(seeds[:80]), fmt(cnt), avg, sum(1 for s in scores if s >= 80), took,
-              short_list(kws[:10], 10)))
+           "<b>Top 8:</b>\n%s"
+           % (len(items), fmt(n), fmt(cnt), qrep["avg"], fmt(qrep["b80"]), took,
+              short_list(kws[:8], 8)))
+    if cnt < n:
+        txt += ("\n\n⚠️ <i>Is input se max %s hi possible the — aur seeds do to "
+                "100,000 tak jayega.</i>" % fmt(cnt))
     try:
         await msg.delete()
     except Exception:
         pass
-    await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
-                                              reply_markup=kb_back("m:kw"))
-    await send_file(update, path, "🔑 %d keywords" % cnt)
+    for ch in chunk_lines(txt)[:2]:
+        await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
+    await update.effective_message.reply_text(
+        "👇 Aage kya?",
+        reply_markup=RK([
+            [InlineKeyboardButton("🎯 DORKS BANAO", callback_data="kw:dorks")],
+            [InlineKeyboardButton("📊 QUALITY REPORT", callback_data="kw:qual"),
+             InlineKeyboardButton("🔁 AUR (naya)", callback_data="kw:more")],
+            [InlineKeyboardButton("⬅️ BACK", callback_data="m:kw")],
+        ]))
+    await send_file(update, path, "🔑 %s keywords • avg %.0f/100" % (fmt(cnt), qrep["avg"]))
     context.user_data.pop("await", None)
+
+
+def kw_to_dorks(kws, n: int = 3000, tld: str = "") -> list:
+    """Keywords se REAL dorks banao (intitle / intext / inurl combos)."""
+    out = []
+    words = [str(k).strip()[:60] for k in (kws or []) if str(k).strip()][:400]
+    tpl = [
+        'intitle:"{k}"',
+        'allintitle:"{k}"',
+        'intext:"{k}"',
+        'intext:"{k}" inurl:login',
+        'intitle:"{k}" inurl:index',
+        'intext:"{k}" filetype:pdf',
+        'intitle:"{k}" ext:php',
+        '"{k}" inurl:admin',
+        'intext:"{k}" inurl:upload',
+        'intitle:"{k}" inurl:dashboard',
+    ]
+    for k in words:
+        for t in tpl:
+            out.append(t.format(k=k))
+            if len(out) >= n:
+                return _uniq(out)[:n]
+    if tld:
+        for k in words[:200]:
+            out.append('site:.%s intitle:"%s"' % (tld.strip().lstrip("."), k))
+    return _uniq(out)[:n]
+
+
+async def cb_kw_action(update, context, action: str):
+    """kw:dorks | kw:qual | kw:more"""
+    q = update.callback_query
+    kws = context.user_data.get("last_kws") or []
+    items = context.user_data.get("last_kw_items") or []
+    if not kws and not items:
+        try:
+            await q.answer("Pehle keywords banao", show_alert=True)
+        except Exception:
+            pass
+        return
+
+    if action == "dorks":
+        msg = await update.effective_message.reply_text("🎯 Keywords se dorks ban rahe hain…")
+        dorks = kw_to_dorks(kws or items, n=4000)
+        if not dorks:
+            await msg.edit_text("❌ Kuch nahi bana.")
+            return
+        context.user_data["last_dorks"] = dorks
+        added = dork_seen_add(dorks)
+        path, cnt = dump_text(dorks, "kw_dorks", "PYTHON SNAKE — keyword dorks")
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+        await update.effective_message.reply_text(
+            (H("KEYWORDS ➪ DORKS", "%s dorks" % fmt(cnt)) + "\n\n"
+             "🎯 Source keywords : <code>%s</code>\n"
+             "🆕 Fresh added     : <code>%s</code>\n\n"
+             "<b>Top 8:</b>\n%s" % (fmt(min(len(kws or items), 400)), fmt(added),
+                                    short_list(dorks[:8], 8))),
+            parse_mode=ParseMode.HTML,
+            reply_markup=RK([
+                [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep")],
+                [InlineKeyboardButton("⬅️ BACK", callback_data="m:kw")],
+            ]))
+        await send_file(update, path, "🎯 %s dorks" % fmt(cnt))
+        return
+
+    if action == "qual":
+        qrep = kw_quality(kws)
+        hq = [k for k in kws if score_keyword(k)[0] >= 80]
+        txt = (H("KEYWORD QUALITY", "avg %.0f/100" % qrep["avg"]) + "\n\n"
+               "📦 Total : <code>%s</code>\n\n"
+               "🔥 80+   : <code>%s</code>\n"
+               "✅ 65-79 : <code>%s</code>\n"
+               "🟡 45-64 : <code>%s</code>\n"
+               "🟠 25-44 : <code>%s</code>\n"
+               "🔴 <25   : <code>%s</code>\n\n"
+               "<b>Top 5:</b>\n%s\n"
+               "<b>Sabse kamzor:</b>\n%s"
+               % (fmt(qrep["total"]), fmt(qrep["b80"]), fmt(qrep["b65"]),
+                  fmt(qrep["b45"]), fmt(qrep["b25"]), fmt(qrep["b0"]),
+                  short_list(qrep["top"][:5], 5), short_list(qrep["worst"], 5)))
+        try:
+            await q.edit_message_text(txt, parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_back("m:kw"))
+        except Exception:
+            pass
+        if hq:
+            path, cnt = dump_text(hq, "keywords_hq", "PYTHON SNAKE — HQ only (80+)")
+            await send_file(update, path, "🔥 %s HQ keywords (80+)" % fmt(cnt))
+        return
+
+    if action == "more":
+        n = int(context.user_data.get("last_kw_n") or 5000)
+        msg = await update.effective_message.reply_text("🔁 Naya batch ban raha hai…")
+        extra = make_keywords(items, n=n, exclude=set(kws))
+        took_note = ""
+        if extra:
+            context.user_data["last_kws"] = extra
+            path, cnt = dump_text(extra, "keywords", "PYTHON SNAKE — fresh keywords")
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+            await update.effective_message.reply_text(
+                (H("FRESH BATCH", "%s naye keywords" % fmt(cnt)) + "\n\n"
+                 "🆕 Purane %s skip kiye\n\n<b>Top 6:</b>\n%s"
+                 % (fmt(len(kws)), short_list(extra[:6], 6))),
+                parse_mode=ParseMode.HTML,
+                reply_markup=RK([
+                    [InlineKeyboardButton("📊 QUALITY", callback_data="kw:qual"),
+                     InlineKeyboardButton("🔁 AUR", callback_data="kw:more")],
+                    [InlineKeyboardButton("⬅️ BACK", callback_data="m:kw")],
+                ]))
+            await send_file(update, path, "🔑 %s fresh keywords" % fmt(cnt))
+        else:
+            took_note = "❌ Is input ki capacity khatam. Naye seeds do."
+            await msg.edit_text(took_note)
+        return
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2836,7 +3569,7 @@ async def cb_parse_deep(update, context):
         await q.edit_message_text(
             H("DEEP SCAN", "sab dorks • poore stats") + "\n\n"
             "🎯 Dorks: <b>%d</b>%s\n\n"
-            "Max URLs kitne chahiye? <b>Number bhejo</b>\n"
+            "Max URLs kitne chahiye? <b>Number bhejo</b> (10 – 100000)\n"
             "<i>Recommended: 5000 (bada number = zyada time)</i>" % (len(dorks), extra),
             parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
     except Exception:
@@ -2850,7 +3583,7 @@ async def input_deep_max(update, context, text: str):
         mx = int(_re.sub(r"[^0-9]", "", text) or "5000")
     except Exception:
         mx = 5000
-    mx = max(50, min(50000, mx))
+    mx = max(50, min(100000, mx))
     dorks = context.user_data.get("parse_dorks") or context.user_data.get("last_dorks") or []
     if not dorks:
         await update.effective_message.reply_text("❌ Dork nahi mile. DORKER chalao.")
@@ -3341,8 +4074,8 @@ def kb_file(kind: str) -> InlineKeyboardMarkup:
                  InlineKeyboardButton("🧹 CLEAN + DEDUPE", callback_data="f:clean")],
                 [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]]
     else:
-        rows = [[InlineKeyboardButton("🎯 KEYWORDS ➪ DORKS", callback_data="f:kw2dork")],
-                [InlineKeyboardButton("💉 INJECTOR", callback_data="f:inj")],
+        rows = [[InlineKeyboardButton("📊 QUALITY CHECK", callback_data="f:kqual")],
+                [InlineKeyboardButton("🔁 EXPAND (aur banao)", callback_data="f:kexp")],
                 [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")]]
     return RK(rows)
 
@@ -3529,23 +4262,44 @@ async def cb_file(update, context, action: str):
         await send_file(update, path, "🧹 %d clean URLs" % cnt)
         return
 
-    if action == "kw2dork":
-        kws = [x for x in items if len(x) <= 60][:200]
-        dorks = []
-        for kw in kws:
-            dorks += make_dork("param", n=2)
-            dorks.append("intitle:%s" % kw)
-            dorks.append("intext:%s inurl:=" % kw)
-        dorks = _uniq(dorks)
-        context.user_data["last_dorks"] = dorks
-        path, cnt = dump_text(dorks, "kw_dorks", "PYTHON SNAKE — keywords to dorks")
+    if action == "kqual":
+        kws = [str(x) for x in items if x]
+        qrep = kw_quality(kws)
+        body = (H("KEYWORD QUALITY", "avg %.0f/100" % qrep["avg"]) + "\n\n"
+                "📦 Total : <code>%s</code>\n\n"
+                "🔥 80+   : <code>%s</code>\n"
+                "✅ 65-79 : <code>%s</code>\n"
+                "🟡 45-64 : <code>%s</code>\n"
+                "🟠 25-44 : <code>%s</code>\n"
+                "🔴 <25   : <code>%s</code>\n\n"
+                "<b>Top 6:</b>\n%s\n"
+                "<b>Kamzor 4:</b>\n%s"
+                % (fmt(qrep["total"]), fmt(qrep["b80"]), fmt(qrep["b65"]),
+                   fmt(qrep["b45"]), fmt(qrep["b25"]), fmt(qrep["b0"]),
+                   short_list(qrep["top"][:6], 6), short_list(qrep["worst"][:4], 4)))
         try:
-            await q.edit_message_text(
-                H("KEYWORDS ➪ DORKS", "%d → %d" % (len(kws), cnt)) + "\n\n"
-                + short_list(dorks[:10], 10), parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
+            await q.edit_message_text(body, parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
         except Exception:
             pass
-        await send_file(update, path, "🎯 %d dorks" % cnt)
+        hq = [k for k in kws if score_keyword(k)[0] >= 80]
+        if hq:
+            path, cnt = dump_text(hq, "keywords_hq", "PYTHON SNAKE — HQ only (80+)")
+            await send_file(update, path, "🔥 %s HQ keywords (80+)" % fmt(cnt))
+        return
+
+    if action == "kexp":
+        context.user_data["kw_items"] = items
+        cap = kw_capacity(kw_cores(items))
+        try:
+            await q.edit_message_text(
+                (H("EXPAND KEYWORDS", "%s lines" % fmt(len(items))) + "\n\n"
+                 "📊 Max : <code>%s</code>\n\n"
+                 "Kitne keywords chahiye? <b>Number bhejo</b> (1 – %s)\n"
+                 "<i>Recommended: 5,000</i>" % (fmt(min(cap, KW_MAX)), fmt(KW_MAX))),
+                parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
+        except Exception:
+            pass
+        context.user_data["await"] = "kw_count"
         return
 
     if action == "inj":
@@ -3559,7 +4313,9 @@ async def cb_file(update, context, action: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 AWAIT_HANDLERS = {
     "dork_count": input_dork_count,
-    "kw_seeds": input_kw_seeds,
+    "dork_domain": input_dork_domain,
+    "kw_input": input_kw_input,
+    "kw_count": input_kw_count,
     "rev_urls": input_rev_urls,
     "inj_urls": input_inj_urls,
     "parse_dorks": input_parse_dorks,
@@ -4151,6 +4907,7 @@ async def _post_init(app) -> None:
             BotCommand("myid", "🪪 Apni ID"),
             BotCommand("ping", "🏓 Bot zinda?"),
             BotCommand("gtest", "🐦 Free Google test"),
+            BotCommand("fresh", "🆕 Fresh dork history"),
             BotCommand("admin", "👑 Admin panel"),
         ])
         logger.info("✅ Bot commands set (/redeem included)")
@@ -4174,6 +4931,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("addkey", cmd_addkey))
     app.add_handler(CommandHandler("redeem", cmd_redeem))
     app.add_handler(CommandHandler("gtest", cmd_gtest))
+    app.add_handler(CommandHandler("fresh", cmd_fresh))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
@@ -4349,6 +5107,30 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  F(THEMES[theme_name()]["label"], T()["head"]),
                  up // 3600, (up % 3600) // 60, os.getpid(), len(USERS), gj)
     await msg.edit_text(txt, parse_mode=ParseMode.HTML)
+
+
+async def cmd_fresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ /freshclear — fresh history saaf | /fresh — stats """
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.effective_message.reply_text("🚫 Admin only.")
+        return
+    arg = (context.args or [""])[0].lower() if context.args else ""
+    if arg in ("clear", "reset", "clean"):
+        n = dork_seen_clear()
+        await update.effective_message.reply_text(
+            "🧹 Fresh history clear — <code>%s</code> dorks hata diye.\n"
+            "Ab sab dorks dobara 'naye' maane jayenge." % fmt(n),
+            parse_mode=ParseMode.HTML)
+        return
+    await update.effective_message.reply_text(
+        (H("FRESH SYSTEM", "duplicate dork nahi") + "\n\n"
+         "📚 History : <code>%s</code> dorks\n"
+         "🆕 Naya batch banate waqt purane skip hote hain\n"
+         "🎯 Isse har baar <b>fresh URLs</b> milte hain\n\n"
+         "🧹 Clear karne ke liye: <code>/fresh clear</code>"
+         % fmt(dork_seen_count())),
+        parse_mode=ParseMode.HTML)
 
 
 async def cmd_gtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
