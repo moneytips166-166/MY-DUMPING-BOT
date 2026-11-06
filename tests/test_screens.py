@@ -44,6 +44,7 @@ def screens():
             out[fn] = getattr(core, fn)()
     if callable(getattr(core, "admin_dash", None)):
         out["admin_dash"] = core.admin_dash()
+    out["batch_card"] = core.batch_card()
     return out
 
 
@@ -69,8 +70,9 @@ async def cb_screens():
             res[name] = upd.last_text()
         except Exception as exc:
             BAD.append("%s → EXCEPTION %s: %s" % (name, type(exc).__name__, exc))
-    # admin API cards
-    for data in ("a:keys_api", "a:apis", "a:home"):
+    # admin API cards + proxy/engine batch screens
+    for data in ("a:keys_api", "a:apis", "a:home", "a:proxy", "a:eng",
+                 "a:pzbatch", "a:pzwant", "a:injbatch"):
         ctx = FakeContext({})
         upd = FakeUpdate(data=data)
         try:

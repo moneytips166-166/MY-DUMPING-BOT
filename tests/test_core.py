@@ -48,7 +48,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.5", "VERSION")
+    eq(core.VERSION, "v2.6", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -461,10 +461,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.5"')
+    contains(btxt, 'VERSION = "v2.6"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.5", "shim se version")
+    eq(core.VERSION, "v2.6", "shim se version")
 
 
 def test_diagnostics():
@@ -499,6 +499,59 @@ def test_diagnostics():
     eq(core.engine_reason("ok"), "results mile, dork se match nahi")
 
 
+def test_batch():
+    group("batch")
+    saved = {k: core.SETTINGS.pop(k, None) for k in
+             ("proxy_batch", "inj_batch", "want_alive")}
+    eq(core.proxy_batch_size(), 4000, "default proxy batch")
+    eq(core.inj_batch_size(), 200, "default inj batch")
+    eq(core.want_alive_n(), 0, "default want = saare")
+    for k, v in saved.items():
+        if v is not None:
+            core.SETTINGS[k] = v
+    core.sset("proxy_batch", 1000)
+    eq(core.proxy_batch_size(), 1000)
+    core.sset("proxy_batch", 99999)
+    eq(core.proxy_batch_size(), 20000, "clamp hi")
+    core.sset("proxy_batch", 10)
+    eq(core.proxy_batch_size(), 200, "clamp lo")
+    core.sset("proxy_batch", 4000)
+
+    calls = []
+
+    async def fake(chunk, concurrency=400, timeout=6.0, progress=None, want=0):
+        calls.append(len(chunk))
+        if progress:
+            await progress({"done": len(chunk), "total": len(chunk), "alive": 1})
+        return [{"url": chunk[0], "ms": 100, "ok": True}] if chunk else []
+
+    real = core.check_proxies
+    core.check_proxies = fake
+    try:
+        px = ["1.1.1.%d:8080" % i for i in range(10)]
+        good = asyncio.run(core.check_proxies_batched(px, batch=4, want=0))
+        eq(calls, [4, 4, 2], "batch chunks 4+4+2")
+        eq(len(good), 3, "har batch se 1 alive")
+        eq(good[0]["url"], "1.1.1.0:8080")
+        calls.clear()
+        good2 = asyncio.run(core.check_proxies_batched(px, batch=4, want=1))
+        eq(len(good2), 1, "want=1")
+        eq(calls, [4], "want milte hi ruk gaya")
+        calls.clear()
+        eq(asyncio.run(core.check_proxies_batched([], batch=4)), [], "khaali")
+        eq(calls, [], "khaali pe koi call nahi")
+        # duplicate proxy ek hi baar
+        calls.clear()
+        asyncio.run(core.check_proxies_batched(["a:1", "a:1", "b:2"], batch=10, want=0))
+        eq(calls, [2], "duplicate hata")
+    finally:
+        core.check_proxies = real
+    # /batch card
+    txt = core.batch_card()
+    contains(txt, "ʙᴀᴛᴄʜ")
+    contains(txt, "/batch proxy 4000")
+
+
 def test_help_uses_fonts():
     group("help fonts")
     txt = core.help_text()
@@ -515,7 +568,7 @@ def main():
                test_niche_country, test_qa, test_help_uses_fonts,
                test_reader_formats, test_kw_slug, test_engines, test_crawler,
                test_file_in_flow, test_pending_file, test_enginetest,
-               test_single_file, test_diagnostics):
+               test_single_file, test_diagnostics, test_batch):
         try:
             fn()
         except Exception as exc:

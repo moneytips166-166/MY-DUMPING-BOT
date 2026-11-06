@@ -63,7 +63,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.5"
+VERSION = "v2.6"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1800,6 +1800,84 @@ async def check_proxies(proxies: list, concurrency: int = 400, timeout: float = 
                     if not t.done():
                         t.cancel()
                 break
+    good.sort(key=lambda x: x.get("ms", 99999))
+    return good
+
+
+def proxy_batch_size() -> int:
+    """Ek baar me kitne proxies check ho — admin panel se set."""
+    try:
+        v = int(sget("proxy_batch", 4000) or 4000)
+    except Exception:
+        v = 4000
+    return max(200, min(20000, v))
+
+
+def inj_batch_size() -> int:
+    """Injector me ek baar me kitne URLs process ho."""
+    try:
+        v = int(sget("inj_batch", 200) or 200)
+    except Exception:
+        v = 200
+    return max(20, min(5000, v))
+
+
+def want_alive_n() -> int:
+    """Kitne alive proxies chahiye — 0 = saare batches poore karo."""
+    try:
+        return max(0, int(sget("want_alive", 0) or 0))
+    except Exception:
+        return 0
+
+
+async def check_proxies_batched(proxies, batch=None, concurrency=None, timeout=None,
+                                progress=None, want=None):
+    """SAARE proxies check — 4k ka batch, phir agla 4k… jab tak sab na ho.
+
+    Batch size + target alive admin panel se (`/batch`) set hote hain.
+    """
+    proxies = list(dict.fromkeys([x for x in (proxies or []) if x]))
+    if not proxies:
+        return []
+    batch = int(batch or proxy_batch_size())
+    try:
+        concurrency = int(concurrency or sget("concurrency", 400) or 400)
+    except Exception:
+        concurrency = 400
+    try:
+        timeout = float(timeout or sget("check_timeout", 6) or 6)
+    except Exception:
+        timeout = 6.0
+    want = want_alive_n() if want is None else int(want)
+    total = len(proxies)
+    nbatch = (total + batch - 1) // batch
+    good, seen = [], set()
+    for bi in range(nbatch):
+        chunk = proxies[bi * batch:(bi + 1) * batch]
+
+        async def _p(st, _bi=bi, _chunk=chunk):
+            if not progress:
+                return
+            try:
+                await progress({"batch": _bi + 1, "batches": nbatch,
+                                "batch_size": batch, "total": total,
+                                "chunk": len(_chunk),
+                                "done": _bi * batch + int(st.get("done", 0)),
+                                "alive": len(good) + int(st.get("alive", 0))})
+            except Exception:
+                pass
+
+        left = max(0, want - len(good)) if want else 0
+        got = await check_proxies(chunk, concurrency=concurrency, timeout=timeout,
+                                  progress=_p, want=left)
+        for g in got:
+            if g.get("url") not in seen:
+                seen.add(g["url"])
+                good.append(g)
+            if want and len(good) >= want:
+                break
+        if want and len(good) >= want:
+            break
     good.sort(key=lambda x: x.get("ms", 99999))
     return good
 
@@ -4633,7 +4711,21 @@ async def _run_inject(update, context, urls):
     except Exception:
         pass
     t0 = time.time()
-    out = inject_all_payloads(urls, cat)
+    _ib = inj_batch_size()
+    _nb = (len(urls) + _ib - 1) // max(1, _ib)
+    out = []
+    for _bi in range(_nb):
+        _chunk = urls[_bi * _ib:(_bi + 1) * _ib]
+        out.extend(inject_all_payloads(_chunk, cat))
+        if msg and _nb > 1:
+            try:
+                await msg.edit_text("💉 <b>%s</b>\n%s\n\n📦 Batch <code>%d/%d</code> • "
+                                    "targets: <code>%s</code>"
+                                    % (F("INJECTOR", T()["head"]), T()["div"],
+                                       _bi + 1, _nb, fmt(len(out))),
+                                    parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
     took = time.time() - t0
     if not out:
         if msg:
@@ -4645,10 +4737,12 @@ async def _run_inject(update, context, urls):
     path, cnt = dump_text(out, "inject_" + cat, "PYTHON SNAKE — injector (%s)" % cat)
     txt = (H("INJECTOR — DONE", CAT_LABEL.get(cat, cat)) + "\n\n"
            "🎯 Input URLs : <code>%s</code>\n"
+           "📦 Batch      : <code>%s × %d</code>\n"
            "💉 Payloads   : <code>%d</code>\n"
            "✅ Targets    : <code>%s</code>\n"
            "⏱ Time       : <code>%.2fs</code>\n\n%s"
-           % (fmt(len(urls)), len(payloads_for(cat)), fmt(cnt), took, short_list(out[:8], 8)))
+           % (fmt(len(urls)), fmt(_ib), _nb, len(payloads_for(cat)), fmt(cnt), took,
+              short_list(out[:8], 8)))
     if msg:
         try:
             await msg.delete()
@@ -4969,10 +5063,15 @@ async def input_parse_max(update, context, text: str):
 async def tool_proxy(update, context):
     q = update.callback_query
     pool = PROXIES or load_proxy_pool()
-    txt = (H("PROXY ENGINE", "%d sources • DoH bypass • 400 parallel" % len(PROXY_SOURCES)) + "\n\n"
+    txt = (H("PROXY ENGINE", "%d sources • DoH bypass • %s parallel"
+             % (len(PROXY_SOURCES), fmt(sget("concurrency", 400)))) + "\n\n"
            "🧅 Pool abhi : <code>%d</code> proxies\n"
-           "📄 Manual    : <code>%d</code> (data/manual_proxies.txt)\n\n"
-           "Scan chalu karein?" % (len(pool), len(manual_proxies())))
+           "📄 Manual    : <code>%d</code> (data/manual_proxies.txt)\n"
+           "📦 Batch     : <code>%s</code> (admin se set)\n"
+           "🎯 Target    : <code>%s</code>\n\n"
+           "Scan chalu karein?\n<i>Saare proxies batch me check honge — ek bhi chhuta nahi.</i>"
+           % (len(pool), len(manual_proxies()), fmt(proxy_batch_size()),
+              ("saare" if not want_alive_n() else fmt(want_alive_n()))))
     kb = RK([
         [InlineKeyboardButton("🚀 SCRAPE + CHECK", callback_data="px:run")],
         [InlineKeyboardButton("📊 POOL STATUS", callback_data="px:stat")],
@@ -5017,33 +5116,39 @@ async def cb_proxy_run(update, context):
             reply_markup=kb_back("m:proxy"), parse_mode=ParseMode.HTML)
         return
 
+    _pb = proxy_batch_size()
     await q.edit_message_text("⏳ <b>Step 2/2</b> — %s proxies check ho rahe hain…\n"
-                              "<i>(400 parallel — fast)</i>" % fmt(len(px)),
+                              "<i>(batch of %s • agla batch pichle ke baad khud chalu)</i>"
+                              % (fmt(len(px)), fmt(_pb)),
                               parse_mode=ParseMode.HTML)
 
     async def chk_prog(st):
         try:
             await q.edit_message_text(
                 "🔍 <b>%s</b>\n" % F("CHECKING", T()["head"]) + T()["div"] +
-                "\n📥 Total   : <code>%s</code>\n🔍 Checked : <code>%s/%s</code> %s\n"
+                "\n📥 Total   : <code>%s</code>\n"
+                "📦 Batch   : <code>%d/%d</code> • %s\n"
+                "🔍 Checked : <code>%s/%s</code> %s\n"
                 "✅ Alive   : <code>%d</code>"
-                % (fmt(st["total"]), fmt(st["done"]), fmt(st["total"]),
+                % (fmt(st["total"]), st.get("batch", 1), st.get("batches", 1),
+                   fmt(st.get("batch_size", proxy_batch_size())),
+                   fmt(st["done"]), fmt(st["total"]),
                    bar(st["done"] / max(1, st["total"]) * 100), st["alive"]),
                 parse_mode=ParseMode.HTML)
         except Exception:
             pass
 
-    good = await check_proxies(px[:4000], concurrency=400, timeout=6.0,
-                               progress=chk_prog, want=200)
+    good = await check_proxies_batched(px, progress=chk_prog)
     save_proxy_pool(good)
     took = time.time() - t0
+    _nb = (len(px) + proxy_batch_size() - 1) // max(1, proxy_batch_size())
     txt = (H("PROXY — DONE") + "\n\n"
            "📥 Scraped  : <code>%s</code>\n"
-           "🔍 Checked  : <code>%s</code>\n"
+           "🔍 Checked  : <code>%s</code> (batch of %s × %d)\n"
            "✅ Alive    : <code>%d</code>\n"
            "⏱ Time     : <code>%.1fs</code>\n\n"
            "🌐 Sources  : <code>%d/%d</code> OK • raw lines: <code>%s</code>"
-           % (fmt(len(px)), fmt(min(len(px), 4000)), len(good), took,
+           % (fmt(len(px)), fmt(len(px)), fmt(proxy_batch_size()), _nb, len(good), took,
               PSTATS.get("sources_ok", 0), len(PROXY_SOURCES), fmt(PSTATS.get("raw", 0))))
     if good:
         txt += "\n⚡ Best: <code>%d ms</code>\n\n<b>Top 5:</b>\n%s" % (
@@ -6922,23 +7027,63 @@ async def admin_callback(update, context, action: str):
         pool = PROXIES or load_proxy_pool()
         kb = RK([
             [InlineKeyboardButton("🚀 SCAN NOW", callback_data="a:pxscan")],
+            [InlineKeyboardButton("📦 CHECK BATCH: %s" % fmt(proxy_batch_size()),
+                                  callback_data="a:pzbatch")],
+            [InlineKeyboardButton("🎯 TARGET ALIVE: %s"
+                                  % ("SAARE" if not want_alive_n() else fmt(want_alive_n())),
+                                  callback_data="a:pzwant")],
             [InlineKeyboardButton("🗑 CLEAR", callback_data="a:pxclear")],
             [InlineKeyboardButton("⬅️ BACK", callback_data="a:home")],
         ])
         return await ed(H("ADMIN — PROXY") + "\n\n✅ Alive: <code>%d</code>\n📄 Manual: <code>%d</code>\n"
-                        "🌐 Sources: <code>%d</code>\n\n%s"
+                        "🌐 Sources: <code>%d</code>\n📦 Batch: <code>%s</code> • 🎯 Target: <code>%s</code>\n\n%s"
+                        "\n\n<i>Batch = ek baar me kitne check. 60k mile to 15 batch me sab check honge.</i>"
                         % (len(pool), len(manual_proxies()), len(PROXY_SOURCES),
+                           fmt(proxy_batch_size()),
+                           ("saare" if not want_alive_n() else fmt(want_alive_n())),
                            short_list([p["url"].replace("http://", "") for p in pool[:12]], 12)), kb)
 
     if action == "pxscan":
-        await ed("⏳ Admin scan chal raha hai…")
+        await ed("⏳ Admin scan chal raha hai… (scrape → batch check)")
         px = _uniq(await scrape_proxies(force=True) + manual_proxies())
-        good = await check_proxies(px[:4000], concurrency=400, want=200)
+
+        async def _aprog(st):
+            await ed("🔍 <b>%s</b>\n%s\n\n📥 Total : <code>%s</code>\n"
+                     "📦 Batch : <code>%d/%d</code> • %s\n"
+                     "🔍 Checked: <code>%s/%s</code> %s\n✅ Alive : <code>%d</code>"
+                     % (F("ADMIN CHECK", T()["head"]), T()["div"], fmt(st["total"]),
+                        st.get("batch", 1), st.get("batches", 1),
+                        fmt(st.get("batch_size", proxy_batch_size())),
+                        fmt(st["done"]), fmt(st["total"]),
+                        bar(st["done"] / max(1, st["total"]) * 100), st["alive"]))
+
+        good = await check_proxies_batched(px, progress=_aprog)
         save_proxy_pool(good)
-        return await ed(H("ADMIN — PROXY") + "\n\nScraped: <code>%s</code>\nAlive: <code>%d</code>\n"
+        return await ed(H("ADMIN — PROXY") + "\n\nScraped: <code>%s</code>\n"
+                        "Checked: <code>%s</code> (batch %s)\nAlive: <code>%d</code>\n"
                         "Sources: <code>%d/%d</code>"
-                        % (fmt(len(px)), len(good), PSTATS.get("sources_ok", 0), len(PROXY_SOURCES)),
+                        % (fmt(len(px)), fmt(len(px)), fmt(proxy_batch_size()),
+                           len(good), PSTATS.get("sources_ok", 0), len(PROXY_SOURCES)),
                         RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
+
+    if action == "pzbatch":
+        v = proxy_batch_size()
+        nxt = {200: 1000, 1000: 2000, 2000: 4000, 4000: 8000,
+               8000: 10000, 10000: 200}.get(v, 4000)
+        sset("proxy_batch", nxt)
+        return await admin_callback(update, context, "proxy")
+
+    if action == "pzwant":
+        v = want_alive_n()
+        nxt = {0: 200, 200: 500, 500: 1000, 1000: 2000, 2000: 0}.get(v, 200)
+        sset("want_alive", nxt)
+        return await admin_callback(update, context, "proxy")
+
+    if action == "injbatch":
+        v = inj_batch_size()
+        nxt = {20: 100, 100: 200, 200: 500, 500: 1000, 1000: 20}.get(v, 200)
+        sset("inj_batch", nxt)
+        return await admin_callback(update, context, "eng")
 
     if action == "pxclear":
         save_proxy_pool([])
@@ -6949,10 +7094,15 @@ async def admin_callback(update, context, action: str):
             [InlineKeyboardButton("Pages: %s" % sget("parse_pages", 1), callback_data="a:setpages")],
             [InlineKeyboardButton("Check timeout: %ss" % sget("check_timeout", 6), callback_data="a:setto")],
             [InlineKeyboardButton("Concurrency: %s" % sget("concurrency", 400), callback_data="a:setconc")],
+            [InlineKeyboardButton("💉 INJECT BATCH: %s" % fmt(inj_batch_size()),
+                                  callback_data="a:injbatch")],
             [InlineKeyboardButton("⬅️ BACK", callback_data="a:home")],
         ])
         return await ed(H("ADMIN — ENGINE") + "\n\nIn settings ko badalne ke liye button dabao "
-                        "(value cycle hoti hai).", kb)
+                        "(value cycle hoti hai).\n\n"
+                        "📦 Proxy batch / 🎯 target → <b>PROXY</b> screen me.\n"
+                        "💉 Inject batch = injector ek baar me kitne URLs process kare.\n"
+                        "Exact value: <code>/batch proxy 4000</code>", kb)
 
     if action == "setpages":
         v = int(sget("parse_pages", 1))
@@ -7314,6 +7464,7 @@ async def _post_init(app) -> None:
             BotCommand("ping", "🏓 Bot zinda?"),
             BotCommand("gtest", "🐦 Free Google test"),
             BotCommand("apis", "🔑 SERP API list"),
+            BotCommand("batch", "📦 Batch size (admin)"),
             BotCommand("engines", "⚡ Parser speed (kam engines)"),
             BotCommand("enginetest", "🔬 Kaun sa engine chal raha hai"),
             BotCommand("fresh", "🆕 Fresh dork history"),
@@ -7336,6 +7487,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("setkey", cmd_setkey))
     app.add_handler(CommandHandler("apis", cmd_apis))
+    app.add_handler(CommandHandler("batch", cmd_batch))
     app.add_handler(CommandHandler("engines", cmd_engines))
     app.add_handler(CommandHandler("enginetest", cmd_enginetest))
     app.add_handler(CommandHandler("admin", cmd_admin))
@@ -7521,6 +7673,60 @@ async def _cmd_intent_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await_clear(context)
     except Exception:
         pass
+
+
+BATCH_KEYS = {
+    "proxy":  ("proxy_batch", 200, 20000, "Proxy check batch"),
+    "inj":    ("inj_batch", 20, 5000, "Injector batch"),
+    "want":   ("want_alive", 0, 100000, "Target alive (0 = saare)"),
+    "conc":   ("concurrency", 50, 1000, "Parallel check"),
+    "timeout": ("check_timeout", 3, 30, "Proxy check timeout (s)"),
+}
+
+
+def batch_card() -> str:
+    rows = []
+    for k, (skey, lo, hi, label) in BATCH_KEYS.items():
+        rows.append(KV(label, "<code>%s</code>" % fmt(sget(skey, 0) if skey != "proxy_batch"
+                                                      else proxy_batch_size()), "📦"))
+    return (H("BATCH SETTINGS", "admin") + "\n\n" + "\n".join(rows) + "\n\n"
+            "<b>Set karne ke liye:</b>\n"
+            "<code>/batch proxy 4000</code>\n"
+            "<code>/batch inj 500</code>\n"
+            "<code>/batch want 0</code> — 0 matlab saare proxies check karo\n"
+            "<code>/batch conc 600</code>\n"
+            "<code>/batch timeout 8</code>\n\n"
+            "<i>Proxy batch 60k proxies ko chhota-chhota check karta hai: 4k → agla 4k → … "
+            "jab tak sab na ho. Phone pe 2000–4000 best hai.</i>")
+
+
+async def cmd_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ /batch — proxy check / injector ka batch size (sirf admin)."""
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("🔒 Admin only.")
+        return
+    args = [a.strip() for a in (context.args or []) if a.strip()]
+    if len(args) < 2:
+        await update.effective_message.reply_text(batch_card(), parse_mode=ParseMode.HTML)
+        return
+    key, val = args[0].lower(), args[1]
+    if key not in BATCH_KEYS:
+        await update.effective_message.reply_text(
+            "❌ <b>Ye key nahi hai.</b>\n\nSahi: <code>%s</code>"
+            % ", ".join(BATCH_KEYS), parse_mode=ParseMode.HTML)
+        return
+    skey, lo, hi, label = BATCH_KEYS[key]
+    try:
+        v = int(float(val))
+    except Exception:
+        await update.effective_message.reply_text("❌ Number do, jaise <code>4000</code>.",
+                                                  parse_mode=ParseMode.HTML)
+        return
+    v = max(lo, min(hi, v))
+    sset(skey, v)
+    await update.effective_message.reply_text(
+        "✅ <b>%s</b> = <code>%s</code>\n\n%s" % (esc(label), fmt(v), batch_card()),
+        parse_mode=ParseMode.HTML)
 
 
 async def cmd_apis(update: Update, context: ContextTypes.DEFAULT_TYPE):

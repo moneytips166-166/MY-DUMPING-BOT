@@ -1,6 +1,33 @@
-# 🐍 PYTHON SNAKE CORE — v2.5
+# 🐍 PYTHON SNAKE CORE — v2.6
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 📦 v2.6 — proxy BATCH check (40k–80k bhi poora check hoga)
+
+Pehle: 60k proxies scrape hote the par sirf **pehle 4,000** check hote the — baaki bekaar.
+Ab: **batch ke baad agla batch**, jab tak saare na ho.
+
+| Setting | Default | Panel se | Command se |
+|---|---|---|---|
+| Proxy check batch | **4,000** | 👑 `/admin` → PROXY → 📦 | `/batch proxy 4000` |
+| Target alive | **0 (saare)** | 👑 `/admin` → PROXY → 🎯 | `/batch want 0` |
+| Inject batch | **200** | 👑 `/admin` → ENGINE → 💉 | `/batch inj 500` |
+| Parallel | 400 | 👑 `/admin` → ENGINE | `/batch conc 600` |
+| Check timeout | 6s | 👑 `/admin` → ENGINE | `/batch timeout 8` |
+
+- 60,000 proxies + batch 4,000 = **15 batch**, progress me `Batch 7/15` dikhta hai
+- Har batch ke baad alive count jama hota hai — koi proxy chhuta nahi
+- 🎯 Target alive set karo (jaise 500) to 500 milte hi ruk jaata hai (time bachta hai), `0` = sab check
+- 💉 Injector bhi batch me chalta hai (200 URLs → agla 200) — badi list pe bhi atakta nahi
+- 📱 Phone pe 2000–4000 best; 10,000 pe RAM zyada kharch hoti hai
+
+```bash
+cd ~/snake && ./update.sh && ./restart.sh
+```
+
+Phir `/ping` → `📦 Core: v2.6`, aur `/batch` se settings dekh lo.
 
 ---
 
