@@ -28,7 +28,6 @@ import json
 import signal
 import platform
 import time
-import math
 import random
 import asyncio
 import hashlib
@@ -63,7 +62,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.0"
+VERSION = "v2.1"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -224,6 +223,43 @@ def sget(key: str, default=None):
 def sset(key: str, value) -> None:
     SETTINGS[key] = value
     jsave("settings", SETTINGS)
+
+
+AWAIT_TTL = 900          # 15 min — iske baad adhoora input expire ho jata hai
+
+
+def await_set(ctx, key: str):
+    """User se agla input is handler se lena hai (timestamp ke saath)."""
+    try:
+        ctx.user_data["await"] = key
+        ctx.user_data["await_ts"] = time.time()
+    except Exception:
+        pass
+
+
+def await_get(ctx):
+    """Pending input — TTL ke baad khaali (stale flow bug fix)."""
+    try:
+        k = ctx.user_data.get("await")
+        if not k:
+            return None
+        ts = float(ctx.user_data.get("await_ts") or 0)
+        if ts and (time.time() - ts) > AWAIT_TTL:
+            await_clear(ctx)
+            return None
+        return k
+    except Exception:
+        return None
+
+
+def await_clear(ctx):
+    """Pending input hatao (naya screen = naya intent)."""
+    try:
+        ctx.user_data.pop("await", None)
+        ctx.user_data.pop("await_ts", None)
+        ctx.user_data.pop("await_admin", None)
+    except Exception:
+        pass
 
 
 def is_admin(uid) -> bool:
@@ -2170,7 +2206,51 @@ def api_keys() -> dict:
         "cse_key": str(sget("cse_key") or ""),
         "cse_cx": str(sget("cse_cx") or ""),
         "serpapi": str(sget("serpapi") or ""),
+        "serper": str(sget("serper") or ""),
+        "brave": str(sget("brave") or ""),
     }
+
+
+# ── SERPER (google.serper.dev) — 2,500 free queries, no card ────────────────
+async def serper_search(session, dork: str, num: int = 20, page: int = 1) -> list:
+    """Google results JSON — dork (inurl:/site:) support karta hai."""
+    k = api_keys()
+    if not k["serper"]:
+        return []
+    try:
+        async with session.post(
+                "https://google.serper.dev/search",
+                headers={"X-API-KEY": k["serper"], "Content-Type": "application/json"},
+                json={"q": dork, "num": min(100, max(1, num)), "page": max(1, page)},
+                ssl=False, timeout=aiohttp.ClientTimeout(total=25)) as r:
+            if r.status != 200:
+                return []
+            j = await r.json(content_type=None)
+        out = [str(it.get("link") or "") for it in (j.get("organic") or [])]
+        return _uniq([u for u in (_clean_url(x) for x in out) if u])
+    except Exception:
+        return []
+
+
+# ── BRAVE SEARCH API (api.search.brave.com) — $5 free credit/month ──────────
+async def brave_search(session, dork: str, count: int = 20) -> list:
+    k = api_keys()
+    if not k["brave"]:
+        return []
+    try:
+        async with session.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": dork, "count": min(20, max(1, count))},
+                headers={"X-Subscription-Token": k["brave"],
+                         "Accept": "application/json"},
+                ssl=False, timeout=aiohttp.ClientTimeout(total=25)) as r:
+            if r.status != 200:
+                return []
+            j = await r.json(content_type=None)
+        out = [str(it.get("url") or "") for it in ((j.get("web") or {}).get("results") or [])]
+        return _uniq([u for u in (_clean_url(x) for x in out) if u])
+    except Exception:
+        return []
 
 
 async def cse_search(session, dork: str, num: int = 10, start: int = 1) -> list:
@@ -2196,7 +2276,7 @@ async def cse_search(session, dork: str, num: int = 10, start: int = 1) -> list:
 
 # ── GOOGLE via ijerm (koi API key nahi, free) ────────────────────────────────
 GJ_DEFAULT = "https://ijerm.com/submit_article/book1/search-api"
-GJ_STATE = {"fail": 0, "ok": 0, "last": 0.0, "dead_until": 0.0}
+GJ_STATE = {"fail": 0, "ok": 0, "last": 0.0, "dead_until": 0.0, "idx": 0}
 GJ_LOCK = None
 GJ_MIN_GAP = 2.5          # requests ke beech minimum gap (sec) — endpoint ko izzat do
 GJ_MAX_PAGES = 6          # 10+ pages pe endpoint timeout karta hai
@@ -2215,9 +2295,29 @@ def gj_enabled() -> bool:
     return v != "-"
 
 
-def gj_base() -> str:
+def gj_pool() -> list:
+    """Free Google endpoints — default + user ne add kiye hue (rotating)."""
+    pool = [GJ_DEFAULT]
     v = str(sget("gj_url", "") or "").strip()
-    return v if (v and v != "-" and v.startswith("http")) else GJ_DEFAULT
+    if v and v != "-" and v.startswith("http") and v not in pool:
+        pool.append(v)
+    extra = sget("gj_pool") or []
+    if isinstance(extra, list):
+        for u in extra:
+            u = str(u or "").strip()
+            if u.startswith("http") and u not in pool:
+                pool.append(u)
+    return pool
+
+
+def gj_base() -> str:
+    pool = gj_pool()
+    return pool[GJ_STATE.get("idx", 0) % len(pool)]
+
+
+def gj_rotate() -> None:
+    """Agle endpoint pe jao (ek fail hone par)."""
+    GJ_STATE["idx"] = (GJ_STATE.get("idx", 0) + 1) % max(1, len(gj_pool()))
 
 
 def gj_alive() -> bool:
@@ -2259,17 +2359,20 @@ async def gjerm_search(session, dork: str, pages: int = 1) -> list:
                 st["last"] = time.time()
                 if r.status != 200:
                     st["fail"] += 1
+                    gj_rotate()                     # agla endpoint try karo
                     if st["fail"] >= 3:
                         st["dead_until"] = time.time() + 300
-                        logger.warning("gjerm: 3 fail — 5 min ke liye band")
+                        logger.warning("gjerm: 3 fail — pool rotate, 5 min cooldown")
                     return []
                 j = await r.json(content_type=None)
         except Exception as exc:
             st["last"] = time.time()
             st["fail"] += 1
+            gj_rotate()
             if st["fail"] >= 3:
                 st["dead_until"] = time.time() + 300
-                logger.warning("gjerm fail (%s) — 5 min band", str(exc)[:60])
+                logger.warning("gjerm fail (%s) — pool rotate, 5 min cooldown",
+                               str(exc)[:60])
             return []
     if not isinstance(j, dict) or j.get("status") == "error":
         st["fail"] += 1
@@ -2433,11 +2536,15 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     conn = aiohttp.TCPConnector(limit=60, ssl=False, ttl_dns_cache=600)
     async with aiohttp.ClientSession(connector=conn) as session:
         # 2) optional API keys (agar user ne daale hain)
-        if k["serpapi"] or (k["cse_key"] and k["cse_cx"]):
+        if k["serpapi"] or k["serper"] or k["brave"] or (k["cse_key"] and k["cse_cx"]):
             for dork in dorks[:60]:
                 got = []
-                if k["serpapi"]:
+                if k["serper"]:
+                    got = await serper_search(session, dork, num=20)
+                if not got and k["serpapi"]:
                     got = await serpapi_search(session, dork, num=20)
+                if not got and k["brave"]:
+                    got = await brave_search(session, dork, count=20)
                 if not got and k["cse_key"] and k["cse_cx"]:
                     got = await cse_search(session, dork)
                 st["raw"] += len(got)
@@ -2763,6 +2870,9 @@ def help_text() -> str:
             + tag("THEME") + "\n"
             + "Admin <code>/theme</code> se font + divider + icon badal sakta hai "
               "(%d themes).\n\n" % len(THEMES)
+            + tag("SERP APIs") + "\n"
+            + "Free + paid API list (rate, limit, kahan se milega): <code>/apis</code>\n"
+            + "Apni key lagana: <code>/setkey serper KEY</code>\n\n"
             + "%s <b>%s</b> — panel sirf admins ko." % (th["icon"], style("ADMIN", "btn")))
 
 
@@ -2777,6 +2887,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer()
     except Exception:
         pass
+    # ⚠️ naya button = naya intent — purana adhoora input cancel
+    old_wait = await_get(context)
+    if old_wait and not data.startswith("cap:"):
+        await_clear(context)
 
     # ── feature gate (admin ne band kiya ho to custom message) ──
     if not is_admin(uid):
@@ -2922,7 +3036,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                           parse_mode=ParseMode.HTML)
             except Exception:
                 pass
-            context.user_data["await"] = "key_redeem"
+            await_set(context, "key_redeem")
             return
         try:
             await q.edit_message_text(help_text(), reply_markup=help_kb(),
@@ -3105,7 +3219,7 @@ async def cb_gen_start(update, context):
             parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
     except Exception:
         pass
-    context.user_data["await"] = "gen_count"
+    await_set(context, "gen_count")
 
 
 async def input_gen_count(update, context, text: str):
@@ -3127,7 +3241,7 @@ async def input_gen_count(update, context, text: str):
             P("Comma ya line se alag karo"),
             P("Har keyword pe universal HQ templates chalengi"))),
         parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
-    context.user_data["await"] = "gen_kw"
+    await_set(context, "gen_kw")
 
 
 async def input_gen_kw(update, context, text: str):
@@ -3136,7 +3250,7 @@ async def input_gen_kw(update, context, text: str):
     if not ok:
         await update.effective_message.reply_text(err, parse_mode=ParseMode.HTML,
                                                   reply_markup=kb_back("m:dork"))
-        context.user_data["await"] = "gen_kw"
+        await_set(context, "gen_kw")
         return
     msg = await update.effective_message.reply_text("⚡ %s dorks ban rahe hain…" % fmt(n))
     t0 = time.time()
@@ -3171,7 +3285,7 @@ async def input_gen_kw(update, context, text: str):
             [InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")],
         ]))
     await send_file(update, path, "⚡ %s dorks • avg %.0f/100" % (fmt(cnt), avg))
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 # ── legacy mode buttons (purane messages ke liye) ───────────────────────────
@@ -3388,7 +3502,7 @@ async def cb_pro_set(update, context, key: str):
                                   reply_markup=kb_back("dd:pro"))
     except Exception:
         pass
-    context.user_data["await"] = "pro_" + key
+    await_set(context, "pro_" + key)
 
 
 PARSE_STRIP = re.compile(r"[;\n,|\s]+")
@@ -3443,7 +3557,7 @@ async def input_pro_set(update, context, key: str, text: str):
              InlineKeyboardButton("🚀 PRO MENU", callback_data="dd:pro")],
             [InlineKeyboardButton("🎯 GEN DORKS", callback_data="dp:gen")],
         ]))
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 # ── TEMPLATES VIEW + ON/OFF ──────────────────────────────────────────────────
@@ -3601,7 +3715,7 @@ async def cb_pro_combos(update, context, arg: str = ""):
                 parse_mode=ParseMode.HTML, reply_markup=kb_back("dp:combos"))
         except Exception:
             pass
-        context.user_data["await"] = "pro_combo"
+        await_set(context, "pro_combo")
         return
     elif arg == "gen":
         if not cfg["combos"]:
@@ -3654,7 +3768,7 @@ async def input_pro_combo(update, context, text: str):
         await update.effective_message.reply_text(
             "❌ Combo samajh nahi aaya. Format: <code>email:pass</code>",
             parse_mode=ParseMode.HTML)
-        context.user_data["await"] = "pro_combo"
+        await_set(context, "pro_combo")
         return
     cfg = pro_load()
     cfg["combos"] = _uniq(cfg["combos"] + items)[:100]
@@ -3663,7 +3777,7 @@ async def input_pro_combo(update, context, text: str):
         (H("COMBOS SAVED", "%d total" % len(cfg["combos"])) + "\n\n<code>%s</code>"
          % esc("  ".join(items[:10]))),
         parse_mode=ParseMode.HTML, reply_markup=combos_kb())
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 # ── PRO GEN (count → keywords → best template) ───────────────────────────────
@@ -3679,7 +3793,7 @@ async def cb_pro_gen(update, context):
             parse_mode=ParseMode.HTML, reply_markup=kb_back("dd:pro"))
     except Exception:
         pass
-    context.user_data["await"] = "dpgen_count"
+    await_set(context, "dpgen_count")
 
 
 async def input_dpgen_count(update, context, text: str):
@@ -3699,7 +3813,7 @@ async def input_dpgen_count(update, context, text: str):
             KV("Domains", "<code>%d</code>" % len(cfg["domains"]), "🌐"),
             B("Ab keywords bhejo"))),
         parse_mode=ParseMode.HTML, reply_markup=kb_back("dd:pro"))
-    context.user_data["await"] = "dpgen_kw"
+    await_set(context, "dpgen_kw")
 
 
 async def input_dpgen_kw(update, context, text: str):
@@ -3707,7 +3821,7 @@ async def input_dpgen_kw(update, context, text: str):
     if not ok:
         await update.effective_message.reply_text(err, parse_mode=ParseMode.HTML,
                                                   reply_markup=kb_back("dd:pro"))
-        context.user_data["await"] = "dpgen_kw"
+        await_set(context, "dpgen_kw")
         return
     n = int(context.user_data.get("dpgen_count") or 2000)
     msg = await update.effective_message.reply_text("🚀 Best templates chun raha hoon…")
@@ -3744,7 +3858,7 @@ async def input_dpgen_kw(update, context, text: str):
             [InlineKeyboardButton("⬅️ BACK", callback_data="dd:pro")],
         ]))
     await send_file(update, path, "🚀 %s pro dorks • avg %.0f/100" % (fmt(cnt), avg))
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3769,7 +3883,7 @@ async def tool_kw(update, context):
         ]))
     except Exception:
         pass
-    context.user_data["await"] = "kw_input"
+    await_set(context, "kw_input")
 
 
 async def input_kw_input(update, context, text: str):
@@ -3783,7 +3897,7 @@ async def input_kw_input(update, context, text: str):
              "<code>shopify store, crypto wallet</code>\n\n"
              "👉 Dorks banana hai? 🎯 DORKER use karo."),
             parse_mode=ParseMode.HTML, reply_markup=kb_back("m:kw"))
-        context.user_data["await"] = "kw_input"
+        await_set(context, "kw_input")
         return
     items = [x.strip() for x in re.split(r"[\n,;|]+", text or "") if x.strip()]
     cores = kw_cores(items)
@@ -3808,7 +3922,7 @@ async def input_kw_input(update, context, text: str):
               KV("Range", "1 – 100,000  •  Recommended: 5,000")))
     await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
                                               reply_markup=kb_back("m:kw"))
-    context.user_data["await"] = "kw_count"
+    await_set(context, "kw_count")
 
 
 async def input_kw_count(update, context, text: str):
@@ -3864,7 +3978,7 @@ async def input_kw_count(update, context, text: str):
             [InlineKeyboardButton("⬅️ BACK", callback_data="m:kw")],
         ]))
     await send_file(update, path, "🔑 %s keywords • avg %.0f/100" % (fmt(cnt), qrep["avg"]))
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 def kw_to_dorks(kws, n: int = 3000, tld: str = "") -> list:
@@ -3925,7 +4039,7 @@ async def cb_niche(update, context, key: str = ""):
                 parse_mode=ParseMode.HTML, reply_markup=kb_back("m:kw"))
         except Exception:
             pass
-        context.user_data["await"] = "kw_count"
+        await_set(context, "kw_count")
         return
     try:
         await q.edit_message_text(
@@ -4048,7 +4162,7 @@ async def tool_rev(update, context):
         await q.edit_message_text(txt, reply_markup=kb_back(), parse_mode=ParseMode.HTML)
     except Exception:
         pass
-    context.user_data["await"] = "rev_urls"
+    await_set(context, "rev_urls")
 
 
 async def input_rev_urls(update, context, text: str):
@@ -4078,7 +4192,7 @@ async def input_rev_urls(update, context, text: str):
             ch, parse_mode=ParseMode.HTML,
             reply_markup=kb_back("m:rev") if i == min(len(parts), 2) - 1 else None)
     await send_file(update, path, "🔗 %d reverse dorks" % cnt)
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -4107,7 +4221,7 @@ async def tool_inj(update, context):
                                   parse_mode=ParseMode.HTML)
     except Exception:
         pass
-    context.user_data["await"] = "inj_urls"
+    await_set(context, "inj_urls")
 
 
 async def cb_inj_cat(update, context, cat: str):
@@ -4135,7 +4249,7 @@ async def input_inj_urls(update, context, text: str):
             "✅ Jaise: <code>https://site.com/page.php?id=5</code>\n"
             "<i>Ek line me ek URL.</i>", parse_mode=ParseMode.HTML,
             reply_markup=kb_back("m:inj"))
-        context.user_data["await"] = "inj_urls"
+        await_set(context, "inj_urls")
         return
     await _run_inject(update, context, urls[:200])
 
@@ -4172,7 +4286,7 @@ async def _run_inject(update, context, urls):
     await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
                                               reply_markup=kb_back("m:inj"))
     await send_file(update, path, "💉 %d %s targets" % (cnt, cat))
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -4216,7 +4330,7 @@ async def cb_parse_last(update, context):
                                   reply_markup=kb_back("m:parse"))
     except Exception:
         pass
-    context.user_data["await"] = "parse_max"
+    await_set(context, "parse_max")
 
 
 async def cb_parse_manual(update, context):
@@ -4226,7 +4340,7 @@ async def cb_parse_manual(update, context):
                                   parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
     except Exception:
         pass
-    context.user_data["await"] = "parse_dorks"
+    await_set(context, "parse_dorks")
 
 
 async def cb_parse_deep(update, context):
@@ -4250,7 +4364,7 @@ async def cb_parse_deep(update, context):
             parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
     except Exception:
         pass
-    context.user_data["await"] = "deep_max"
+    await_set(context, "deep_max")
 
 
 async def input_deep_max(update, context, text: str):
@@ -4335,7 +4449,7 @@ async def input_deep_max(update, context, text: str):
             "👉 🧅 PROXY ENGINE se proxies add karo, phir dobara.",
             reply_markup=kb_back("m:parse"))
     await update.effective_message.reply_text("⬅️ Menu", reply_markup=kb_back("m:home"))
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 async def input_parse_dorks(update, context, text: str):
@@ -4343,7 +4457,7 @@ async def input_parse_dorks(update, context, text: str):
     if not ok:
         await update.effective_message.reply_text(err, parse_mode=ParseMode.HTML,
                                                   reply_markup=kb_back("m:parse"))
-        context.user_data["await"] = "parse_dorks"
+        await_set(context, "parse_dorks")
         return
     dorks = [x.strip() for x in text.split("\n") if x.strip()][:50]
     if not dorks:
@@ -4425,7 +4539,7 @@ async def input_parse_max(update, context, text: str):
         path, cnt = dump_text(urls, "parser", "PYTHON SNAKE — parsed URLs")
         await send_file(update, path, "🔍 %d real URLs" % cnt)
     await update.effective_message.reply_text("⬅️ Menu", reply_markup=kb_back("m:home"))
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -4502,7 +4616,6 @@ async def cb_proxy_run(update, context):
                                progress=chk_prog, want=200)
     save_proxy_pool(good)
     took = time.time() - t0
-    src_ok = PROXIES and PSTATS.get("sources_ok", 0)
     txt = (H("PROXY — DONE") + "\n\n"
            "📥 Scraped  : <code>%s</code>\n"
            "🔍 Checked  : <code>%s</code>\n"
@@ -4668,7 +4781,7 @@ async def cb_qa_type(update, context, kind: str):
             parse_mode=ParseMode.HTML, reply_markup=kb_back("m:qa"))
     except Exception:
         pass
-    context.user_data["await"] = "qa_" + kind
+    await_set(context, "qa_" + kind)
 
 
 async def input_qa_kind(update, context, kind: str, text: str):
@@ -4678,7 +4791,7 @@ async def input_qa_kind(update, context, kind: str, text: str):
     if not ok:
         await update.effective_message.reply_text(err, parse_mode=ParseMode.HTML,
                                                   reply_markup=kb_back("m:qa"))
-        context.user_data["await"] = "qa_" + kind
+        await_set(context, "qa_" + kind)
         return
     items = _lines(text)[:200]
     if not items:
@@ -4726,7 +4839,7 @@ async def input_qa_kind(update, context, kind: str, text: str):
         hp, hn = dump_text(hq, "quality_best", "PYTHON SNAKE — only 80+")
         await send_file(update, hp, "🔥 %s best (80+)" % fmt(hn))
     await update.effective_message.reply_text("⬅️ Menu", reply_markup=kb_back("m:qa"))
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 async def tool_rand(update, context):
@@ -4773,7 +4886,7 @@ async def cb_rand_manual(update, context):
                                   reply_markup=kb_back("m:rand"), parse_mode=ParseMode.HTML)
     except Exception:
         pass
-    context.user_data["await"] = "rand_items"
+    await_set(context, "rand_items")
 
 
 async def input_rand(update, context, text: str):
@@ -4786,7 +4899,7 @@ async def input_rand(update, context, text: str):
         H("RANDOMIZER — DONE") + "\n\n🔀 %s dorks\n\n%s" % (fmt(cnt), short_list(out[:8], 8)),
         parse_mode=ParseMode.HTML, reply_markup=kb_back("m:rand"))
     await send_file(update, path, "🎲 %d randomized" % cnt)
-    context.user_data.pop("await", None)
+    await_clear(context)
 
 
 async def tool_dump(update, context):
@@ -4907,6 +5020,7 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(need_key_text(uid), parse_mode=ParseMode.HTML,
                                         reply_markup=kb_needkey())
         return
+    await_clear(context)          # file bhejna = naya intent
     name = doc.file_name or "file.txt"
     size = int(doc.file_size or 0)
     if size > FILE_MAX:
@@ -4990,7 +5104,7 @@ async def cb_file(update, context, action: str):
                 parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
         except Exception:
             pass
-        context.user_data["await"] = "deep_max"
+        await_set(context, "deep_max")
         return
 
     if action == "ana":
@@ -5005,7 +5119,7 @@ async def cb_file(update, context, action: str):
             else: buckets["🔴 <25"] += 1
         best = sorted(zip(scores, items), key=lambda z: -z[0])[:8]
         txt = (H("FILE ANALYZE", "%d items" % len(items)) + "\n\n"
-               "⭐ Average: <code>%.0f/100</code>\n\n"
+               + ("⭐ Average: <code>%.0f/100</code>\n\n" % avg)
                + "\n".join("%s : <code>%s</code>" % (kk, fmt(vv)) for kk, vv in buckets.items())
                + "\n\n<b>Top 8:</b>\n" + short_list([b for _, b in best], 8))
         try:
@@ -5112,7 +5226,7 @@ async def cb_file(update, context, action: str):
                 parse_mode=ParseMode.HTML, reply_markup=kb_file(kind))
         except Exception:
             pass
-        context.user_data["await"] = "kw_count"
+        await_set(context, "kw_count")
         return
 
     if action == "inj":
@@ -5238,8 +5352,18 @@ KIND_HINT = {
 }
 
 
+NUM_ONLY_RE = re.compile(r"^[0-9\s,.;:\-]+$")
+
+
 def kind_check(text, want: str, ctx_label: str) -> tuple:
     """(ok, error_text). Galat type ho to saaf message."""
+    # sirf numbers = keyword nahi (warna "1000" se 800 junk dorks ban jate hain)
+    if want == "keywords" and NUM_ONLY_RE.match(str(text or "")):
+        return False, (
+            "❌ <b>Sirf number keyword nahi hota.</b>\n\n"
+            "📥 Aapne bheja: <code>%s</code>\n"
+            "✅ Chahiye: asli keywords, jaise <code>shopify store, crypto wallet</code>\n\n"
+            "👉 Keywords bhejo (ya ⬅️ BACK dabao)." % esc(str(text)[:40]))
     got = detect_kind(text, want=want)
     if got == want:
         return True, ""
@@ -5290,28 +5414,6 @@ PRO_TEMPLATES_DEFAULT = [
     "inurl:(KW)/(PF)",
     "intitle:(KW) inurl:(PT)=",
     "(KW).(PF) (FT) site:(DE)",
-]
-
-# Universal (normal gen) templates — har niche pe kaam karti hain
-UNIVERSAL_TEMPLATES = [
-    'intitle:"{kw}"',
-    'allintitle:"{kw}"',
-    'intext:"{kw}"',
-    'inurl:"{kw}"',
-    '"{kw}" inurl:index',
-    '"{kw}" inurl:login',
-    'intitle:"{kw}" inurl:{p}=',
-    'intext:"{kw}" inurl:{p}=',
-    '"{kw}" ext:php',
-    '"{kw}" filetype:pdf',
-    '"{kw}" inurl:admin',
-    'intitle:"{kw}" site:{d}',
-    'inurl:{kw} site:{d}',
-    '"{kw}" (intitle:index.of | intitle:"index of")',
-    '"{kw}" inurl:upload',
-    'intitle:"{kw}" inurl:dashboard',
-    '"{kw}" inurl:{pf}',
-    '"{kw}" {p}=',
 ]
 
 _PRO_CACHE = None
@@ -5713,14 +5815,14 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 🔑 REDEEM pehle — access gate se PEHLE, warna key type hi nahi ho sakti
-    wait = context.user_data.get("await")
+    wait = await_get(context)
     if wait == "key_redeem":
-        context.user_data.pop("await", None)
+        await_clear(context)
         context.user_data.pop("await_admin", None)
         return await input_redeem(update, context, text)
     up = text.upper()
     if not access_ok(uid) and (KEY_RE.match(up) or up in KEYS):
-        context.user_data.pop("await", None)
+        await_clear(context)
         return await input_redeem(update, context, up)
 
     if not access_ok(uid):
@@ -5728,13 +5830,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         reply_markup=kb_needkey())
         return
     if context.user_data.get("await_admin") and not is_admin(uid):
-        context.user_data.pop("await", None)
-        context.user_data.pop("await_admin", None)
+        await_clear(context)
         return
     fn = AWAIT_HANDLERS.get(wait)
     if fn:
-        context.user_data.pop("await", None)
-        context.user_data.pop("await_admin", None)
+        await_clear(context)
         return await fn(update, context, text)
     await update.message.reply_text("🤔 Samajh nahi aaya. Menu se tool chuno:",
                                     reply_markup=kb_main())
@@ -5799,7 +5899,7 @@ async def tool_redeem(update, context):
                                   parse_mode=ParseMode.HTML)
     except Exception:
         pass
-    context.user_data["await"] = "key_redeem"
+    await_set(context, "key_redeem")
 
 
 AWAIT_HANDLERS["key_redeem"] = lambda *a, **k: input_redeem(*a, **k)
@@ -5834,7 +5934,7 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     arg = (" ".join(getattr(context, "args", []) or [])).strip()
     if arg:
         return await input_redeem(update, context, arg)
-    context.user_data["await"] = "key_redeem"
+    await_set(context, "key_redeem")
     await update.effective_message.reply_text(tool_redeem_text(),
                                               reply_markup=kb_back("m:home"),
                                               parse_mode=ParseMode.HTML)
@@ -6107,7 +6207,7 @@ async def admin_callback(update, context, action: str):
         return await ed("🧹 %d files delete." % n, RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:home")]]))
 
     if action == "bc":
-        context.user_data["await"] = "bc_text"
+        await_set(context, "bc_text")
         context.user_data["await_admin"] = True
         return await ed(H("ADMIN — BROADCAST") + "\n\nAb message bhejo — sab users ko jayega.\n"
                         "<i>Cancel: /admin</i>",
@@ -6128,12 +6228,33 @@ async def admin_callback(update, context, action: str):
         return
     if action == "keys_api":
         k = api_keys()
-        await ed(H("API KEYS", "optional free tiers") + "\n\n"
-                 "SerpAPI : %s   <code>/setkey serpapi KEY</code>\n"
-                 "CSE     : %s   <code>/setkey cse KEY CX</code>\n"
-                 "CC      : ✅ always on (free)\n\n"
-                 "<i>Bina keys ke bhi 13 engines + Common Crawl chalte hain.</i>"
-                 % ("✅" if k["serpapi"] else "⚪", "✅" if (k["cse_key"] and k["cse_cx"]) else "⚪"))
+        await ed(H("API KEYS", "sab optional") + "\n\n"
+                 + "\n".join([
+                     KV("Serper", ("✅ set" if k["serper"] else
+                                   "⚪ not set — <code>/setkey serper KEY</code>"), "🔵"),
+                     KV("SerpApi", ("✅ set" if k["serpapi"] else
+                                    "⚪ not set — <code>/setkey serpapi KEY</code>"), "🟢"),
+                     KV("Brave", ("✅ set" if k["brave"] else
+                                  "⚪ not set — <code>/setkey brave KEY</code>"), "🦁"),
+                     KV("CSE", ("✅ set" if (k["cse_key"] and k["cse_cx"]) else
+                                "⚪ not set — <code>/setkey cse KEY CX</code>"), "🔴"),
+                     KV("Free Google", ("⚪ OFF" if not gj_enabled() else
+                                        "✅ ON • %d endpoints" % len(gj_pool())), "🐦"),
+                     KV("Common Crawl", "✅ always on (free)", "🌐"),
+                 ])
+                 + "\n\n<i>Bina keys ke bhi 13 engines + Common Crawl chalte hain.</i>\n\n"
+                 "📋 Free + paid list: <code>/apis</code>",
+                 RK([
+                     [InlineKeyboardButton("📋 API LIST (/apis)", callback_data="a:apis")],
+                     [InlineKeyboardButton("⬅️ BACK", callback_data="a:keys_api")],
+                 ]))
+        return
+
+    if action == "apis":
+        await ed(APIS_TEXT, RK([
+            [InlineKeyboardButton("⬅️ API KEYS", callback_data="a:keys_api")],
+            [InlineKeyboardButton("🏠 MAIN MENU", callback_data="m:home")],
+        ]))
         return
 
     if action == "theme":
@@ -6180,7 +6301,7 @@ async def admin_callback(update, context, action: str):
                     KV("Abhi band", "<code>%s</code>" % off_now, "📌"))),
                 feat_kb())
         elif action.startswith("featmsg:") and arg:
-            context.user_data["await"] = "feat_msg"
+            await_set(context, "feat_msg")
             context.user_data["await_admin"] = True
             context.user_data["feat_key"] = arg
             return await ed(
@@ -6201,7 +6322,7 @@ async def admin_callback(update, context, action: str):
 
     if action == "tutorial":
         cur = str(SETTINGS.get("tutorial") or "").strip() or "—"
-        context.user_data["await"] = "a_tut"
+        await_set(context, "a_tut")
         context.user_data["await_admin"] = True
         return await ed(
             (H("TUTORIAL VIDEO", "how to use") + "\n\n"
@@ -6341,7 +6462,7 @@ async def input_tutorial(upd, ctx, txt):
         await upd.effective_message.reply_text(
             "❌ Link <code>https://</code> se shuru hona chahiye.\n"
             "YouTube: <code>https://youtu.be/XXXX</code>", parse_mode=ParseMode.HTML)
-        ctx.user_data["await"] = "a_tut"
+        await_set(ctx, "a_tut")
         ctx.user_data["await_admin"] = True
         return
     SETTINGS["tutorial"] = val
@@ -6412,6 +6533,7 @@ async def _post_init(app) -> None:
             BotCommand("myid", "🪪 Apni ID"),
             BotCommand("ping", "🏓 Bot zinda?"),
             BotCommand("gtest", "🐦 Free Google test"),
+            BotCommand("apis", "🔑 SERP API list"),
             BotCommand("fresh", "🆕 Fresh dork history"),
             BotCommand("admin", "👑 Admin panel"),
         ])
@@ -6423,12 +6545,15 @@ async def _post_init(app) -> None:
 def build_app() -> Application:
     app = (ApplicationBuilder().token(TOKEN).concurrent_updates(True)
            .post_init(_post_init).build())
+    # group -1: har /command = naya intent → purana adhoora input prompt band
+    app.add_handler(MessageHandler(filters.COMMAND, _cmd_intent_clear), group=-1)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("myid", cmd_myid))
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("setkey", cmd_setkey))
+    app.add_handler(CommandHandler("apis", cmd_apis))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CommandHandler("theme", cmd_theme))
     app.add_handler(CommandHandler("ban", cmd_ban))
@@ -6511,6 +6636,77 @@ async def _self_check(app) -> None:
         logger.warning("admin online msg fail: %s", exc)
 
 
+
+async def _cmd_intent_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Koi bhi /command aaya = naya intent, purana await cancel."""
+    try:
+        await_clear(context)
+    except Exception:
+        pass
+
+
+async def cmd_apis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """SERP API list — free + paid, sach ke saath (koi 'unlimited' jhooth nahi)."""
+    await update.effective_message.reply_text(
+        APIS_TEXT, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+
+APIS_TEXT = (
+    H("SERP APIs", "free + paid • asli numbers") + "\n\n"
+    "<i>Sab rate 2026 ke hisaab se. Koi API truly unlimited nahi hoti — "
+    "jo 'unlimited' bolti hai wo apna limit chhupati hai.</i>\n\n"
+    "━━ 🆓 <b>FREE</b> ━━\n\n"
+    "🔵 <b>Serper.dev</b> — <b>2,500 queries one-time</b>\n"
+    "   Card nahi chahiye. Google results, dork (inurl:/site:) full support.\n"
+    "   Khatam hone par: $1/1k → bulk me $0.30/1k\n"
+    "   <code>/setkey serper KEY</code>\n\n"
+    "🟢 <b>SerpApi</b> — <b>250/mahina</b> (renew hota hai)\n"
+    "   50/hour burst. Card nahi. Google/Bing/Yandex etc.\n"
+    "   Paid: $25/1k (mehnga)\n"
+    "   <code>/setkey serpapi KEY</code>\n\n"
+    "🦁 <b>Brave Search API</b> — <b>$5 credit/mahina</b> (~1,000 queries)\n"
+    "   Card dena padta hai (sirf abuse check, charge nahi).\n"
+    "   Apna independent index — Google se alag results (naye targets milte hain).\n"
+    "   <code>/setkey brave KEY</code>\n\n"
+    "🐦 <b>Free Google (bina key)</b> — bot me default ON\n"
+    "   Public endpoint pool, koi signup nahi. Rate-limited, kabhi mar jata hai.\n"
+    "   Aapne diya hua endpoint isi tarah ka hai — <b>iski koi published limit "
+    "nahi hai, par ye bhi kabhi bhi band ho sakta hai</b> (owner pe depend).\n"
+    "   Isliye maine pool bana diya: ek mara to agla chalta hai.\n"
+    "   Add: <code>/setkey gapi https://...</code>\n\n"
+    "🌐 <b>Common Crawl</b> — fully free, unlimited, no key\n"
+    "   Index API se URLs. Dork nahi, sirf domain/path search.\n"
+    "   Bot me always on.\n\n"
+    "🕰 <b>Wayback CDX</b> — fully free, unlimited, no key\n"
+    "   Purane URLs/params. Bot me always on.\n\n"
+    "⚙️ <b>SearXNG</b> — self-host = <b>unlimited</b>, $0\n"
+    "   Apna VPS/PC pe chalao, public instances bhi free par rate-limited.\n"
+    "   Real unlimited chahiye to yahi ek raasta hai.\n\n"
+    "🔶 <b>Bright Data SERP</b> — 5,000/mahina free (KYC chahiye)\n"
+    "   Verify ke baad $1.50/1k. Enterprise-grade, kabhi fail nahi.\n\n"
+    "🔷 <b>Tavily</b> — ~1,000 credits/mahina free — AI-search, dork kam support\n"
+    "🔹 <b>Exa</b> — $10 credit/mahina — semantic search, dork nahi\n"
+    "🔸 <b>SearchApi.io</b> — 100 free one-time, phir $4/1k\n"
+    "🔺 <b>Searlo</b> — 3,000 one-time free, phir ~$3/1k\n\n"
+    "━━ 💰 <b>PAID (sasta → mehnga)</b> ━━\n\n"
+    "1️⃣ <b>Serper</b> — $0.30–1.00 / 1k  ← sabse sasta, best value\n"
+    "2️⃣ <b>DataForSEO / Serpent</b> — ~$0.60 / 1k\n"
+    "3️⃣ <b>Bright Data</b> — $1.50 / 1k (sabse reliable)\n"
+    "4️⃣ <b>Oxylabs SERP</b> — ~$2 / 1k\n"
+    "5️⃣ <b>SerpApi</b> — $25 / 1k (premium features, mehnga)\n\n"
+    "━━ ⚠️ <b>SACH</b> ━━\n\n"
+    "• <b>Google CSE</b> — naye customers ke liye <b>band</b> (Jan 2027 me poora band)\n"
+    "• <b>Koi bhi API 'unlimited' nahi</b> — jisne bola, wo limit chhupa raha hai\n"
+    "• Aapki di hui API (ijerm) abhi chal rahi hai — <b>par ye kisi ki personal "
+    "service hai, kal band ho sakti hai</b>. Backup ke liye ek free key "
+    "(Serper 2,500) laga lo, dono saath chalenge.\n\n"
+    "━━ ✅ <b>MERI SALAAH</b> ━━\n\n"
+    "Abhi: Free Google pool + Common Crawl + Wayback (0 rupya)\n"
+    "Backup: Serper 2,500 free (no card) — 5 min ka signup\n"
+    "Zaroorat pade to: Serper paid $0.30/1k — 10k dorks ke ₹250 ke aas paas\n\n"
+    "Status dekho: <code>/setkey</code>"
+)
+
 async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: optional API keys (Google CSE / SerpAPI). Free tiers."""
     uid = update.effective_user.id
@@ -6520,30 +6716,33 @@ async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     k = api_keys()
     args = list(context.args or [])
     if not args:
-        txt = (H("API KEYS", "optional — free tiers") + "\n\n"
-               "Ye dono <b>optional</b> hain. Bina inke bot chalta hai "
-               "(13 engines + Common Crawl + Wayback free).\n\n"
-               "🔑 <b>SerpAPI</b> — 100 searches/mahina FREE\n"
-               "   <i>asli Google results + poore dorks (inurl:/filetype:)</i>\n"
-               "   serpapi.com → signup → API key\n"
-               "   <code>/setkey serpapi YOUR_KEY</code>\n\n"
-               "🔑 <b>Google CSE</b> — 100 queries/din FREE\n"
-               "   <i>par inurl: support nahi karta (kam useful)</i>\n"
+        txt = (H("API KEYS", "sab optional") + "\n\n"
+               "Bina kisi key ke bot chalta hai "
+               "(13 engines + Common Crawl + Wayback + free Google).\n\n"
+               "🔑 <b>Serper</b> — <b>2,500 FREE</b> queries (no card)\n"
+               "   google.serper.dev → signup → key\n"
+               "   <code>/setkey serper KEY</code>\n\n"
+               "🔑 <b>SerpApi</b> — 250 searches/mahina free\n"
+               "   <code>/setkey serpapi KEY</code>\n\n"
+               "🔑 <b>Brave Search</b> — $5 credit/mahina (~1,000)\n"
+               "   <code>/setkey brave KEY</code>\n\n"
+               "🔑 <b>Google CSE</b> — 100/din (naye users band ho gaye)\n"
                "   <code>/setkey cse API_KEY CX_ID</code>\n\n"
-               "🐦 <b>Google Free (ijerm)</b> — koi key nahi, FREE\n"
-               "   <i>asli Google results, dork support (site:/inurl:)</i>\n"
-               "   default ON hai. Band: <code>/setkey gjerm -</code>\n"
-               "   URL badalna: <code>/setkey gjerm https://...</code>\n\n"
-               "🗑 Hatane ke liye: <code>/setkey serpapi -</code>\n\n"
-               "━━ Status ━━\n"
-               "SerpAPI : %s\n"
-               "CSE     : %s\n"
-               "CC      : ✅ always on (free, no key)\n"
-               "Google  : %s"
-               % ("✅ set" if k["serpapi"] else "⚪ not set",
-                  "✅ set" if (k["cse_key"] and k["cse_cx"]) else "⚪ not set",
-                  ("⚪ OFF" if not gj_enabled() else
-                   ("✅ ON • %d ok / %d fail" % (GJ_STATE["ok"], GJ_STATE["fail"])))))
+               "🐦 <b>Free Google (bina key)</b> — pool of endpoints\n"
+               "   add: <code>/setkey gapi https://...</code>\n"
+               "   band: <code>/setkey gjerm -</code>\n\n"
+               "📋 Poori list: <code>/apis</code>\n\n"
+               "%s"
+               % ("\n".join([
+                   KV("Serper", "✅ set" if k["serper"] else "⚪ not set", "🔵"),
+                   KV("SerpApi", "✅ set" if k["serpapi"] else "⚪ not set", "🟢"),
+                   KV("Brave", "✅ set" if k["brave"] else "⚪ not set", "🦁"),
+                   KV("CSE", "✅ set" if (k["cse_key"] and k["cse_cx"]) else "⚪ not set", "🔴"),
+                   KV("Free Google", ("⚪ OFF" if not gj_enabled() else
+                                      "✅ ON • %d ok / %d fail • %d endpoints"
+                                      % (GJ_STATE["ok"], GJ_STATE["fail"], len(gj_pool()))), "🐦"),
+                   KV("Common Crawl", "✅ always on", "🌐"),
+               ])))
         await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML)
         return
     what = args[0].lower()
@@ -6567,14 +6766,45 @@ async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(
             "✅ Free Google URL set:\n<code>%s</code>" % esc(val[:120]), parse_mode=ParseMode.HTML)
         return
-    if what == "serpapi":
+    if what in ("serper", "brave", "serpapi"):
         if len(args) < 2:
-            await update.effective_message.reply_text("Usage: /setkey serpapi YOUR_KEY")
+            await update.effective_message.reply_text("Usage: /setkey %s YOUR_KEY" % what)
             return
         val = args[1].strip()
-        sset("serpapi", "" if val == "-" else val)
+        sset(what, "" if val == "-" else val)
+        note = {"serper": "2,500 free queries", "brave": "$5 credit/month",
+                "serpapi": "250/month free"}[what]
         await update.effective_message.reply_text(
-            "✅ SerpAPI %s" % ("hata diya" if val == "-" else "set ho gaya (100/month free)"))
+            "✅ %s %s" % (what.title(),
+                          "hata diya" if val == "-" else "set ho gaya (%s)" % note))
+        return
+    if what in ("gapi", "gpool"):
+        val = (args[1].strip() if len(args) > 1 else "")
+        if not val:
+            await update.effective_message.reply_text(
+                "Usage:\n<code>/setkey gapi https://...</code> — endpoint add\n"
+                "<code>/setkey gapi -</code> — pool clear", parse_mode=ParseMode.HTML)
+            return
+        if val == "-":
+            sset("gj_pool", [])
+            sset("gj_url", "")
+            GJ_STATE.update({"fail": 0, "dead_until": 0.0, "idx": 0})
+            await update.effective_message.reply_text("🗑 Google pool clear (default wapas).")
+            return
+        if not val.startswith("http"):
+            await update.effective_message.reply_text("❌ URL <code>http...</code> se shuru hona chahiye.",
+                                                      parse_mode=ParseMode.HTML)
+            return
+        pool = list(sget("gj_pool") or [])
+        if val not in pool:
+            pool.append(val)
+        sset("gj_pool", pool[:12])
+        if not gj_enabled():               # band tha to chalu kar do
+            sset("gj_url", "")
+        GJ_STATE.update({"fail": 0, "dead_until": 0.0})
+        await update.effective_message.reply_text(
+            "✅ Endpoint add (%d total):\n<code>%s</code>"
+            % (len(gj_pool()), esc(val[:120])), parse_mode=ParseMode.HTML)
         return
     if what == "cse":
         if len(args) < 3:
@@ -6585,7 +6815,9 @@ async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("✅ Google CSE set ho gaya (100/day free)")
         return
     await update.effective_message.reply_text(
-        "❓ Options: <code>serpapi</code> ya <code>cse</code>", parse_mode=ParseMode.HTML)
+        "❓ Options: <code>serper</code>, <code>serpapi</code>, <code>brave</code>, "
+        "<code>cse</code>, <code>gapi</code>, <code>gjerm</code>, <code>theme</code>",
+        parse_mode=ParseMode.HTML)
 
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v2.0
+# 🐍 PYTHON SNAKE CORE — v2.1
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -108,6 +108,62 @@ Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
 
 ---
+
+## ✨ v2.1 — FLOW FIX + SERP API HUB
+
+### 🩹 Stale-flow bug (screenshots wala)
+Pehle: keywords file upload → **EXPAND** dabao → bot purana adhoora GEN PRO flow
+yaad rakh ke **"GEN DORKS (PRO) step 2/2 — ab keywords bhejo"** dikha deta tha.
+
+Ab kaise theek hai:
+- har pending input ke saath **timestamp** (`await_set` / `await_get` / `await_clear`)
+- **15 min** baad prompt khud expire
+- **koi bhi naya button** ya **file upload** = naya intent → purana prompt cancel
+- **koi bhi `/command`** = naya intent → purana prompt cancel (group `-1` handler)
+- sirf-number input keywords ki jagah reject ("Sirf number keyword nahi hota")
+- 14 jagah purana `pop("await")` → `await_clear()` (timestamp bhi saaf)
+
+### 🔑 SERP API hub — `/apis`
+Poori list, **asli numbers ke saath** (koi "unlimited" jhooth nahi):
+
+| Provider | Free | Card | Paid |
+|---|---|---|---|
+| 🔵 Serper | 2,500 one-time | nahi | $0.30–1.00 / 1k |
+| 🟢 SerpApi | 250/mahina | nahi | $25 / 1k |
+| 🦁 Brave | $5 credit/mahina (~1,000) | haan (abuse check) | metered |
+| 🔶 Bright Data | 5,000/mahina | KYC | $1.50 / 1k |
+| 🐦 Free Google (bina key) | rate-limited | nahi | — |
+| 🌐 Common Crawl | unlimited | nahi | — |
+| 🕰 Wayback CDX | unlimited | nahi | — |
+| ⚙️ SearXNG (self-host) | **unlimited** | nahi | $0 |
+
+⚠️ **Sach:** koi bhi API truly unlimited nahi hoti. Jo "unlimited" bolti hai wo
+limit chhupa rahi hai. Aapki di hui free endpoint bhi kisi ki personal service hai —
+kal band ho sakti hai, isliye bot me **endpoint pool + auto rotate** hai.
+
+### 🧩 Naye commands
+```
+/apis                                   — free + paid API list (rate ke saath)
+/setkey serper KEY                      — Serper (2,500 free)
+/setkey serpapi KEY                     — SerpApi (250/mo)
+/setkey brave KEY                       — Brave ($5 credit/mo)
+/setkey gapi https://...                — free Google endpoint pool me add
+/setkey gapi -                          — pool clear
+```
+Admin panel → 🔑 **API KEYS** → 📋 **API LIST** button bhi hai.
+
+### 🐞 Aur jo bugs mile (hunt ke baad)
+- FILE ANALYZE me `%.0f/100` literal print ho raha tha (avg format nahi ho raha) — fix
+- duplicate dead `UNIVERSAL_TEMPLATES` block (18 purani `{kw}` templates) — hata diya
+- tutorial-video prompt bina timestamp ke set ho raha tha — `await_set` me aaya
+- proxy screen ka unused `src_ok` — hata diya
+
+### 🧪 Tests (workspace me, permanent)
+```bash
+cd ~/snake && python3 tests/test_core.py      # 154 assertions
+python3 tests/test_screens.py                 # 19 screens: font/tag/4096 audit
+python3 tests/repro_flows.py                  # scenario A/B/C repro
+```
 
 ## ✨ v2.0 — STYLISH FONTS + FLOW LOCK
 

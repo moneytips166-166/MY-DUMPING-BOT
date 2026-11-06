@@ -118,11 +118,17 @@ VER="$(grep -m1 '^VERSION = ' "$BOT" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/')"
 LINES="$(wc -l < "$BOT" 2>/dev/null | tr -d ' ')"
 echo ""
 echo "  📦 Version : ${VER:-?}  (${LINES:-?} lines)"
-if [ "${VER:-}" = "v2.0" ]; then
-  echo "  ✅ Naya dorker (DORKS GEN + PRO) aa gaya"
-else
-  echo "  ⚠️  Purana version lag raha hai — dobara ./update.sh chalao"
-fi
+case "${VER:-}" in
+  v2.1)
+    echo "  ✅ v2.1 — flow fix + SERP API list (/apis) aa gaya"
+    ;;
+  v2.0)
+    echo "  ⚠️  v2.0 lag raha hai — v2.1 chahiye (dobara ./update.sh chalao)"
+    ;;
+  *)
+    echo "  ⚠️  Purana version lag raha hai — dobara ./update.sh chalao"
+    ;;
+esac
 
 echo ""
 echo "=============================================================="

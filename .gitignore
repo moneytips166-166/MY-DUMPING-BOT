@@ -18,3 +18,7 @@ config.py
 .bot_new.py
 bot_fixed.local.py
 dumps/
+
+# 🧪 tests ka venv (commit na karo)
+.venv/
+.pytest_cache/
