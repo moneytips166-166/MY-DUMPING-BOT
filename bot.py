@@ -1887,7 +1887,7 @@ ENGINE_SETS = {
 }
 ENGINE_LABEL = {"fast": "⚡ FAST — 3 engines (bina proxy)",
                 "normal": "⚖️ NORMAL — 5 engines",
-                "max": "🐢 MAX — 13 engines (proxy chahiye)"}
+                "max": "🐢 MAX — 15 engines (proxy chahiye)"}
 ENGINE_TIMEOUT = {"fast": 8.0, "normal": 10.0, "max": 15.0}
 ENGINE_MISS = {}      # engine -> consecutive empty/blocked count
 ENGINE_LAST = {}      # engine -> (reason, time) — /enginetest + 0-URL card me dikhta hai
@@ -7022,7 +7022,7 @@ async def admin_callback(update, context, action: str):
                                         "✅ ON • %d endpoints" % len(gj_pool())), "🐦"),
                      KV("Common Crawl", "✅ always on (free)", "🌐"),
                  ])
-                 + "\n\n<i>Bina keys ke bhi 13 engines + Common Crawl chalte hain.</i>\n\n"
+                 + "\n\n<i>Bina keys ke bhi 15 engines + Common Crawl chalte hain.</i>\n\n"
                  "📋 Free + paid list: <code>/apis</code>",
                  RK([
                      [InlineKeyboardButton("📋 API LIST (/apis)", callback_data="a:apis")],
@@ -7433,7 +7433,7 @@ def engines_text(context=None) -> str:
             + B("Kaise badlein") + "\n"
             + "<code>/engines fast</code> — 3 engines (phone pe sabse fast)\n"
             + "<code>/engines normal</code> — 5 engines\n"
-            + "<code>/engines max</code> — 13 engines (proxy chahiye)\n\n"
+            + "<code>/engines max</code> — 15 engines (proxy chahiye)\n\n"
             + "<i>DDG • Mojeek • Marginalia bina proxy chalte hain. "
               "Google/Yandex/Startpage bina proxy block karte hain — isliye slow + errors.</i>")
 
@@ -7596,7 +7596,7 @@ async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args:
         txt = (H("API KEYS", "sab optional") + "\n\n"
                "Bina kisi key ke bot chalta hai "
-               "(13 engines + Common Crawl + Wayback + free Google).\n\n"
+               "(15 engines + Common Crawl + Wayback + free Google).\n\n"
                "🔑 <b>Serper</b> — <b>2,500 FREE</b> queries (no card)\n"
                "   google.serper.dev → signup → key\n"
                "   <code>/setkey serper KEY</code>\n\n"

@@ -52,7 +52,7 @@ cd ~/snake && ./start.sh && ./logs.sh
 
 | # | Tool | Kya karta hai |
 |---|---|---|
-| 1 | 🔍 **PARSER** | **13 engines** (SearXNG auto • DDG • Bing • Mojeek • Yahoo • Brave • Startpage • Yandex • Qwant • Ecosia • Google • Marginalia • SearX) + pagination + strict dork matching |
+| 1 | 🔍 **PARSER** | **15 engines** (SearXNG auto • **DDG Lite** • DDG • Bing • **Bing RSS** • Mojeek • Yahoo • Brave • Startpage • Yandex • Qwant • Ecosia • Google • Marginalia • SearX) + pagination + strict dork matching |
 | 2 | 🎯 **DORKER** | page-type / extension / parameter / mixed / niche — real generator, quality se sorted |
 | 3 | 🔑 **HQ KEYWORDS** | seed topic → scored, filtered keyword list |
 | 4 | 🔗 **URL REVERSE** | URL toda → domain / path / ext / params + dorks (DORKPRO jaisa) |
@@ -206,7 +206,7 @@ Ab bot khud decide karta hai:
 | pehle (galat) | `inurl:"shopify store"` → 0 results ❌ |
 
 ### ⚡ Engines — phone pe fast
-Termux/phone pe 13 engines = slow + block. Ab 3 modes:
+Termux/phone pe 15 engines = slow + block. Ab 3 modes:
 ```
 /engines fast     → ddg, mojeek, marginalia   (bina proxy chalte hain)
 /engines normal   → + bing, searxng           (default)
@@ -515,7 +515,7 @@ Live test kiya gaya (aapke diye endpoint par):
 
 ### Bot me kahan laga
 - **PARSER → DEEP SCAN** — har dork pe free Google try hota hai (budget: 40 dorks / 2 min)
-- **PARSER → normal parse** — page 0 pe pehle free Google, phir 13 engines
+- **PARSER → normal parse** — page 0 pe pehle free Google, phir 15 engines
 - Deep card me naya row: **`🐦 Google (free): N`**
 - Junk hosts (exploit-db, scribd, github, reddit, youtube…) auto-remove
 
