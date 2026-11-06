@@ -119,11 +119,14 @@ LINES="$(wc -l < "$BOT" 2>/dev/null | tr -d ' ')"
 echo ""
 echo "  📦 Version : ${VER:-?}  (${LINES:-?} lines)"
 case "${VER:-}" in
+  v2.3)
+    echo "  ✅ v2.3 — file pehle/count baad me + /enginetest + gap-fix report"
+    ;;
   v2.2)
-    echo "  ✅ v2.2 — har file format + keyword slug fix + fast engines + deep crawler"
+    echo "  ⚠️  v2.2 lag raha hai — v2.3 chahiye (dobara ./update.sh chalao)"
     ;;
   v2.1|v2.0)
-    echo "  ⚠️  ${VER} lag raha hai — v2.2 chahiye (dobara ./update.sh chalao)"
+    echo "  ⚠️  ${VER} lag raha hai — v2.3 chahiye (dobara ./update.sh chalao)"
     ;;
   *)
     echo "  ⚠️  Purana version lag raha hai — dobara ./update.sh chalao"

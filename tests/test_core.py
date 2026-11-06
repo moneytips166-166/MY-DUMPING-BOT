@@ -48,7 +48,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.2", "VERSION")
+    eq(core.VERSION, "v2.3", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -404,8 +404,48 @@ def test_file_in_flow():
     up = FakeUpdate(doc=FakeDocument("kw.txt", raw))
     asyncio.run(core.on_document(up, ctx))
     ok(not up.docs(), "count step pe file se dork nahi")
-    contains(up.last_text().lower(), "count")
+    ok(ctx.user_data.get("pending_file"), "file pending me save")
     eq(core.await_get(ctx), "gen_count", "count prompt wapas set")
+
+
+def test_pending_file():
+    group("file pehle, count baad me")
+    raw = b"shopify store\ncrypto wallet\nadmin panel\nmagento login\n"
+    # count step pe file → save → number → gen
+    ctx = FakeContext({})
+    core.await_set(ctx, "gen_count")
+    up = FakeUpdate(doc=FakeDocument("kw.txt", raw))
+    asyncio.run(core.on_document(up, ctx))
+    ok(ctx.user_data.get("pending_file"), "pending saved")
+    ok(not up.docs(), "file alone se dork nahi")
+    up2 = FakeUpdate(text="300")
+    asyncio.run(core.on_text(up2, ctx))
+    ok(up2.docs(), "number ke baad file se dorks bane")
+    eq(ctx.user_data.get("pending_file"), None, "pending consumed")
+    # 15 min baad expire
+    ctx = FakeContext({})
+    core._put_pending(ctx, "gen_count", ["a"])
+    ctx.user_data["pending_file"]["ts"] = time.time() - 1000
+    eq(core._take_pending(ctx, "gen_count"), [], "pending TTL")
+    # dusre flow ki file use na ho
+    ctx = FakeContext({})
+    core._put_pending(ctx, "gen_count", ["a"])
+    eq(core._take_pending(ctx, "dpgen_count"), [], "wrong flow")
+    # kw_count pending → items ban jate hain
+    ctx = FakeContext({})
+    core._put_pending(ctx, "kw_count", ["shopify store", "crypto wallet"])
+    core.await_set(ctx, "kw_count")
+    up = FakeUpdate(text="2000")
+    asyncio.run(core.on_text(up, ctx))
+    ok(up.docs(), "kw expand pending file se")
+
+
+def test_enginetest():
+    group("enginetest")
+    ok(callable(core.cmd_enginetest), "cmd exists")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "snake_core.py"), encoding="utf-8").read()
+    contains(src, 'CommandHandler("enginetest", cmd_enginetest)')
 
 
 def test_help_uses_fonts():
@@ -423,7 +463,7 @@ def main():
                test_setkey_variants, test_flows, test_feature_gate,
                test_niche_country, test_qa, test_help_uses_fonts,
                test_reader_formats, test_kw_slug, test_engines, test_crawler,
-               test_file_in_flow):
+               test_file_in_flow, test_pending_file, test_enginetest):
         try:
             fn()
         except Exception as exc:

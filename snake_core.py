@@ -62,7 +62,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.2"
+VERSION = "v2.3"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -260,6 +260,30 @@ def await_clear(ctx):
         ctx.user_data.pop("await_admin", None)
     except Exception:
         pass
+
+
+def _put_pending(context, wait: str, items: list) -> None:
+    """Count wale step pe file aayi → yaad rakho, count ke baad use karenge."""
+    try:
+        context.user_data["pending_file"] = {"wait": wait, "items": list(items or [])[:FILE_MAX_LINES],
+                                             "ts": time.time()}
+    except Exception:
+        pass
+
+
+def _take_pending(context, *waits) -> list:
+    """Pending file (agar isi flow ki hai aur 15 min ke andar) → items."""
+    try:
+        p = context.user_data.pop("pending_file", None)
+    except Exception:
+        return []
+    if not isinstance(p, dict):
+        return []
+    if waits and p.get("wait") not in waits:
+        return []
+    if time.time() - float(p.get("ts") or 0) > AWAIT_TTL:
+        return []
+    return list(p.get("items") or [])
 
 
 def is_admin(uid) -> bool:
@@ -3446,6 +3470,7 @@ async def cb_gen_start(update, context):
 
 
 async def input_gen_count(update, context, text: str):
+    pf = _take_pending(context, "gen_count", "dork_count")
     try:
         n = int(re.sub(r"[^0-9]", "", text or "") or "1000")
     except Exception:
@@ -3465,6 +3490,11 @@ async def input_gen_count(update, context, text: str):
             P("Har keyword pe universal HQ templates chalengi"))),
         parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
     await_set(context, "gen_kw")
+    if pf:                                  # file pehle bheji thi → seedha gen
+        await update.effective_message.reply_text(
+            "📂 Pehle bheji file se <b>%d keywords</b> liye — ab dorks bana rahe hain…"
+            % len(pf), parse_mode=ParseMode.HTML)
+        return await input_gen_kw(update, context, "\n".join(pf))
 
 
 async def input_gen_kw(update, context, text: str):
@@ -3494,9 +3524,11 @@ async def input_gen_kw(update, context, text: str):
         pass
     await update.effective_message.reply_text(
         (H("DORKS GEN — DONE", "%s dorks" % fmt(cnt)) + "\n\n"
-         "%s\n%s\n%s\n%s\n%s\n\n"
+         "%s\n%s\n%s\n%s\n%s\n%s\n\n"
          "<b>%s</b>\n%s"
          % (KV("Keywords", "<code>%d</code>" % len(kw_cores(text)), "🔑"),
+            KV("Gap fix", "<code>%d</code> multi-word → inurl me hyphen, intitle me quote"
+               % sum(1 for _k in kw_cores(text) if " " in _k), "🧹"),
             KV("Bane", "<code>%s</code>" % fmt(cnt), "✅"),
             KV("Naye", "<code>%s</code>" % fmt(added), "🆕"),
             KV("Avg score", "<code>%.0f/100</code>" % avg, "⭐"),
@@ -4020,6 +4052,7 @@ async def cb_pro_gen(update, context):
 
 
 async def input_dpgen_count(update, context, text: str):
+    pf = _take_pending(context, "dpgen_count")
     try:
         n = int(re.sub(r"[^0-9]", "", text or "") or "2000")
     except Exception:
@@ -4037,6 +4070,11 @@ async def input_dpgen_count(update, context, text: str):
             B("Ab keywords bhejo"))),
         parse_mode=ParseMode.HTML, reply_markup=kb_back("dd:pro"))
     await_set(context, "dpgen_kw")
+    if pf:
+        await update.effective_message.reply_text(
+            "📂 File se <b>%d keywords</b> liye — PRO dorks ban rahe hain…"
+            % len(pf), parse_mode=ParseMode.HTML)
+        return await input_dpgen_kw(update, context, "\n".join(pf))
 
 
 async def input_dpgen_kw(update, context, text: str):
@@ -4066,8 +4104,10 @@ async def input_dpgen_kw(update, context, text: str):
         pass
     await update.effective_message.reply_text(
         (H("PRO GEN — DONE", "%s dorks" % fmt(cnt)) + "\n\n"
-         "%s\n%s\n%s\n%s\n%s\n%s\n\n<b>%s</b>\n%s"
+         "%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n<b>%s</b>\n%s"
          % (KV("Keywords", "<code>%d</code>" % res["kw"], "🔑"),
+            KV("Gap fix", "<code>%d</code> multi-word → slug/quote"
+               % sum(1 for _k in kw_cores(text) if " " in _k), "🧹"),
             KV("Best templates", "<code>%d</code> use hui" % res["used"], "🧩"),
             KV("Bane", "<code>%s</code>" % fmt(cnt), "✅"),
             KV("Naye", "<code>%s</code>" % fmt(added), "🆕"),
@@ -4157,7 +4197,11 @@ async def input_kw_count(update, context, text: str):
     except Exception:
         n = 5000
     n = max(1, min(KW_MAX, n))
+    pf = _take_pending(context, "kw_count")
     items = context.user_data.get("kw_items") or []
+    if pf and not items:
+        items = pf
+        context.user_data["kw_items"] = pf
     if not items:
         await update.effective_message.reply_text(
             "❌ Pehle seeds/keywords bhejo — 🏠 menu → 🔑 HQ KEYWORDS",
@@ -4622,6 +4666,9 @@ async def input_deep_max(update, context, text: str):
     except Exception:
         mx = 5000
     mx = max(50, min(100000, mx))
+    pf = _take_pending(context, "deep_max", "parse_max")
+    if pf:
+        context.user_data["parse_dorks"] = pf
     dorks = context.user_data.get("parse_dorks") or context.user_data.get("last_dorks") or []
     if not dorks:
         await update.effective_message.reply_text("❌ Dork nahi mile. DORKER chalao.")
@@ -4733,6 +4780,9 @@ async def input_parse_max(update, context, text: str):
     except Exception:
         mx = 100
     mx = max(5, min(20000, mx))
+    pf = _take_pending(context, "parse_max", "deep_max")
+    if pf:
+        context.user_data["parse_dorks"] = pf
     dorks = context.user_data.get("parse_dorks") or context.user_data.get("last_dorks") or []
     if not dorks:
         await update.effective_message.reply_text("❌ Dork nahi mile. DORKER chalao.")
@@ -5545,12 +5595,15 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await_clear(context)
         return await AWAIT_HANDLERS[wait](update, context, "\n".join(lines))
     if wait in FILE_FLOW_COUNT:
+        _put_pending(context, wait, lines)          # file yaad rakhi
         try:
             await msg.edit_text(
-                (H("FILE MILI — PAR COUNT CHAHIYE", "%s lines" % fmt(len(lines))) + "\n\n"
-                 + P("Abhi number wala step khula hai.") + "\n\n"
-                 + B("Number bhejo") + "\n"
-                 + "<i>File baad me — pehle count, phir file/text.</i>"),
+                (H("FILE SAVE HO GAYI", "%s lines" % fmt(len(lines))) + "\n\n"
+                 + KV("File", "<code>%s</code>" % esc(name)[:40], "📄")
+                 + "\n" + KV("Format", "<b>%s</b>" % esc(fmeta.get("format", "text")), "🏷")
+                 + "\n\n" + B("Ab sirf count bhejo") + "\n"
+                 + P("Number bhejte hi isi file se kaam chalu ho jayega.") + "\n"
+                 + "<i>File 15 min tak yaad rahegi.</i>"),
                 parse_mode=ParseMode.HTML)
         except Exception:
             pass
@@ -7145,6 +7198,7 @@ async def _post_init(app) -> None:
             BotCommand("gtest", "🐦 Free Google test"),
             BotCommand("apis", "🔑 SERP API list"),
             BotCommand("engines", "⚡ Parser speed (kam engines)"),
+            BotCommand("enginetest", "🔬 Kaun sa engine chal raha hai"),
             BotCommand("fresh", "🆕 Fresh dork history"),
             BotCommand("admin", "👑 Admin panel"),
         ])
@@ -7166,6 +7220,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("setkey", cmd_setkey))
     app.add_handler(CommandHandler("apis", cmd_apis))
     app.add_handler(CommandHandler("engines", cmd_engines))
+    app.add_handler(CommandHandler("enginetest", cmd_enginetest))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CommandHandler("theme", cmd_theme))
     app.add_handler(CommandHandler("ban", cmd_ban))
@@ -7264,6 +7319,59 @@ def engines_text(context=None) -> str:
             + "<code>/engines max</code> — 13 engines (proxy chahiye)\n\n"
             + "<i>DDG • Mojeek • Marginalia bina proxy chalte hain. "
               "Google/Yandex/Startpage bina proxy block karte hain — isliye slow + errors.</i>")
+
+
+async def cmd_enginetest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ /enginetest [dork] — kaun sa engine aapke net pe BINA PROXY chalta hai."""
+    dork = " ".join(context.args or []).strip() or "site:gov.in inurl:login"
+    mode = user_mode(context)
+    engs = engine_list(mode)
+    msg = await update.effective_message.reply_text(
+        "🔬 <b>%d engines</b> test ho rahe hain (bina proxy)…\n<code>%s</code>"
+        % (len(engs), esc(dork[:80])), parse_mode=ParseMode.HTML)
+    conn = aiohttp.TCPConnector(limit=len(engs) + 2, ssl=False, force_close=True)
+    results = []
+
+    async def one(session, eng):
+        t0 = time.time()
+        try:
+            urls = await fetch_engine(session, eng, dork, None, timeout=8.0)
+        except Exception:
+            urls = []
+        return eng, len(urls or []), time.time() - t0
+
+    async with aiohttp.ClientSession(connector=conn) as session:
+        results = await asyncio.gather(*[one(session, e) for e in engs],
+                                       return_exceptions=True)
+    lines, alive, dead = [], 0, 0
+    for r in results:
+        if isinstance(r, Exception) or not r:
+            continue
+        eng, cnt, took = r
+        if cnt:
+            alive += 1
+            lines.append("✅ <b>%s</b> — <code>%d URLs • %.1fs</code>" % (esc(eng), cnt, took))
+        else:
+            dead += 1
+            lines.append("❌ <b>%s</b> — <code>blocked / 0</code>" % esc(eng))
+    card = (H("ENGINE TEST", "%d ✅ • %d ❌" % (alive, dead)) + "\n\n"
+            + "\n".join(lines) + "\n\n"
+            + KV("Mode", "<b>%s</b>" % ENGINE_LABEL[mode], "🎛") + "\n"
+            + KV("Proxy", "use nahi hua (seedha net)", "🧅") + "\n\n"
+            + ((B("Sab ✅") + "\n" + P("Aapke net pe sab chal rahe hain — parser theek chalega."))
+               if dead == 0 else
+               (B("Jo ❌ hai") + "\n"
+                + P("Wo engine aapke IP pe block hai — proxy ke bina nahi chalega.") + "\n"
+                + P("Sirf chalne wale engines pe chalao:") + "\n"
+                + "<code>/engines fast</code> (ddg • mojeek • marginalia)")))
+    try:
+        await msg.edit_text(card, parse_mode=ParseMode.HTML,
+                            reply_markup=RK([
+                                [InlineKeyboardButton("⚡ FAST MODE", callback_data="pr:eng")],
+                                [InlineKeyboardButton("⬅️ PARSER", callback_data="m:parse")],
+                            ]))
+    except Exception:
+        pass
 
 
 async def cmd_engines(update: Update, context: ContextTypes.DEFAULT_TYPE):

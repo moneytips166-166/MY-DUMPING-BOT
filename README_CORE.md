@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v2.2
+# 🐍 PYTHON SNAKE CORE — v2.3
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -108,6 +108,29 @@ Commands: `/admin` `/theme` `/ping` `/setkey` `/myid` `/ban <id>` `/unban <id>` 
 Purana bot safe hai — `~/spidey` me waise hi pada hai. Rollback chahiye to wahi chalao.
 
 ---
+
+## ✨ v2.3 — FILE PEHLE, COUNT BAAD ME
+
+### 📂 Ab dono order chalte hain
+```
+Order A:  GEN → number → FILE        ✅ (v2.2 se)
+Order B:  GEN → FILE → number        ✅ (v2.3 — naya)
+```
+Order B me bot file padh ke **15 min yaad** rakhta hai, aur number aate hi usi file se
+dorks bana deta hai. GEN • PRO GEN • HQ KEYWORDS (expand) • PARSER — sab me.
+
+### 🔬 `/enginetest` — asli sach
+`/enginetest site:gov.in inurl:login` → har engine ko **bina proxy** try karta hai aur batata hai:
+```
+✅ ddg        — 12 URLs • 1.3s
+❌ yandex     — blocked / 0
+```
+Ab guess nahi — aapke net pe kaun sa engine chal raha hai wo dikh jata hai.
+Jo ❌ hai wo proxy ke bina nahi chalega; `/engines fast` se sirf chalne wale chalao.
+
+### 🧹 Gap-fix report (dork card me)
+Har gen ke baad card me dikhta hai: `🧹 Gap fix : 2 multi-word → inurl me hyphen, intitle me quote`
+— matlab kitne keywords ka gap bot ne khud sahi shape me badla.
 
 ## ✨ v2.2 — HAR FORMAT + FAST PARSER + DEEP CRAWLER
 
