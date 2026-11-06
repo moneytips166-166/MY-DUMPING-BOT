@@ -2934,6 +2934,12 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                             break
                     if got_any >= 2:
                         break
+            # saare engines mar gaye + kuch nahi mila → 1000 dork zaya na karo
+            if not out and _dead_engines and len(_dead_engines) >= len(eng_list):
+                st["aborted"] = 1
+                logger.warning("parse_deep: saare engines fail (%s) — %d dorks pe ruka",
+                               ",".join(sorted(_dead_engines)), i)
+                break
             if progress and (i % 2 == 0 or i == len(dorks)):
                 try:
                     await progress(st)
