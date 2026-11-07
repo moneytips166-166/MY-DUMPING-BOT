@@ -50,7 +50,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.9.5", "VERSION")
+    eq(core.VERSION, "v2.9.6", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -465,10 +465,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.9.5"')
+    contains(btxt, 'VERSION = "v2.9.6"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.9.5", "shim se version")
+    eq(core.VERSION, "v2.9.6", "shim se version")
 
 
 def test_diagnostics():
@@ -1502,6 +1502,106 @@ def test_sqli_live_blind():
     ok("users" in res["tables"], "blind tables: %s" % list(res["tables"]))
     ok("email" in (res["tables"].get("users") or {}).get("cols", []), "blind columns")
 
+def test_large_data_guard():
+    """Bada data mile to rows skip + vulnerable URL handover (asli local app)."""
+    group("large-guard")
+    import sqlite3
+    from aiohttp import web
+
+    async def run():
+        db = sqlite3.connect(":memory:", check_same_thread=False)
+        db.executescript("CREATE TABLE logs(id INTEGER PRIMARY KEY, msg TEXT);")
+        db.executemany("INSERT INTO logs(id,msg) VALUES (?,?)",
+                       [(i, "line-%d" % i) for i in range(1, 41)])
+
+        async def v(req):
+            sql = "SELECT id,msg FROM logs WHERE id = %s" % req.query.get("id", "1")
+            try:
+                rows = db.execute(sql).fetchall()
+            except Exception as e:
+                return web.Response(status=500,
+                                    text="<html>sqlite3.OperationalError: %s</html>" % e,
+                                    content_type="text/html")
+            body = "<html><body>" + "".join(
+                "<div>%s|%s</div>" % (a, b) for a, b in rows)
+            return web.Response(text=body + "</body></html>", content_type="text/html")
+
+        app = web.Application()
+        app.add_routes([web.get("/v.php", v)])
+        runner = web.AppRunner(app, access_log=None)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        base = "http://127.0.0.1:%d" % port
+        try:
+            conn = core.mk_connector()
+            async with core.aiohttp.ClientSession(connector=conn) as sess:
+                return await core.sqli_dump_one(
+                    sess, base + "/v.php?id=1", "",
+                    {"tables": 5, "rows": 3, "blind": 1, "blind_len": 20,
+                     "requests": 400}, 5.0)
+        finally:
+            await runner.cleanup()
+
+    res = asyncio.run(run())
+    eq(res["status"], "injectable", "large status")
+    ok(res.get("large") is True, "large flag set")
+    ok(res.get("large_reason"), "large reason: %s" % res.get("large_reason"))
+    logs = res["tables"].get("logs") or {}
+    eq(logs.get("total_rows"), 40, "row count read")
+    ok(logs.get("skipped") is True, "rows skipped (not ground)")
+    eq(logs.get("rows"), [], "koi row dump nahi hui")
+    ok(res.get("poc") and res["poc"].endswith("/v.php?id=1"),
+       "poc = clean url: %s" % res.get("poc"))
+    ok(any("LARGE DATA" in n for n in res["notes"]), "note me LARGE DATA")
+
+    txt = "\n".join(core.sqli_report_text(res))
+    contains(txt, "LARGE DATA FOUND")
+    contains(txt, "sqlmap -u")
+    contains(txt, "skipped")
+
+
+def test_large_guard_card():
+    """Card me handover line + large targets file."""
+    group("large-card")
+    real_dump, real_save, real_send = core.sqli_dump, core.sqli_save, core.send_file
+    sent = []
+
+    async def fake_dump(urls, targets=None, caps=None, timeout=8.0, conc=3,
+                        progress=None, uid=None):
+        res = {"url": urls[0], "param": "id", "ok": True, "status": "injectable",
+               "dbms": "MySQL", "tech": "boolean + UNION", "db": "shop", "dbs": ["shop"],
+               "tables": {"users": {"cols": ["id"], "rows": [], "truncated": True,
+                                    "skipped": True, "total_rows": 9000}},
+               "notes": ["LARGE DATA: use a dedicated dumper"], "rows": 0, "requests": 30,
+               "took": 2.0, "why": "", "large": True,
+               "large_reason": "users has 9,000 rows (inline cap 8)",
+               "poc": "https://x.example/p.php?id=1",
+               "tables_total": 3}
+        return {"urls": len(urls), "done": len(urls), "results": [res], "rows": 0,
+                "tables": 1, "injectable": 1, "start": core.time.time() - 2,
+                "stage": "rows", "stage_info": "users", "stopped": 0, "took": 2.0}
+
+    def fake_save(st):
+        return {"files": ["/tmp/sql_x.txt"], "zip": "/tmp/sql_x.zip", "csv": "", "rows": 0}
+
+    async def fake_send(update, path, caption=""):
+        sent.append(path)
+        return True
+
+    core.sqli_dump, core.sqli_save, core.send_file = fake_dump, fake_save, fake_send
+    try:
+        ctx = FakeContext({"last_urls": ["https://x.example/p.php?id=1"]})
+        upd = FakeUpdate(data="df:last")
+        asyncio.run(core.cb_dump_use(upd, ctx, "last"))
+        body = "\n".join(upd.texts())
+        contains(body, "LARGE DATA FOUND")
+        contains(body, "sqlmap -u")
+        ok(any("large_targets_" in p for p in sent), "large targets file sent")
+    finally:
+        core.sqli_dump, core.sqli_save, core.send_file = real_dump, real_save, real_send
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -1518,7 +1618,8 @@ def main():
                test_dns_helpers, test_rot_test_card, test_injector_engine,
                test_dumper_engine, test_injector_live,
                test_injector_flow, test_dumper_flow, test_harvest_flow,
-               test_sqli_engine, test_sqli_live_union, test_sqli_live_blind):
+               test_sqli_engine, test_sqli_live_union, test_sqli_live_blind,
+               test_large_data_guard, test_large_guard_card):
         try:
             fn()
         except Exception as exc:

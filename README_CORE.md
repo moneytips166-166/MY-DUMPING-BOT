@@ -1,9 +1,23 @@
-# 🐍 PYTHON SNAKE CORE — v2.9.5
+# 🐍 PYTHON SNAKE CORE — v2.9.6
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
 ---
 
+## ⚠️ v2.9.6 — Large data guard (dump VPS pe, bot sirf batata hai)
+
+| Cheez | Detail |
+|---|---|
+| Detect | Table list cap se zyada ho, ya kisi table ki `COUNT(*)` inline cap se bada ho, ya request budget khatam ho → **LARGE DATA FOUND** |
+| Behaviour | Rows grind nahi karta — sirf columns + preview deta hai, phir **saaf vulnerable URL** deta hai |
+| Message | `⚠️ LARGE DATA FOUND — <reason>` + target URL + ready command: `sqlmap -u "<url>" -p <param> --batch --dump --threads 4` |
+| File | `large_targets_*.txt` — saari large URLs ek line me (sqlmap me seedha daal do) |
+| Report | `!! LARGE DATA FOUND` block report ke andar bhi (copy-paste URL + command) |
+| Kahan chalaye | Full dump VPS pe (`/opt/snake`) — phone pe sirf test/preview |
+| Termux update | `cd ~/snake && ./update.sh` → `~/snake/bot.py` + `/storage/emulated/0/DBF/bot.py` dono update + screen restart (`vps/termux_update.sh`) |
+| Tests | `test_core` **567/567** (asli 40-row table pe large guard test) · `test_screens` **37 clean** |
+
+---
 ## 🗄 v2.9.5 — Dumper = real SQL data dump (URL pe databases → tables → columns → rows)
 
 | Cheez | Detail |
