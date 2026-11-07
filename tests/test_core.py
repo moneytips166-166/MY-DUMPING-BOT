@@ -49,7 +49,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.9.3", "VERSION")
+    eq(core.VERSION, "v2.9.4", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -464,10 +464,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.9.3"')
+    contains(btxt, 'VERSION = "v2.9.4"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.9.3", "shim se version")
+    eq(core.VERSION, "v2.9.4", "shim se version")
 
 
 def test_diagnostics():
@@ -638,7 +638,7 @@ def test_parse_everything():
 
 
 def test_v28_tools():
-    group("v2.9.3")
+    group("v2.9.3+dns")
     # grade
     eq(core.dork_grade(97), "S+")
     eq(core.dork_grade(90), "S")
@@ -982,6 +982,296 @@ def test_help_uses_fonts():
     contains(txt.lower(), "theme")
 
 
+def test_injector_engine():
+    group("injector-v294")
+    # probe matrix
+    probes = core.inj_probes_for("all")
+    eq(len(probes), len(core.INJ_PROBES), "probe matrix")
+    fams = {f for f, _p in probes}
+    for need in ("sqli", "xss", "lfi", "ssti", "ssrf", "redirect", "nosql"):
+        ok(need in fams, "family %s" % need)
+    one = core.inj_probes_for("sqli")
+    ok(len(one) >= 5 and all(f == "sqli" for f, _p in one), "category probes")
+
+    # case builder — query intact, sirf target param badle
+    u = core.inj_build_case("https://a.com/x.php?id=5&name=bob", "id", "' OR 1=1")
+    ok(u.startswith("https://a.com/x.php?"), "case base")
+    ok("name=bob" in u, "case other param intact")
+    ok("%27" in u, "case payload encoded")
+    u2 = core.inj_build_case("https://a.com/x.php", "q", "1")
+    eq(u2, "https://a.com/x.php?q=1", "case no query")
+    ok(core.inj_build_case("https://a.com/x.php?a=1", "id", "1").endswith("a=1&id=1"),
+       "case append")
+
+    # verdicts — real response text
+    v = core.inj_verdict("sqli", "'", 200, {},
+                         "You have an error in your SQL syntax near ... MySQL")
+    eq(v.get("type"), "SQLi", "sqli verdict")
+    eq(v.get("dbms"), "MySQL", "sqli dbms")
+    ok("syntax" in (v.get("evidence") or "").lower(), "sqli evidence")
+    eq(core.inj_verdict("sqli", "'", 200, {}, "welcome home"), {}, "clean verdict")
+    eq(core.inj_verdict("xss", '"<svg/onload=alert(1)>', 200, {},
+                        '<body>"<svg/onload=alert(1)></body>').get("type"), "XSS", "xss verdict")
+    eq(core.inj_verdict("lfi", "../../etc/passwd", 200, {},
+                        "root:x:0:0:root:/root:/bin/bash").get("type"), "LFI", "lfi verdict")
+    eq(core.inj_verdict("ssti", "{{7*7}}", 200, {}, "result 49").get("type"), "SSTI",
+       "ssti verdict")
+    eq(core.inj_verdict("redirect", "//example.com/x", 302,
+                        {"Location": "https://example.com/x"}, "", "target.com").get("type"),
+       "OPEN REDIRECT", "redirect verdict")
+    eq(core.inj_verdict("nosql", "{$gt:''}", 200, {},
+                        "MongoError: unexpected token").get("type"), "NoSQL", "nosql verdict")
+    eq(core.inj_verdict("graphql", "){__typename}", 400, {},
+                        'Cannot query field "x" on type').get("type"), "GraphQL", "graphql verdict")
+
+    # bar apna style — parser bar se alag
+    b2 = core.bar2(50, 10, 0)
+    ok("⟦" in b2 and "⟧" in b2 and "50%" in b2, "bar2 shape")
+    ok("▓" * 5 in b2 and "░" * 5 in b2, "bar2 fill")
+    b3 = core.bar3(25, 8, 1)
+    ok("[" in b3 and "█" * 2 in b3 and "─" * 6 in b3 and "25%" in b3, "bar3 shape")
+    ok(core.bar2(0, 10, 0).count("░") == 10, "bar2 zero")
+    ok(core.bar3(100, 10, 0).count("█") == 10, "bar3 full")
+    ok(core.bar2(150, 10, 0).endswith("<b>100%</b>"), "bar2 clamp")
+
+    # text se URLs
+    urls = core._urls_from_text("dekho https://a.com/x?id=1, aur http://b.com/y\n"
+                                "https://a.com/x?id=1")
+    eq(urls, ["https://a.com/x?id=1", "http://b.com/y"], "urls from text")
+
+    # progress + result card
+    st = {"urls": 10, "urls_done": 4, "tested": 40, "total": 100, "vulns": [],
+          "blocked": 2, "errors": 1, "start": core.time.time() - 4, "cat": "all"}
+    card = core._inj_progress_card(st, 3)
+    for needle in ("Tested", "Vulnerable", "Blocked", "ETA", "⟦", "req/s"):
+        contains(card, needle)
+    ok(any(sp in card for sp in core.INJ_SPIN), "scan spinner")
+    ok(len(card) < 4096, "progress card size")
+    ok("⟦" in card and "⟧" in card, "scan bar")
+
+    # dumper card
+    dst = {"urls": 8, "done": 2, "records": [], "errors": 0,
+           "start": core.time.time() - 2}
+    dcard = core._dump_progress_card(dst, 1)
+    for needle in ("Pages", "Extracted", "Speed", "ETA", "["):
+        contains(dcard, needle)
+    ok(any(sp in dcard for sp in core.DUMP_SPIN), "dump spinner")
+
+
+def test_dumper_engine():
+    group("dumper-v294")
+    html = ("<html><head><title>Shop :: Item</title>"
+            '<meta name="generator" content="WooCommerce 8.1">'
+            '<script src="/js/app.js"></script></head><body>'
+            '<form action="/login.php" method="post" id="login">'
+            '<input type="text" name="username"><input type="password" name="passwd">'
+            "</form>"
+            '<a href="/item.php?id=3">i</a><a href="/user.php?uid=9&tab=orders">u</a>'
+            "<!-- debug: admin at /admin_dev.php -->"
+            "<div>mail: shop.support@example.com</div>"
+            "<div>SELECT * FROM orders o JOIN users u ON o.uid=u.id</div>"
+            '<script>var k="AIza1234567890abcdefghijklmnopqrstuvwxy";'
+            'var db="mysql://root:p@10.0.0.5/db";</script>'
+            "</body></html>")
+    rec = core.dump_extract("https://shop.example/item.php?id=1", 200,
+                            {"Server": "nginx/1.24.0", "X-Powered-By": "PHP/8.2.1"},
+                            html)
+    eq(rec["title"], "Shop :: Item", "dump title")
+    eq(rec["server"], "nginx/1.24.0", "dump server")
+    eq(rec["powered_by"], "PHP/8.2.1", "dump powered")
+    eq(len(rec["forms"]), 1, "dump forms")
+    eq(rec["forms"][0]["method"], "post", "form method")
+    eq(rec["forms"][0]["fields"], ["username", "passwd"], "form fields")
+    ok("id" in rec["params"] and "uid" in rec["params"], "dump params")
+    ok(any("item.php?id=3" in e for e in rec["endpoints"]), "dump endpoints")
+    ok(any("app.js" in j for j in rec["js"]), "dump js")
+    eq(rec["emails"], ["shop.support@example.com"], "dump emails")
+    ok(any("admin_dev.php" in c for c in rec["comments"]), "dump comments")
+    ok("orders" in rec["tables"] and "users" in rec["tables"], "dump tables")
+    sec = dict(rec["secrets"])
+    ok(sec.get("google_api", "").startswith("AIza"), "dump secret google")
+    eq(sec.get("db_url"), "mysql://root:p@10.0.0.5/db", "dump secret db url")
+    eq(rec["meta"].get("generator"), "WooCommerce 8.1", "dump meta")
+
+    txt = "\n".join(core.dump_record_text(rec))
+    for needle in ("URL     :", "Status", "FORMS (1)", "fields: username",
+                   "PARAMETERS", "ENDPOINTS", "EMAILS (1)", "POSSIBLE SECRETS"):
+        contains(txt, needle)
+    # koi HTML nahi — copy paste safe plain text
+    ok("<b>" not in txt and "<code>" not in txt, "dump report plain")
+
+
+def test_injector_live():
+    """ASLI local HTTP server pe scan — mock nahi."""
+    group("injector-live")
+    from aiohttp import web
+
+    async def vuln(req):
+        return web.Response(text="Warning: mysql_fetch_array()<br>"
+                                 "You have an error in your SQL syntax; check the manual "
+                                 "that corresponds to your MySQL server version",
+                            content_type="text/html")
+
+    async def clean(req):
+        return web.Response(text="<html><title>ok</title><body>nothing</body></html>",
+                            content_type="text/html")
+
+    async def echo(req):
+        v = req.query.get("q", "")
+        return web.Response(text="<html><body>%s</body></html>" % v, content_type="text/html")
+
+    async def go():
+        app = web.Application()
+        app.add_routes([web.get("/vuln.php", vuln), web.get("/clean.php", clean),
+                        web.get("/echo.php", echo)])
+        runner = web.AppRunner(app, access_log=None)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        base = "http://127.0.0.1:%d" % port
+        try:
+            st = await core.inj_scan([base + "/vuln.php?id=1", base + "/clean.php?id=2",
+                                      base + "/echo.php?q=hi"], "all",
+                                     max_targets=24, timeout=5.0, conc=4)
+        finally:
+            await runner.cleanup()
+        return st, base
+
+    st, base = asyncio.run(go())
+    ok(st["tested"] >= 20, "live tested %d" % st["tested"])
+    ok(st["total"] >= st["tested"], "live total")
+    ok(len(st["vulns"]) >= 1, "live vuln found")
+    types = set(st["by_type"])
+    ok("SQLi" in types, "live sqli: %s" % sorted(types))
+    bases = {v["base"] for v in st["vulns"]}
+    ok(base + "/vuln.php?id=1" in bases, "live vuln url")
+    ok(base + "/clean.php?id=2" not in bases, "live clean dropped")
+    v0 = st["vulns"][0]
+    ok(v0["param"] == "id", "live param")
+    ok(v0["evidence"], "live evidence")
+    ok(st["errors"] == 0, "live errors 0")
+    ok(st["took"] >= 0, "live took")
+
+
+def _inj_fake_stats(urls, cat, vulns, tested=None):
+    tested = tested or len(urls) * 19
+    return {"urls": len(urls), "urls_done": len(urls), "tested": tested,
+            "total": tested, "vulns": vulns, "blocked": 2, "errors": 0,
+            "start": core.time.time() - 2, "cat": cat, "stopped": 0,
+            "by_type": {}, "took": 2.0}
+
+
+def test_injector_flow():
+    group("injector-flow")
+    real_scan, real_send = core.inj_scan, core.send_file
+    sent, seen_progress = [], []
+
+    def _mk(vulns):
+        async def fake_scan(urls, cat="all", progress=None, uid=None, timeout=8.0,
+                            conc=30, max_targets=0):
+            st = _inj_fake_stats(urls, cat, vulns)
+            for v in vulns:
+                st["by_type"][v["type"]] = st["by_type"].get(v["type"], 0) + 1
+            if progress:
+                seen_progress.append(await progress(st))
+            return st
+        return fake_scan
+
+    async def fake_send(update, path, caption=""):
+        sent.append((path, caption))
+        return True
+
+    core.send_file = fake_send
+    try:
+        # ── 1) vulnerable mila ──
+        vulns = [{"base": "https://a.com/x?id=1", "url": "https://a.com/x?id=%27",
+                  "param": "id", "payload": "'", "type": "SQLi", "dbms": "MySQL",
+                  "evidence": "You have an error in your SQL syntax", "status": 200}]
+        core.inj_scan = _mk(vulns)
+        ctx = FakeContext({"last_urls": ["https://a.com/x?id=1", "https://b.com/y?q=2"],
+                           "inj_cat": "all"})
+        upd = FakeUpdate(data="inj:last")
+        asyncio.run(core.cb_inj_last(upd, ctx))
+        body = "\n".join(upd.texts())
+        contains(body, "Total tested")
+        contains(body, "vulnerable URL(s) found")
+        contains(body, "MySQL")
+        contains(body, "id")
+        ok(len(seen_progress) == 1, "progress called")
+        ok(sent, "files sent")
+        paths = [p for p, _c in sent]
+        tpath = [p for p in paths if "vuln_" in p][0]
+        raw = open(tpath, encoding="utf-8").read()
+        ok("https://a.com/x?id=1" in raw, "vulnerable.txt me base url")
+        ok("%27" not in raw, "vulnerable.txt me payload nahi")
+        ok(any(p.endswith(".csv") for p in paths), "report csv")
+        csvt = open([p for p in paths if p.endswith(".csv")][0], encoding="utf-8").read()
+        contains(csvt, "poc")
+        contains(csvt, "MySQL")
+
+        # ── 2) kuch nahi mila ──
+        sent.clear()
+        core.inj_scan = _mk([])
+        ctx2 = FakeContext({"last_urls": ["https://c.com/z?id=3"], "inj_cat": "sqli"})
+        upd2 = FakeUpdate(data="inj:last")
+        asyncio.run(core.cb_inj_last(upd2, ctx2))
+        body2 = "\n".join(upd2.texts())
+        contains(body2, "No vulnerabilities found")
+        contains(body2, "Total tested")
+        eq(sent, [], "clean scan pe koi file nahi")
+
+        # ── 3) text input path ──
+        core.inj_scan = _mk([])
+        ctx3 = FakeContext({})
+        upd3 = FakeUpdate(text="https://d.com/a?x=1\nhttps://e.com/b?y=2\nkuch nahi")
+        asyncio.run(core.input_inj_urls(upd3, ctx3, upd3.message.text))
+        contains("\n".join(upd3.texts()), "Total tested")
+
+        # ── 4) koi URL nahi mila ──
+        ctx4 = FakeContext({})
+        upd4 = FakeUpdate(text="hello world")
+        asyncio.run(core.input_inj_urls(upd4, ctx4, "hello world"))
+        contains("\n".join(upd4.texts()), "No URLs found")
+        eq(ctx4.user_data.get("await"), "inj_urls", "input dobara maanga")
+    finally:
+        core.inj_scan, core.send_file = real_scan, real_send
+
+
+def test_dumper_flow():
+    group("dumper-flow")
+    real_h, real_send = core.dump_harvest, core.send_file
+    sent = []
+
+    async def fake_harvest(urls, progress=None, uid=None, timeout=10.0, conc=12):
+        rec = core.dump_extract("https://shop.example/item.php?id=1", 200,
+                                {"Server": "nginx"}, "<html><title>Shop</title>"
+                                "<a href='/x.php?id=2'>x</a><form action='/f.php'>"
+                                "<input name='user'></form></html>")
+        st = {"urls": len(urls), "done": len(urls), "records": [rec], "errors": 0,
+              "start": core.time.time() - 1, "stopped": 0, "took": 1.0,
+              "files": [], "zip": "", "csv": ""}
+        if progress:
+            await progress(st)
+        return st
+
+    async def fake_send(update, path, caption=""):
+        sent.append(path)
+        return True
+
+    core.dump_harvest, core.send_file = fake_harvest, fake_send
+    try:
+        ctx = FakeContext({"last_urls": ["https://shop.example/item.php?id=1"]})
+        upd = FakeUpdate(data="df:last")
+        asyncio.run(core.cb_dump_use(upd, ctx, "last"))
+        body = "\n".join(upd.texts())
+        contains(body, "Pages")
+        contains(body, "Endpoints")
+        contains(body, "Shop")
+    finally:
+        core.dump_harvest, core.send_file = real_h, real_send
+
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -994,7 +1284,9 @@ def main():
                test_parse_everything, test_v28_tools, test_v29_parser,
                test_v29_payloads, test_v29_keywords, test_ui_is_english,
                test_proxy_hidden_from_users, test_rotating_proxy,
-               test_dns_helpers, test_rot_test_card):
+               test_dns_helpers, test_rot_test_card, test_injector_engine,
+               test_dumper_engine, test_injector_live,
+               test_injector_flow, test_dumper_flow):
         try:
             fn()
         except Exception as exc:

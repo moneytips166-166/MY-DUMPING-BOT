@@ -1,9 +1,28 @@
-# 🐍 PYTHON SNAKE CORE — v2.9
+# 🐍 PYTHON SNAKE CORE — v2.9.4
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
 ---
 
+## 🎯 v2.9.4 — Injector = real SQLi/NoSQL/XSS/LFI/SSTI/SSRF scanner, Dumper = page harvester
+
+| Cheez | Detail |
+|---|---|
+| Injector flow | Click → **URLs maango** (screen khulte hi input armed). Paste many URLs **or send .txt/.csv/.json/.xlsx** — all URLs used |
+| Categories | Saare 11 categories + ALL — same payload bank (311) preserved, probes selection ab live scan chalata hai |
+| Real scan | Har URL ka har parameter: payload inject → response parse. **Koi mock nahi** — SQL error / reflection / traversal / template eval / metadata leak |
+| Families | SQLi (error-based, union, blind, WAF-bypass), NoSQL, GraphQL, XSS, LFI, SSTI, SSRF, Open Redirect |
+| Progress bar | **Apna style** — `⠋ ⟦▓▓▓░░░░⟧ 62%` + URLs / tested / vulnerable / blocked / speed / ETA + ⛔ STOP. Parser wale bar se alag |
+| Result | `⚠️ N vulnerable URL(s) found` ya `🛡 No vulnerabilities found` + **Total tested** + row 100% + by-type + top hits |
+| Files | `vuln_*.txt` — sirf **plain vulnerable URLs** (payload nahi) · `vuln_report_*.csv` — type, dbms, param, status, url, poc, evidence |
+| Dumper flow | Click → URLs maango (text ya file). **Last parser URLs** aur **last scan ke vulnerable URLs** ek tap me |
+| Dumper extract | Forms (action/method/inputs) · parameters · endpoints · JS files · emails · HTML comments · table/column names · **API keys / DB URLs / JWT** |
+| Dumper output | Har URL ki alag `.txt` report + `summary.csv` + `summary.json` + poora pack ek **zip** |
+| Proxy | Rotating proxy pehle, phir pool — scan aur dump dono me |
+| Speed controls | `/batch injtargets 36` · `/batch injconc 30` · `/batch injtime 8` · `/batch dumpconc 12` · `/batch dumptime 10` |
+| Tests | `test_core` **500/500** (asli local HTTP server se live scan test) · `test_screens` **36 clean** |
+
+---
 ## 🩺 v2.9.3 — Termux DNS fix (proxy "Could not contact DNS servers")
 
 | Fix | Detail |

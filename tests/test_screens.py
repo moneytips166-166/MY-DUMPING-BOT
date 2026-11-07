@@ -62,6 +62,8 @@ async def cb_screens():
         "tool_qa": ("m:qa", core.tool_qa),
         "tool_rand": ("m:rand", core.tool_rand),
         "tool_dump": ("m:dump", core.tool_dump),
+        "cb_inj_go": ("inj:go", core.cb_inj_go),
+        "cb_dump_go": ("df:go", core.cb_dump_go),
     }
     for name, (data, fn) in cases.items():
         ctx = FakeContext({})
@@ -73,6 +75,7 @@ async def cb_screens():
             BAD.append("%s → EXCEPTION %s: %s" % (name, type(exc).__name__, exc))
     # admin API cards + proxy/engine batch screens
     for data in ("a:keys_api", "a:apis", "a:home", "a:proxy", "a:eng",
+                 "inj:cat:sqli", "df:old", "m:inj",
                  "a:pzbatch", "a:pzwant", "a:injbatch",
                  "m:dork", "dk:cms", "dp:country", "m:dump", "kw:niche"):
         ctx = FakeContext({})
