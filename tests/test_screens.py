@@ -64,6 +64,7 @@ async def cb_screens():
         "tool_dump": ("m:dump", core.tool_dump),
         "cb_inj_go": ("inj:go", core.cb_inj_go),
         "cb_dump_go": ("df:go", core.cb_dump_go),
+        "cb_dump_harv": ("df:harv", core.cb_dump_harv),
     }
     for name, (data, fn) in cases.items():
         ctx = FakeContext({})

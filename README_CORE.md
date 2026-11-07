@@ -1,9 +1,25 @@
-# 🐍 PYTHON SNAKE CORE — v2.9.4
+# 🐍 PYTHON SNAKE CORE — v2.9.5
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
 ---
 
+## 🗄 v2.9.5 — Dumper = real SQL data dump (URL pe databases → tables → columns → rows)
+
+| Cheez | Detail |
+|---|---|
+| Kaam | URL do → engine khud injectable param dhoondta hai → **database → tables → columns → rows** nikaalta hai. Har row asli response se aati hai, koi mock nahi |
+| Detection | 8 quote/comment styles. TRUE (`AND 1=1`) vs FALSE (`AND 1=2`) page ka **character-level diff** — isliye `Results: 1` vs `Results: 0` wale pages bhi pakde jate hain |
+| Techniques | 1) **UNION** (column count ORDER BY se, phir printed column) 2) **error-based** (MySQL duplicate-key) 3) **boolean-blind** (binary search, ~7 request/char) 4) **time-based** detect (extraction skip — phone pe bahut slow) |
+| DBMS | MySQL · SQLite · PostgreSQL · MSSQL · Oracle — dialect-wise queries (`information_schema`, `sqlite_master`, `STRING_AGG`, `LISTAGG`) |
+| Blind mode | Page kuch print na kare to bhi tables + columns nikal aate hain. Rows blind me default OFF (`/batch dumpblindrows 5` se on) |
+| Output | Per-URL `.txt` report (DB, tables, columns, rows) + `sqldump_rows_*.csv` (saari rows) + poora **zip** |
+| Caps | `/batch dumptables 15` · `/batch dumprows 50` · `/batch dumpreq 800` · `/batch dumpblind 0|1` · `/batch dumpconc 4` · `/batch dumptime 12` |
+| Honest | Jo URL injectable nahi hai, report me exact reason aata hai. Jahan rights/WAF block kare, wahan "table list empty" likha hota hai — jhooth nahi |
+| Dumper menu | `📥 SEND URLS — FULL SQL DUMP` · `💉 LAST VULNERABLE URLS` · `📥 LAST PARSER URLS` · `🕸 PAGE HARVEST (forms/links/secrets)` |
+| Tests | `test_core` **553/553** — asli local sqlite app pe union dump + blind dump test · `test_screens` **37 clean** |
+
+---
 ## 🎯 v2.9.4 — Injector = real SQLi/NoSQL/XSS/LFI/SSTI/SSRF scanner, Dumper = page harvester
 
 | Cheez | Detail |

