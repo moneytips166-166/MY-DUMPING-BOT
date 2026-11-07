@@ -1,6 +1,30 @@
-# 🐍 PYTHON SNAKE CORE — v2.8
+# 🐍 PYTHON SNAKE CORE — v2.9
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🆕 v2.9 — 8 parser bugs fixed, 7 engines, rotating proxy, STOP button, niches
+
+| Feature | Status |
+|---|---|
+| 🐛 **8 parser bugs** (abort 15→100, engine-miss pollution, gj cooldown, 6s timeout, 45s window, www-strip no-op, per-run miss) | ✅ FIXED |
+| ⚙️ **Engines = 7** — `ddgl, ddg, bing, google, brave, yandex, yahoo` (baaki hata diye) | ✅ |
+| 🧅 **Rotating proxy pool** — round-robin, fail pe 180s cooldown, dead engine skip | ✅ NEW |
+| ⏱ **Never-block timeout** — 6/8/10s per engine, per-dork cap, 3-miss pe engine side | ✅ NEW |
+| ⛔ **STOP button** — DORKER deep scan, PARSER, injector, proxy check (sab me) | ✅ NEW |
+| 📊 **New progress bar** — `▰▰▰▱▱` + %, proxies alive, engines up, speed, time left | ✅ NEW |
+| 🏠 **Main menu redesign** — HQ KEYWORDS top, ADD NICHE, small-caps labels, counts+disclaimer hataye | ✅ NEW |
+| 📁 **Niches** — apne keywords se niche banao (40 max), menu me button, ek tap se dorks | ✅ NEW |
+| 💉 **Injector 311 payloads** — 11 cats incl. blind/UNION/WAF/NoSQL/GraphQL, **240 DBMS patterns (21 DBs)** | ✅ |
+| 🔑 **HQ keywords** — 16 verb + 20 qual + 20 noun + geo layers, 1M cap, ~38k unique per core | ✅ |
+| 🧅 **Proxy scrape admin-only** — home se hata, admin panel me; ➕ ADD PROXIES (14+ formats) + rotation toggle | ✅ |
+| 📤 **Dumper FULL EXPORT** — txt + json + csv, no row caps | ✅ NEW |
+| 🇬🇧 **UI 100% English** — har screen, har prompt, har error | ✅ NEW |
+| 🎨 Stylish fonts har screen pe (cursive/bold/italic headings) | ✅ |
+
+**Jaan bujh ke nahi daala:** full sqlmap dump (row caps ke bina) — active attack hai.
+Bot dorks → URLs → injectable URLs banata hai, DB dump nahi karta.
 
 ---
 

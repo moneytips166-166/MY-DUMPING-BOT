@@ -104,7 +104,9 @@ class FakeUpdate:
                 self.message.document = doc
             if text is not None:
                 self.message.text = text
-        self.effective_message = self.callback_query or self.message
+        # Telegram: callback me effective_message == callback_query.message
+        self.effective_message = (self.callback_query.message if self.callback_query
+                                  else self.message)
 
     # helpers
     def texts(self):

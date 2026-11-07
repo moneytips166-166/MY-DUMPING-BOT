@@ -8,6 +8,7 @@ Har test ke saath ✅/❌ print hota hai, end me total count.
 """
 import asyncio
 import os
+import re
 import sys
 import time
 
@@ -48,7 +49,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.8", "VERSION")
+    eq(core.VERSION, "v2.9", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -188,7 +189,7 @@ def test_apis_text():
     for needle in ("Serper", "2,500", "SerpApi", "Brave", "Common Crawl", "SearXNG",
                    "Bright Data", "unlimited"):
         contains(txt, needle)
-    contains(txt.lower(), "truly unlimited nahi")
+    contains(txt.lower(), "truly unlimited")
     ok(len(txt) < 4096, "apis text fits telegram (%d)" % len(txt))
     ok("@Bloody" not in txt, "no owner spam")
 
@@ -372,7 +373,7 @@ def test_engines():
     ok("fast" in core.ENGINE_SETS and "max" in core.ENGINE_SETS, "engine sets")
     eq(len(core.ENGINE_SETS["fast"]), 3, "fast 3")
     eq(len(core.ENGINE_SETS["max"]), len(core.ENGINE_ORDER), "max all")
-    eq(core.engine_list("fast"), ["ddgl", "ddg", "mojeek"], "fast list")
+    eq(core.engine_list("fast"), ["ddgl", "ddg", "bing"], "fast list")
     ctx = FakeContext({})
     ctx.user_data["engines_mode"] = "max"
     eq(core.user_mode(ctx), "max", "user mode")
@@ -461,10 +462,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.8"')
+    contains(btxt, 'VERSION = "v2.9"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.8", "shim se version")
+    eq(core.VERSION, "v2.9", "shim se version")
 
 
 def test_diagnostics():
@@ -487,16 +488,16 @@ def test_diagnostics():
     ok(any("a.com/x" in u for u in urls), "result-link")
     # abort setting
     ok("parse_abort_after" not in dir(core) or True, "abort config")
-    # v2.5.x — bing RSS + ck/a unwrap
-    contains(core.ENGINE_URLS["bingr"], "format=rss")
-    ok("bingr" in core.ENGINE_SETS["normal"], "bingr in normal")
-    rss = "<item><link>https://a.gov.in/login</link></item>"
-    ok(any("a.gov.in/login" in u for u in core.extract_urls("bingr", rss)), "rss link")
+    # v2.9 — sirf 7 engines (bing RSS hata diya)
+    eq(sorted(core.ENGINE_URLS), ["bing", "brave", "ddg", "ddgl", "google",
+                                  "yahoo", "yandex"], "7 engines only")
+    eq(sorted(core.ENGINE_SETS["max"]), sorted(core.ENGINE_URLS), "max = saare 7")
+    ok("ddgl" in core.ENGINE_SETS["fast"])
     import base64 as _b64
     enc = _b64.urlsafe_b64encode(b"https://x.example.com/p?q=1").decode().rstrip("=")
     ck = "https://www.bing.com/ck/a?!&&p=1&u=a1" + enc + "&ntb=1"
     eq(core._clean_url(ck), "https://x.example.com/p?q=1")
-    eq(core.engine_reason("ok"), "results mile, dork se match nahi")
+    eq(core.engine_reason("ok"), "results returned, none match the dork")
 
 
 def test_batch():
@@ -635,7 +636,7 @@ def test_parse_everything():
 
 
 def test_v28_tools():
-    group("v2.8")
+    group("v2.9")
     # grade
     eq(core.dork_grade(97), "S+")
     eq(core.dork_grade(90), "S")
@@ -707,8 +708,133 @@ def test_v28_tools():
     ok(len(core.COUNTRIES) >= 60, "60+ countries")
     kb = core.country_kb(0)
     ok(sum(len(r) for r in kb.inline_keyboard) <= 100, "Telegram 100 button limit")
-    # disclaimer
-    contains(core.main_text("X"), "authorized")
+    # main menu — database block + disclaimer hata, English + niches
+    mt = core.main_text("X")
+    ok("DATABASE" not in mt.upper(), "database block hata")
+    ok("authorized" not in mt.lower(), "disclaimer hata")
+    ok("ᴡᴏʀᴋꜱᴘᴀᴄᴇ" in mt, "workspace block")
+    # niches
+    core.niche_save("testniche", ["shopify store", "crypto wallet"])
+    ok("testniche" in core.niche_list(), "niche list")
+    eq(len(core.niche_get("testniche")), 2, "niche kw")
+    kb = core.kb_main(8999053405)
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    eq(cbs[0], "m:kw", "HQ keywords pehla")
+    eq(cbs[1], "nc:add", "ADD NICHE doosra")
+    ok("m:proxy" in cbs, "admin ko proxy dikhta hai")
+    kbn = core.kb_main(12345)
+    cbn = [b.callback_data for row in kbn.inline_keyboard for b in row]
+    ok("m:proxy" not in cbn, "non-admin ko proxy nahi")
+    ok(core.niche_del("testniche"), "niche del")
+    ok("testniche" not in core.niche_list(), "niche gone")
+
+
+def test_v29_parser():
+    group("v2.9 parser")
+    # engines sirf 7
+    eq(len(core.ENGINE_URLS), 7, "7 engines")
+    eq(core.ENGINE_SETS["fast"], ["ddgl", "ddg", "bing"], "fast 3")
+    eq(len(core.ENGINE_SETS["max"]), 7, "max 7")
+    # reset_engine_miss + per-run miss
+    core.ENGINE_MISS.update({"ddg": 9})
+    core.reset_engine_miss()
+    eq(dict(core.ENGINE_MISS), {}, "miss reset")
+    miss = {}
+    core.engine_miss_add("ddg", miss)
+    core.engine_miss_add("ddg", miss)
+    eq(miss["ddg"], 2, "per-run miss")
+    ok(core.ENGINE_MISS.get("ddg") == 2, "global bhi count (UI)")
+    core.reset_engine_miss()
+    eq(dict(core.ENGINE_MISS), {}, "dusre scan me purana block nahi")
+    # ProxyRotator
+    rot = core.ProxyRotator(["http://a:1", "http://b:2"], enabled=True)
+    eq(len(rot), 2)
+    first, second = rot.next(), rot.next()
+    ok(first != second, "rotation — har baar naya")
+    rot.dead(first)
+    eq(rot.alive(), 1, "dead → cooldown")
+    eq(rot.next(), second, "sirf alive wala")
+    rot.ok(second)
+    eq(rot.fail, 1)
+    empty = core.ProxyRotator([], enabled=True)
+    eq(empty.next(), None, "pool khaali → direct")
+    off = core.ProxyRotator(["http://a:1"], enabled=False)
+    eq(off.next(), None, "rotation off → direct")
+    # STOP flags
+    core.stop_clear(999)
+    eq(core.stop_requested(999), False)
+    tok = core.stop_mark(999)
+    ok(tok)
+    eq(core.stop_requested(999), False)
+    core.STOP_FLAGS["999"]["stop"] = True
+    eq(core.stop_requested(999), True, "stop flag")
+    core.stop_clear(999)
+    eq(core.stop_requested(999), False, "clear")
+    # abort defaults — 100 se pehle koi abort nahi
+    eq(max(30, int(core.sget("parse_abort_after", 100) or 100)), 100, "abort 100")
+    # bar style
+    ok("▰" in core.bar(50, 10) and "▱" in core.bar(50, 10), "naya bar")
+    eq(core.bar(0, 6), "▱▱▱▱▱▱")
+    eq(core.bar(100, 6), "▰▰▰▰▰▰")
+    contains(core.bar_pct(42, 10), "42%")
+
+
+def test_v29_payloads():
+    group("v2.9 payloads")
+    fam = sum(len(core.PAYLOAD_CATS[k]) for k in core.SQLI_FAMILY)
+    ok(fam >= 230, "230+ SQL family payloads (mile %d)" % fam)
+    eq(sorted(core.SQLI_FAMILY),
+       ["blind", "graphql", "nosql", "sqli", "union", "waf"])
+    ok(len(core.PAYLOADS) >= 280, "280+ unique payloads")
+    for k in ("nosql", "graphql", "blind", "union", "waf"):
+        ok(k in core.CAT_LABEL, "cat label %s" % k)
+    # DBMS patterns
+    ok(len(core.DBMS_ERRORS) >= 15, "15+ databases")
+    ok(core.DBMS_COUNT >= 235, "235+ dbms patterns (mile %d)" % core.DBMS_COUNT)
+    hits = core.dbms_fingerprint("Warning: pg_query() failed; ORA-00933: SQL command not "
+                                 "properly ended; You have an error in your SQL syntax")
+    dbs = {h[0] for h in hits}
+    ok("PostgreSQL" in dbs and "Oracle" in dbs and "MySQL" in dbs, "fingerprint 3 dbs")
+    eq(core.dbms_fingerprint(""), [])
+    eq(core.dbms_fingerprint("all good here"), [])
+
+
+def test_v29_keywords():
+    group("v2.9 keywords")
+    ok(core.KW_MAX >= 1000000, "10 lakh keyword cap")
+    cap = core.kw_capacity(["shopify store"])
+    ok(cap >= 30000, "capacity/core %s" % cap)
+    kws = core.make_keywords(["shopify store"], n=30000)
+    ok(len(kws) >= 20000, "20k+ keywords ek seed se (%d)" % len(kws))
+    ok(len(set(kws)) == len(kws), "unique")
+    ok(all(len(x) <= 70 for x in kws), "length cap")
+
+
+HINGLISH = ("kaun bhejo chuno karo kro nahi milega abhi phir batao daalo wala hoga honge "
+            "sakte diya liya jaata rahe ruka ruke chalega raha aur yeh woh jitna jitne kitne "
+            "kahan kaise kyun matlab bina saath liye diye hota hoti karne wale walo walon dalo "
+            "dena lena padega padenge chahiye milegi dikhega dekhna samajh banao banaye banega "
+            "deta dete lene denge aayega aaye jaye jaate rukna ruko kholo dikhao chala chalte "
+            "chalti lagta lagti sakta sakti sakunga pade padta padti karta karti karte utna utne "
+            "kitni kaunsi konsa konsi kaunsa baad pehle upar niche andar bahar dobara zyada "
+            "accha acha theek galat sahi bahut thoda bas fir tab jab kab kyunki agar warna lekin "
+            "magar sirf hoon kar dijiye kijiye dein dekho bhejiye karein chalu").split()
+_UI_WORDS = re.compile(r"\b(?:%s)\b" % "|".join(sorted(HINGLISH)), re.I)
+
+
+def test_ui_is_english():
+    """v2.9: poora UI English — koi Hinglish line render na ho."""
+    group("ui language")
+    texts = {"main_text": core.main_text("Tester"), "help_text": core.help_text(),
+             "APIS_TEXT": core.APIS_TEXT, "redeem": core.tool_redeem_text(),
+             "batch_card": core.batch_card(), "engines_text": core.engines_text()}
+    for name, txt in texts.items():
+        hits = [ln.strip()[:70] for ln in str(txt or "").splitlines()
+                if _UI_WORDS.search(ln) and "<code>" not in ln]
+        eq(hits, [], "%s pure English" % name)
+    # data lines (keywords/dorks/urls) plain rehni chahiye — test sirf labels pe
+    sample = "shopify store inurl:admin site:gov.in"
+    ok(_UI_WORDS.search(sample) is None, "data lines untouched")
 
 
 def test_help_uses_fonts():
@@ -728,7 +854,8 @@ def main():
                test_reader_formats, test_kw_slug, test_engines, test_crawler,
                test_file_in_flow, test_pending_file, test_enginetest,
                test_single_file, test_diagnostics, test_batch,
-               test_parse_everything, test_v28_tools):
+               test_parse_everything, test_v28_tools, test_v29_parser,
+               test_v29_payloads, test_v29_keywords, test_ui_is_english):
         try:
             fn()
         except Exception as exc:
