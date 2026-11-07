@@ -1,0 +1,40 @@
+# 🐍 PYTHON SNAKE — systemd unit (reference)
+#
+# vps_install.sh ye file khud /etc/systemd/system/snake.service me likhta hai
+# (paths aur user ke hisaab se). Manual install karna ho to:
+#
+#   sudo cp vps/snake.service /etc/systemd/system/snake.service
+#   sudo sed -i 's|/opt/snake|/opt/snake|g; s|^User=.*|User=snake|; s|^Group=.*|Group=snake|' /etc/systemd/system/snake.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now snake
+#
+# Status:  sudo systemctl status snake
+# Logs  :  sudo journalctl -u snake -f      (ya  tail -f /opt/snake/logs/bot.log)
+
+[Unit]
+Description=Python Snake Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=snake
+Group=snake
+WorkingDirectory=/opt/snake
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Asia/Kolkata
+ExecStart=/opt/snake/.venv/bin/python -u /opt/snake/bot.py
+Restart=always
+RestartSec=10
+TimeoutStopSec=25
+KillSignal=SIGTERM
+StandardOutput=append:/opt/snake/logs/bot.log
+StandardError=inherit
+SyslogIdentifier=snake
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/snake
+
+[Install]
+WantedBy=multi-user.target
