@@ -4,6 +4,17 @@
 
 ---
 
+## 🩺 v2.9.3 — Termux DNS fix (proxy "Could not contact DNS servers")
+
+| Fix | Detail |
+|---|---|
+| Resolver | Sab connectors ab **ThreadedResolver** (system DNS) — Termux me aiodns fail hota hai |
+| DoH fallback | `p.webshare.io` resolve na ho to **1.1.1.1 / 1.0.0.1 / 8.8.8.8 / 9.9.9.9** se DoH |
+| Proxy connect | Domain ki jagah **IP se connect** (creds same) — ISP DNS block bhi bypass |
+| Test card | DNS line + direct net line + 110-char errors + specific hint |
+| Naya command | `/dnstest p.webshare.io` — system DNS vs DoH |
+
+---
 ## 🔁 v2.9.2 — Rotating proxy (Webshare / koi bhi) support
 
 | Cheez | Detail |

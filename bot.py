@@ -26,6 +26,7 @@ import re
 import sys
 import json
 import signal
+import socket
 import platform
 import time
 import random
@@ -64,7 +65,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.9.2"
+VERSION = "v2.9.3"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -2328,6 +2329,77 @@ UA = {"User-Agent": random.choice(UA_LIST),
       "Accept": "text/html,application/json,*/*",
       "Accept-Language": "en-US,en;q=0.9"}
 
+def mk_connector(limit: int = 100, limit_per_host: int = 0, **kw):
+    """Termux/Android safe connector — system DNS (ThreadedResolver), aiodns NEVER.
+
+    Phone pe aiodns 'Could not contact DNS servers' deta hai (no /etc/resolv.conf).
+    """
+    kw.pop("resolver", None)
+    kw["ssl"] = False
+    kw.setdefault("ttl_dns_cache", 300)
+    try:
+        return aiohttp.TCPConnector(limit=limit, limit_per_host=limit_per_host,
+                                    resolver=aiohttp.ThreadedResolver(), **kw)
+    except Exception:
+        kw.pop("limit_per_host", None)
+        return aiohttp.TCPConnector(limit=limit, **kw)
+
+
+_HOST_IP_CACHE = {}
+
+
+async def resolve_host(host: str, timeout: float = 6.0) -> tuple:
+    """(ip, source) — system DNS pehle, phir DoH (1.1.1.1 / 8.8.8.8). source: ip/system/doh."""
+    h = str(host or "").strip().strip("[]")
+    if not h:
+        return "", ""
+    if _valid_ip(h) or ":" in h:
+        return h, "ip"
+    c = _HOST_IP_CACHE.get(h)
+    if c and c[2] > time.time():
+        return c[0], c[1]
+    ip = ""
+    try:                                  # system DNS (thread pool me, non-blocking)
+        loop = asyncio.get_event_loop()
+        ip = await asyncio.wait_for(
+            loop.run_in_executor(None, socket.gethostbyname, h), timeout=min(6.0, timeout))
+    except Exception:
+        ip = ""
+    src = "system" if ip else ""
+    if not ip:
+        try:
+            ip = await asyncio.wait_for(doh_resolve(h), timeout=min(8.0, timeout + 2))
+            src = "doh" if ip else ""
+        except Exception:
+            ip, src = "", ""
+    if ip:
+        _HOST_IP_CACHE[h] = (ip, src, time.time() + 600)
+    return ip, src
+
+
+async def proxy_connect_url(url: str) -> tuple:
+    """Proxy ka host domain ho to IP se connect karo (ISP DNS block bypass).
+
+    Returns (connect_url, host, ip, source).
+    """
+    raw = str(url or "").strip()
+    m = re.match(r"^(\w+://)?(?:([^:@/]+):([^@/]*)@)?"
+                 r"(\[[0-9A-Fa-f:]+\]|[^:/@\s]+):(\d{1,5})$", raw)
+    if not m:
+        return raw, "", "", ""
+    scheme = m.group(1) or "http://"
+    user, pw = m.group(2), m.group(3)
+    host, port = m.group(4), m.group(5)
+    h = host.strip("[]")
+    if _valid_ip(h):
+        return raw, h, h, "ip"
+    ip, src = await resolve_host(h)
+    if not ip:
+        return raw, h, "", ""
+    auth = ("%s:%s@" % (user, pw)) if user else ""
+    return "%s%s%s:%s" % (scheme, auth, ip, port), h, ip, src
+
+
 IP_PORT = re.compile(r"(?<!\d)(\d{1,3}(?:\.\d{1,3}){3})\s*[:\s,;|]\s*(\d{2,5})(?!\d)")
 PROTO_URL = re.compile(r"(?:(http|https|socks4|socks5)://)?(?:[\w.:-]+@)?(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})")
 # full format: proto://[user:pass@]host:port — IPv6 [::1]:1080 bhi
@@ -2458,10 +2530,13 @@ async def doh_resolve(host: str, session=None) -> str:
     if host in _DNS_CACHE:
         return _DNS_CACHE[host]
     ip = ""
-    for url, params in (("https://1.1.1.1/dns-query", {"name": host, "type": "A"}),
-                        ("https://8.8.8.8/resolve", {"name": host, "type": "A"})):
+    providers = (("https://1.1.1.1/dns-query", {"name": host, "type": "A"}),
+                 ("https://1.0.0.1/dns-query", {"name": host, "type": "A"}),
+                 ("https://8.8.8.8/resolve", {"name": host, "type": "A"}),
+                 ("https://9.9.9.9:5053/dns-query", {"name": host, "type": "A"}))
+    for url, params in providers:
         try:
-            async with aiohttp.ClientSession() as s:
+            async with aiohttp.ClientSession(connector=mk_connector(limit=2)) as s:
                 async with s.get(url, params=params, headers={"Accept": "application/dns-json"},
                                  timeout=aiohttp.ClientTimeout(total=6), ssl=False) as r:
                     if r.status == 200:
@@ -2502,7 +2577,7 @@ async def fetch_source(session, kind: str, url: str, timeout: float = 12.0) -> t
             if ip:
                 hdrs = dict(UA)
                 hdrs["Host"] = host
-                async with aiohttp.ClientSession() as s2:
+                async with aiohttp.ClientSession(connector=mk_connector(limit=4)) as s2:
                     async with s2.get("https://%s%s" % (ip, path), headers=hdrs,
                                       timeout=aiohttp.ClientTimeout(total=timeout),
                                       ssl=False, allow_redirects=True) as r2:
@@ -2524,7 +2599,7 @@ async def scrape_proxies(progress=None, force: bool = False, timeout: float = 12
     found = []
     done = 0
     lock = asyncio.Lock()
-    conn = aiohttp.TCPConnector(limit=100, limit_per_host=8, ssl=False, ttl_dns_cache=300)
+    conn = mk_connector(limit=100, limit_per_host=8)
     async with aiohttp.ClientSession(connector=conn) as session:
         async def one(kind, url):
             nonlocal done
@@ -2565,11 +2640,14 @@ CHECK_TARGETS = [
 async def check_one(session, proxy: str, sem: asyncio.Semaphore, timeout: float = 6.0):
     """Multi-endpoint check — 2 targets try, IP regex se confirm."""
     targets = random.sample(CHECK_TARGETS, min(2, len(CHECK_TARGETS)))
+    px_conn, _ph, _pip, _psrc = await proxy_connect_url(proxy)
+    if _ph and not _pip:
+        return {"url": proxy, "ok": False}
     async with sem:
         for url, _t in targets:
             t0 = time.perf_counter()
             try:
-                async with session.get(url, proxy=proxy, headers=UA,
+                async with session.get(url, proxy=px_conn, headers=UA,
                                        timeout=aiohttp.ClientTimeout(total=timeout),
                                        ssl=False, allow_redirects=True) as r:
                     if r.status == 200:
@@ -2587,7 +2665,7 @@ async def check_proxies(proxies: list, concurrency: int = 400, timeout: float = 
     """High concurrency checker — phone pe bhi 400 parallel."""
     good = []
     sem = asyncio.Semaphore(max(20, min(1000, concurrency)))
-    conn = aiohttp.TCPConnector(limit=0, ssl=False, force_close=True)
+    conn = mk_connector(limit=0, force_close=True)
     total = len(proxies)
     done = 0
     lock = asyncio.Lock()
@@ -2894,7 +2972,7 @@ async def searx_instances(force: bool = False) -> list:
             return d["list"]
     good = []
     try:
-        async with aiohttp.ClientSession() as s:
+        async with aiohttp.ClientSession(connector=mk_connector(limit=8)) as s:
             async with s.get("https://searx.space/data/instances.json",
                              headers=UA, ssl=False,
                              timeout=aiohttp.ClientTimeout(total=20)) as r:
@@ -3134,7 +3212,11 @@ async def fetch_engine(session, engine: str, dork: str, proxy=None,
                   total=max(2.0, min(float(timeout), deadline - time.time() + 0.5))),
               "ssl": False, "allow_redirects": True}
         if px:
-            kw["proxy"] = px
+            px_conn, _ph, _pip, _psrc = await proxy_connect_url(px)
+            if _ph and not _pip:                  # DNS hi fail — proxy chhod do
+                last_err = "proxy DNS fail (%s)" % _ph
+                continue
+            kw["proxy"] = px_conn
         try:
             async with session.get(target, **kw) as r:
                 if r.status != 200:
@@ -3189,7 +3271,7 @@ async def wayback_urls(domain: str, limit: int = 300, proxy=None) -> list:
         kw = {"timeout": aiohttp.ClientTimeout(total=25), "ssl": False, "headers": UA}
         if proxy:
             kw["proxy"] = proxy
-        async with aiohttp.ClientSession() as s:
+        async with aiohttp.ClientSession(connector=mk_connector(limit=8)) as s:
             async with s.get(url, **kw) as r:
                 if r.status != 200:
                     return []
@@ -3281,7 +3363,7 @@ async def cc_urls(domain: str, limit: int = 500, proxy=None) -> list:
     if not domain:
         return []
     limit = max(10, min(5000, int(limit or 500)))
-    conn = aiohttp.TCPConnector(limit=8, ssl=False)
+    conn = mk_connector(limit=8)
     async with aiohttp.ClientSession(connector=conn) as session:
         api = await cc_index(session)
         if not api:
@@ -3657,7 +3739,7 @@ async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list 
     # chhoti dork list = zyada engines (depth), badi list = kam engines (speed)
     eng_cap = len(engines) if len(dorks) <= 10 else 3
     stats = {"queries": 0, "engine_hits": defaultdict(int), "errors": 0, "blocked": 0}
-    conn = aiohttp.TCPConnector(limit=60, ssl=False, ttl_dns_cache=600)
+    conn = mk_connector(limit=60, ttl_dns_cache=600)
     async with aiohttp.ClientSession(connector=conn) as session:
         i = 0
         for dork in dorks:
@@ -3825,7 +3907,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
 
     # 2) FREE GOOGLE (ijerm) — koi key nahi, rate-limited
     k = api_keys()
-    conn = aiohttp.TCPConnector(limit=60, ssl=False, ttl_dns_cache=600)
+    conn = mk_connector(limit=60, ttl_dns_cache=600)
     async with aiohttp.ClientSession(connector=conn) as session:
         # 2) optional API keys (agar user ne daale hain)
         if k["serpapi"] or k["serper"] or k["brave"] or (k["cse_key"] and k["cse_cx"]):
@@ -4018,7 +4100,7 @@ async def deep_url_crawl(seeds: list, limit: int = 3000, concurrency: int = 40,
     crawled = set()
     lock = asyncio.Lock()
     last = {"t": 0.0}
-    conn = aiohttp.TCPConnector(limit=max(10, concurrency), ssl=False,
+    conn = mk_connector(limit=max(10, concurrency),
                                 ttl_dns_cache=600, force_close=True)
     hdrs = dict(UA)
     hdrs["Accept"] = "text/html,application/xhtml+xml,*/*"
@@ -5030,41 +5112,70 @@ async def niche_menu(update, context, name: str):
             pass
 
 
+async def _ip_lookup(session, proxy=None, timeout: float = 12.0) -> tuple:
+    """(ip, err) — api.ipify → ip-api → ifconfig fallback. proxy=None → direct net check."""
+    targets = [("https://api.ipify.org?format=json", "json:ip"),
+               ("http://ip-api.com/json", "json:query"),
+               ("http://ifconfig.me/ip", "text")]
+    err = ""
+    for url, mode in targets:
+        try:
+            kw = {"headers": UA, "ssl": False,
+                  "timeout": aiohttp.ClientTimeout(total=timeout)}
+            if proxy:
+                kw["proxy"] = proxy
+            async with session.get(url, **kw) as r:
+                body = await r.text(errors="ignore")
+                ip = ""
+                if mode.startswith("json"):
+                    try:
+                        ip = str((json.loads(body) or {}).get(mode.split(":")[1]) or "")
+                    except Exception:
+                        ip = ""
+                else:
+                    ip = body.strip().split()[0] if body.strip() else ""
+                if _valid_ip(ip):
+                    return ip, ""
+                err = "HTTP %s" % r.status
+        except Exception as exc:
+            err = "%s: %s" % (type(exc).__name__, str(exc).replace("\n", " ")[:110])
+    return "", err
+
+
 async def rot_live_test(urls: list, tries: int = 3, timeout: float = 12.0) -> dict:
     """Rotating endpoint sach me kaam kar raha hai? IP badalte hain? Engine chalta hai?"""
-    out = {"ips": [], "errs": [], "engine": "", "urls": 0, "ms": []}
+    out = {"ips": [], "errs": [], "engine": "", "urls": 0, "ms": [],
+           "dns": "", "dns_src": "", "host": "", "direct": "", "direct_err": "",
+           "conn": ""}
     proxy = urls[0] if urls else None
     if not proxy:
         return out
-    conn = aiohttp.TCPConnector(limit=4, ssl=False, force_close=True)
+    conn_url, host, ip, src = await proxy_connect_url(proxy)
+    out.update({"dns": ip, "dns_src": src, "host": host, "conn": conn_url})
+    conn = mk_connector(limit=6, force_close=True)
     async with aiohttp.ClientSession(connector=conn) as session:
+        # 0) direct net check (proxy ke bina) — pata chale net ya proxy ka issue hai
+        d_ip, d_err = await _ip_lookup(session, None, timeout=min(10.0, timeout))
+        out["direct"], out["direct_err"] = d_ip, d_err
+        if host and not ip:
+            out["errs"].append("DNS fail: %s resolve nahi hua (system + DoH dono)" % host)
+            return out
         for _ in range(max(1, tries)):
             t0 = time.perf_counter()
-            try:
-                async with session.get("https://api.ipify.org?format=json", proxy=proxy,
-                                       headers=UA, ssl=False,
-                                       timeout=aiohttp.ClientTimeout(total=timeout)) as r:
-                    body = await r.text(errors="ignore")
-                    ip = ""
-                    try:
-                        ip = str((json.loads(body) or {}).get("ip") or "")
-                    except Exception:
-                        ip = body.strip()[:40]
-                    if ip:
-                        out["ips"].append(ip)
-                        out["ms"].append(int((time.perf_counter() - t0) * 1000))
-                    else:
-                        out["errs"].append("HTTP %s" % r.status)
-            except Exception as exc:
-                out["errs"].append("%s: %s" % (type(exc).__name__, str(exc)[:60]))
+            got, err = await _ip_lookup(session, conn_url if ip else proxy, timeout)
+            if got:
+                out["ips"].append(got)
+                out["ms"].append(int((time.perf_counter() - t0) * 1000))
+            else:
+                out["errs"].append(err or "no IP")
         # engine test — DDG Lite ek dork
         try:
             got = await fetch_engine(session, "ddgl", "site:gov.in inurl:login",
-                                     proxy=proxy, timeout=12.0)
+                                     proxy=(conn_url if ip else proxy), timeout=14.0)
             out["urls"] = len(got)
             out["engine"] = "ddgl"
         except Exception as exc:
-            out["errs"].append("engine: %s" % str(exc)[:60])
+            out["errs"].append("engine: %s" % str(exc)[:110])
     return out
 
 
@@ -5072,25 +5183,46 @@ def rot_test_card(res: dict) -> str:
     ips = res.get("ips") or []
     uniq = len(set(ips))
     ok_rot = uniq >= 2
-    lines = [KV("Requests", "<code>%d</code>" % (len(ips) + len(res.get("errs") or [])), "🌐"),
+    host = res.get("host") or ""
+    dns_txt = ("<code>%s</code> → <code>%s</code> (%s)"
+               % (esc(host), esc(res.get("dns") or "—"), res.get("dns_src") or "—")) \
+        if host else "—"
+    lines = [KV("DNS", dns_txt, "🌐"),
+             KV("Net (direct)", ("<code>%s</code>" % esc(res["direct"])) if res.get("direct")
+                else "<code>fail</code> — %s" % esc((res.get("direct_err") or "no net")[:70]), "📶"),
+             KV("Requests", "<code>%d</code>" % (len(ips) + len(res.get("errs") or [])), "🔢"),
              KV("Working", "<code>%d</code>" % len(ips), "✅"),
              KV("Unique IPs", "<code>%d</code>" % uniq, "🔁"),
              KV("Engine test", "<code>%s</code> → <code>%d URLs</code>"
                 % (res.get("engine") or "—", res.get("urls", 0)), "🔍")]
-    head = ("ROTATION WORKS ✅" if ok_rot else
-            ("END POINT OK — IP same" if ips else "ROTATION FAILED ❌"))
+    if not res.get("direct"):
+        head = "NET HI NAHI HAI ❌"
+        tip = ("\n\n" + P("Phone ka internet check karo (WiFi/data). Proxy se pehle "
+                           "bot ka direct net chalta hona chahiye."))
+    elif ok_rot:
+        head = "ROTATION WORKS ✅"
+        tip = "\n\n" + P("Parser ready — run DORKER → DEEP SCAN now.")
+    elif ips:
+        head = "ENDPOINT OK — IP same"
+        tip = ("\n\n" + P("Proxy chal raha hai par IP rotate nahi hua. Ek min baad "
+                           "phir test karo — Webshare kaafi baar same IP deta hai."))
+    else:
+        head = "ROTATION FAILED ❌"
+        if res.get("dns"):
+            tip = ("\n\n" + P("DNS theek hai (IP mil gaya) — matlab proxy ne connect "
+                               "refuse kiya. Username/password plan check karo."))
+        else:
+            tip = ("\n\n" + P("DNS fail — network p.webshare.io block kar raha hai. "
+                               "WiFi/data switch karke ya DoH on karke try karo."))
     body = "\n".join(lines)
     if ips:
         body += "\n\n" + B("IPs") + "\n" + "\n".join(
-            "• <code>%s</code>%s" % (esc(ip), (" — %sms" % res["ms"][i]) if i < len(res.get("ms") or []) else "")
-            for i, ip in enumerate(ips[:5]))
+            "• <code>%s</code>%s" % (esc(_pip),
+                                      (" — %sms" % res["ms"][i]) if i < len(res.get("ms") or []) else "")
+            for i, _pip in enumerate(ips[:5]))
     if res.get("errs"):
         body += "\n\n" + B("Errors") + "\n" + "\n".join(
             "• <code>%s</code>" % esc(e) for e in (res.get("errs") or [])[:4])
-    tip = ("\n\n" + P("Parser ready — run DORKER → DEEP SCAN now.")
-           if ips else
-           "\n\n" + P("Check host / port / username / password. "
-                       "On Webshare the username must end with -rotate."))
     return H("ROTATION TEST", "%d/%d ok" % (len(ips), max(1, len(ips) + len(res.get("errs") or [])))) \
         + "\n\n" + head + "\n\n" + body + tip
 
@@ -9427,6 +9559,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("apis", cmd_apis))
     app.add_handler(CommandHandler("batch", cmd_batch))
     app.add_handler(CommandHandler("rotproxy", cmd_rotproxy))
+    app.add_handler(CommandHandler("dnstest", cmd_dnstest))
     app.add_handler(CommandHandler("engines", cmd_engines))
     app.add_handler(CommandHandler("enginetest", cmd_enginetest))
     app.add_handler(CommandHandler("admin", cmd_admin))
@@ -9537,7 +9670,7 @@ async def cmd_enginetest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.effective_message.reply_text(
         "🔬 Testing <b>%d engines</b> (no proxy)…\n<code>%s</code>"
         % (len(engs), esc(dork[:80])), parse_mode=ParseMode.HTML)
-    conn = aiohttp.TCPConnector(limit=len(engs) + 2, ssl=False, force_close=True)
+    conn = mk_connector(limit=len(engs) + 2, force_close=True)
     results = []
 
     async def one(session, eng):
@@ -9755,6 +9888,29 @@ APIS_TEXT = (
 )
 
 
+async def cmd_dnstest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /dnstest host — system DNS + DoH dono check (proxy block debug)."""
+    if not is_admin(update.effective_user.id):
+        return
+    host = " ".join(context.args or []).strip() or "p.webshare.io"
+    sys_ip = ""
+    try:
+        loop = asyncio.get_event_loop()
+        sys_ip = await asyncio.wait_for(loop.run_in_executor(None, socket.gethostbyname, host), 6)
+    except Exception as exc:
+        sys_ip = "FAIL (%s)" % type(exc).__name__
+    doh_ip = await doh_resolve(host)
+    conn_url, _h, ip, src = await proxy_connect_url("http://u:p@%s:80" % host)
+    await update.effective_message.reply_text(
+        (H("DNS TEST", host) + "\n\n"
+         + KV("System DNS", "<code>%s</code>" % esc(str(sys_ip)), "🌐") + "\n"
+         + KV("DoH", "<code>%s</code>" % esc(doh_ip or "fail"), "☁️") + "\n"
+         + KV("Bot uses", "<code>%s</code>%s" % (esc(ip or "—"),
+                                                 (" (%s)" % src) if src else ""), "🤖") + "\n\n"
+         + P("DoH chalta hai to proxy DNS block ho ke bhi kaam karega.")),
+        parse_mode=ParseMode.HTML)
+
+
 async def cmd_rotproxy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /rotproxy host:port:user:pass — rotating endpoint add + test."""
     uid = update.effective_user.id
@@ -9941,10 +10097,14 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "🧵 PID: <code>%d</code>\n"
            "👥 Users: <code>%d</code>\n"
            "🐦 Free Google: %s\n"
+           "🌐 DNS: system resolver (Termux-safe)\n"
+           "🔁 Rotating proxy: <code>%s</code>\n"
            "📦 Core: <b>%s</b>")
     txt = txt % (selfcheck.get("username") or "?",
                  F(THEMES[theme_name()]["label"], T()["head"]),
-                 up // 3600, (up % 3600) // 60, os.getpid(), len(USERS), gj, VERSION)
+                 up // 3600, (up % 3600) // 60, os.getpid(), len(USERS), gj,
+                 ("%d set" % len(rot_proxies())) if rot_proxies() else "none",
+                 VERSION)
     await msg.edit_text(txt, parse_mode=ParseMode.HTML)
 
 
@@ -9959,7 +10119,7 @@ async def cmd_fresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         n = dork_seen_clear()
         await update.effective_message.reply_text(
             "🧹 Fresh history cleared — <code>%s</code> dorks removed.\n"
-            "Ab sab dorks dobara 'naye' maane jayenge." % fmt(n),
+            "All dorks will be treated as new again." % fmt(n),
             parse_mode=ParseMode.HTML)
         return
     await update.effective_message.reply_text(
@@ -9989,7 +10149,7 @@ async def cmd_gtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.effective_message.reply_text(
         "🐦 Testing free Google…\n<code>%s</code>" % esc(dork[:100]), parse_mode=ParseMode.HTML)
     t0 = time.time()
-    conn = aiohttp.TCPConnector(limit=4, ssl=False)
+    conn = mk_connector(limit=4)
     async with aiohttp.ClientSession(connector=conn) as session:
         urls = await gjerm_search(session, dork, pages=2)
     took = time.time() - t0

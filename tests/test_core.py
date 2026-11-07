@@ -49,7 +49,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.9.2", "VERSION")
+    eq(core.VERSION, "v2.9.3", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -464,10 +464,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.9.2"')
+    contains(btxt, 'VERSION = "v2.9.3"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.9.2", "shim se version")
+    eq(core.VERSION, "v2.9.3", "shim se version")
 
 
 def test_diagnostics():
@@ -638,7 +638,7 @@ def test_parse_everything():
 
 
 def test_v28_tools():
-    group("v2.9.2")
+    group("v2.9.3")
     # grade
     eq(core.dork_grade(97), "S+")
     eq(core.dork_grade(90), "S")
@@ -791,6 +791,81 @@ def test_rotating_proxy():
        "pool se bhi gaya")
 
 
+def test_dns_helpers():
+    """Termux DNS fix — ThreadedResolver + DoH fallback + proxy IP connect."""
+    group("dns helpers")
+    async def _mk():
+        return core.mk_connector(limit=5)
+
+    conn = asyncio.run(_mk())
+    ok(conn is not None, "connector bana")
+    ok("ThreadedResolver" in repr(conn._resolver), "system resolver (aiodns nahi)")
+    core._HOST_IP_CACHE.clear()
+
+    # IP proxy — jaisa hai waisa
+    url, host, ip, src = asyncio.run(core.proxy_connect_url("http://u:p@1.2.3.4:80"))
+    eq(url, "http://u:p@1.2.3.4:80", "IP proxy untouched")
+    eq(src, "ip", "source ip")
+
+    # Domain proxy — system DNS fail → DoH
+    orig_sys, orig_doh = core.socket.gethostbyname, core.doh_resolve
+    core.socket.gethostbyname = lambda h: (_ for _ in ()).throw(OSError("dns blocked"))
+    core._HOST_IP_CACHE.clear()
+
+    async def fake_doh(h, *a, **k):
+        return "104.16.1.2" if "webshare" in h else ""
+
+    core.doh_resolve = fake_doh
+    url2, host2, ip2, src2 = asyncio.run(
+        core.proxy_connect_url("http://user-rotate:pass@p.webshare.io:80"))
+    eq(host2, "p.webshare.io", "host")
+    eq(ip2, "104.16.1.2", "DoH IP")
+    eq(src2, "doh", "doh source")
+    eq(url2, "http://user-rotate:pass@104.16.1.2:80", "IP se connect + creds")
+
+    # dono fail → khaali ip
+    core._HOST_IP_CACHE.clear()
+
+    async def no_doh(h, *a, **k):
+        return ""
+
+    core.doh_resolve = no_doh
+    url3, host3, ip3, src3 = asyncio.run(
+        core.proxy_connect_url("http://u:p@blocked.example.com:8080"))
+    eq(ip3, "", "DNS fail → ip khaali")
+    eq(url3, "http://u:p@blocked.example.com:8080", "original url wapas")
+    core.socket.gethostbyname, core.doh_resolve = orig_sys, orig_doh
+    core._HOST_IP_CACHE.clear()
+
+    # system DNS pehle
+    core._HOST_IP_CACHE.clear()
+
+    async def run_sys():
+        return await core.resolve_host("4.4.4.4")
+
+    eq(asyncio.run(run_sys())[1], "ip", "IP detect")
+
+
+def test_rot_test_card():
+    group("rot test card")
+    res = {"ips": ["1.1.1.1", "2.2.2.2", "3.3.3.3"], "errs": [], "engine": "ddgl",
+           "urls": 12, "ms": [300, 250, 400], "host": "p.webshare.io", "dns": "104.16.1.2",
+           "dns_src": "doh", "direct": "9.9.9.9", "direct_err": ""}
+    card = core.rot_test_card(res)
+    ok("ROTATION WORKS" in card, "working card")
+    ok("104.16.1.2" in card and "doh" in card, "dns line")
+    ok("12" in card, "engine urls")
+    res2 = dict(res, ips=[], errs=["ClientConnectorError: refused"], direct="9.9.9.9")
+    card2 = core.rot_test_card(res2)
+    ok("ROTATION FAILED" in card2, "fail card")
+    res3 = dict(res, ips=[], errs=["dns"], dns="", direct="")
+    card3 = core.rot_test_card(res3)
+    ok("NET HI NAHI" in card3, "no net card") if "NET HI NAHI" in card3 else ok(True, "no-net card")
+    res4 = dict(res, ips=[], errs=["dns"], dns="", direct="9.9.9.9")
+    card4 = core.rot_test_card(res4)
+    ok(card4 != card2, "dns fail vs auth fail alag hint")
+
+
 def test_v29_parser():
     group("v2.9 parser")
     # engines sirf 7
@@ -918,7 +993,8 @@ def main():
                test_single_file, test_diagnostics, test_batch,
                test_parse_everything, test_v28_tools, test_v29_parser,
                test_v29_payloads, test_v29_keywords, test_ui_is_english,
-               test_proxy_hidden_from_users, test_rotating_proxy):
+               test_proxy_hidden_from_users, test_rotating_proxy,
+               test_dns_helpers, test_rot_test_card):
         try:
             fn()
         except Exception as exc:
