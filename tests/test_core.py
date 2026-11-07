@@ -756,6 +756,41 @@ def test_proxy_hidden_from_users():
     ok("🧅" in upd2.last_text(), "admin ko proxy status dikhta hai")
 
 
+def test_rotating_proxy():
+    group("rotating proxy")
+    # 4 tarah ke format → ek hi url
+    want = "http://user-rotate:pass123@p.webshare.io:80"
+    for raw in ("p.webshare.io:80:user-rotate:pass123",
+                "user-rotate:pass123@p.webshare.io:80",
+                "http://user-rotate:pass123@p.webshare.io:80",
+                "p.webshare.io:80:user-rotate:pass123\n"):
+        got = core.parse_proxies(raw)
+        eq(got[0], want, "format %s" % raw[:26])
+        eq(len(got), 1, "ek hi entry")
+    # mixed list — normal proxy bhi saath
+    mixed = core.parse_proxies("1.2.3.4:8080\np.webshare.io:80:u-rotate:p")
+    ok(any("1.2.3.4" in x for x in mixed), "normal proxy bhi")
+    ok(any("p.webshare.io" in x for x in mixed), "rotating bhi")
+    eq(core._mask_proxy(want), "http://user-rotate:***@p.webshare.io:80", "password masked")
+
+    core.rot_save([want])
+    eq(core.rot_proxies(), [want], "save + load")
+    ok(os.path.exists(os.path.join(core.DATA_DIR, "rot_proxy.txt")), "file likhi")
+    ok(core.proxy_available(), "rot se proxy available")
+    pool = core.load_proxy_pool()
+    ok(any(isinstance(x, dict) and x.get("rot") for x in pool), "pool me rot marker")
+
+    rot = core.ProxyRotator(enabled=True)
+    eq(rot.next(), want, "rot endpoint priority")
+    rot.dead(want)
+    ok(rot.bad[want] - time.time() <= core.ROT_COOLDOWN + 1, "chhota cooldown (10s)")
+    ok(rot.alive() == 0, "cooldown me")
+    core.rot_save([])
+    ok(core.rot_proxies() == [], "clear")
+    ok(not any(isinstance(x, dict) and x.get("rot") for x in core.load_proxy_pool()),
+       "pool se bhi gaya")
+
+
 def test_v29_parser():
     group("v2.9 parser")
     # engines sirf 7
@@ -883,7 +918,7 @@ def main():
                test_single_file, test_diagnostics, test_batch,
                test_parse_everything, test_v28_tools, test_v29_parser,
                test_v29_payloads, test_v29_keywords, test_ui_is_english,
-               test_proxy_hidden_from_users):
+               test_proxy_hidden_from_users, test_rotating_proxy):
         try:
             fn()
         except Exception as exc:

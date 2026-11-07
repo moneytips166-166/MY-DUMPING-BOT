@@ -4,6 +4,19 @@
 
 ---
 
+## 🔁 v2.9.2 — Rotating proxy (Webshare / koi bhi) support
+
+| Cheez | Detail |
+|---|---|
+| Endpoint formats | `host:port:user:pass` · `user:pass@host:port` · `http://user:pass@host:port` · `socks5h://user:pass@host:port` |
+| Add kahan | `/rotproxy p.webshare.io:80:USER-rotate:PASS` ya `/admin → PROXY SCRAPE → 🔁 ROTATING PROXY` |
+| Test | `/rotproxy test` — 3 requests ke IP + DDG Lite se dork test |
+| Priority | Rotating endpoint har request pe use hota hai (har baar naya IP), pool proxies backup |
+| Cooldown | Rot endpoint 10s rest (dead nahi), pool proxy 180s |
+| Storage | `data/rot_proxy.txt` + settings (password repo me nahi) |
+
+---
+
 ## 🆕 v2.9 — 8 parser bugs fixed, 7 engines, rotating proxy, STOP button, niches
 
 | Feature | Status |

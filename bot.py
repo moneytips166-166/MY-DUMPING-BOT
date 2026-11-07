@@ -2389,6 +2389,24 @@ def parse_proxies(text: str) -> list:
         except Exception:
             pass
     used = []   # proto URL ne jo span le liya, IP_PORT usko skip kare
+    # (0a) ROTATING endpoint — host:port:user:pass  (p.webshare.io:80:user-rotate:pass)
+    for m in re.finditer(
+            r"(?<![\w.])([A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?\.[A-Za-z]{2,})"
+            r":(\d{2,5}):([^\s:@/]+):([^\s:@/,;|]+)", t):
+        host, port, user, pw = m.group(1), int(m.group(2)), m.group(3), m.group(4)
+        if 1 <= port <= 65535 and user and pw:
+            out.append("http://%s:%s@%s:%d" % (user, pw, host, port))
+            used.append((m.start(), m.end()))
+    # (0b) user:pass@host:port (bina scheme — webshare copy)
+    for m in re.finditer(
+            r"(?<![\w/@:.\-])([^\s:@/]+):([^\s:@/,;|]+)@"
+            r"([A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?\.[A-Za-z]{2,}):(\d{2,5})", t):
+        if any(m.start() < ue and m.end() > us for us, ue in used):
+            continue
+        user, pw, host, port = m.group(1), m.group(2), m.group(3), int(m.group(4))
+        if 1 <= port <= 65535 and user and pw:
+            out.append("http://%s:%s@%s:%d" % (user, pw, host, port))
+            used.append((m.start(), m.end()))
     # (a) full format — proto://user:pass@host:port (IPv6 bhi)
     for m in FULL_PROXY.finditer(t):
         proto = (m.group("proto") or "http").lower()
@@ -2678,9 +2696,53 @@ async def check_proxies_batched(proxies, batch=None, concurrency=None, timeout=N
     return good
 
 
+ROT_COOLDOWN = 10.0          # rotating endpoint — chhota rest, upstream khud IP badalta hai
+
+
+def rot_proxies() -> list:
+    """Rotating endpoints — settings + data/rot_proxy.txt (credentials phone pe rehte hain)."""
+    out = [str(x).strip() for x in (sget("rot_proxy", []) or []) if str(x).strip()]
+    pth = os.path.join(DATA_DIR, "rot_proxy.txt")
+    if os.path.exists(pth):
+        try:
+            with open(pth, encoding="utf-8", errors="ignore") as f:
+                out += parse_proxies(f.read())
+        except Exception:
+            pass
+    return _uniq(out)
+
+
+def rot_save(urls: list) -> list:
+    urls = _uniq([u for u in (urls or []) if u])
+    sset("rot_proxy", urls)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(os.path.join(DATA_DIR, "rot_proxy.txt"), "w", encoding="utf-8") as f:
+            f.write("\n".join(urls) + ("\n" if urls else ""))
+    except Exception:
+        pass
+    global PROXIES
+    PROXIES = _merge_rot([p for p in (PROXIES or []) if not (isinstance(p, dict) and p.get("rot"))])
+    return urls
+
+
+def _merge_rot(pool: list) -> list:
+    """Pool me rotating endpoints add (marker rot=True) — duplicate nahi."""
+    pool = list(pool or [])
+    have = {p.get("url") if isinstance(p, dict) else str(p) for p in pool}
+    for u in rot_proxies():
+        if u not in have:
+            pool.append({"url": u, "ms": 0, "ok": True, "rot": True})
+    return pool
+
+
+def proxy_available() -> bool:
+    return bool(PROXIES or load_proxy_pool() or rot_proxies())
+
+
 def save_proxy_pool(good: list) -> None:
     global PROXIES
-    PROXIES = good
+    PROXIES = _merge_rot(good)
     jsave("proxies", {"at": datetime.now().isoformat(timespec="seconds"),
                       "list": [{"url": g["url"], "ms": g.get("ms", 0)} for g in good]})
 
@@ -2690,7 +2752,8 @@ def load_proxy_pool() -> list:
     if PROXIES:
         return PROXIES
     d = jload("proxies", {})
-    PROXIES = [{"url": x["url"], "ms": x.get("ms", 0), "ok": True} for x in (d.get("list") or [])]
+    PROXIES = _merge_rot([{"url": x["url"], "ms": x.get("ms", 0), "ok": True}
+                          for x in (d.get("list") or [])])
     return PROXIES
 
 
@@ -3497,10 +3560,13 @@ class ProxyRotator:
     def __init__(self, pool=None, enabled: bool = True):
         self.enabled = bool(enabled)
         self.pool = []
+        self.rot = set()
         for x in (pool if pool is not None else (PROXIES or load_proxy_pool())) or []:
             u = x.get("url") if isinstance(x, dict) else str(x or "")
             if u:
                 self.pool.append(u)
+                if (isinstance(x, dict) and x.get("rot")) or u in rot_proxies():
+                    self.rot.add(u)
         self.bad = {}
         self.idx = 0
         self.used = 0
@@ -3514,10 +3580,14 @@ class ProxyRotator:
         return sum(1 for p in self.pool if self.bad.get(p, 0) < now)
 
     def next(self):
-        """Agla proxy — round robin, cooldown wale skip."""
+        """Agla proxy — rot endpoint pehle (har request naya IP), phir round robin."""
         if not self.enabled or not self.pool:
             return None
         now = time.time()
+        for p in self.pool:                      # rotating endpoint priority
+            if p in self.rot and self.bad.get(p, 0) < now:
+                self.used += 1
+                return p
         n = len(self.pool)
         for _ in range(n):
             p = self.pool[self.idx % n]
@@ -3533,7 +3603,8 @@ class ProxyRotator:
 
     def dead(self, proxy):
         if proxy:
-            self.bad[proxy] = time.time() + self.COOLDOWN
+            cool = ROT_COOLDOWN if proxy in self.rot else self.COOLDOWN
+            self.bad[proxy] = time.time() + cool
             self.fail += 1
 
     def stats(self) -> dict:
@@ -3688,7 +3759,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     max_urls = max(10, min(500000, int(max_urls or 5000)))
     pages = max(1, min(10, int(pages or 1)))
     if use_proxy is None:                       # auto
-        use_proxy = bool(PROXIES or load_proxy_pool())
+        use_proxy = proxy_available()
     mode = mode if mode in ENGINE_SETS else engines_mode()
     reset_engine_miss()                         # BUG 2 fix: naya scan = naya count
     rot = ProxyRotator(enabled=bool(use_proxy))
@@ -3862,7 +3933,9 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                         out.append(kk)
                         if len(out) >= max_urls:
                             break
-                    if got_any >= 3:              # 3 engines ka data = kaafi
+                    # proxy ho to max mode me zyada engines (zyada URLs), warna 3 = fast
+                    _need = 5 if (mode == "max" and len(rot)) else 3
+                    if got_any >= _need:
                         break
             st["unique"] = len(out)                  # live counter for the card
             st["per_dork"] = round(st["scanned"] / max(0.001, time.time() - _t_start), 2)
@@ -4955,6 +5028,103 @@ async def niche_menu(update, context, name: str):
             await reply_msg(update).reply_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
         except Exception:
             pass
+
+
+async def rot_live_test(urls: list, tries: int = 3, timeout: float = 12.0) -> dict:
+    """Rotating endpoint sach me kaam kar raha hai? IP badalte hain? Engine chalta hai?"""
+    out = {"ips": [], "errs": [], "engine": "", "urls": 0, "ms": []}
+    proxy = urls[0] if urls else None
+    if not proxy:
+        return out
+    conn = aiohttp.TCPConnector(limit=4, ssl=False, force_close=True)
+    async with aiohttp.ClientSession(connector=conn) as session:
+        for _ in range(max(1, tries)):
+            t0 = time.perf_counter()
+            try:
+                async with session.get("https://api.ipify.org?format=json", proxy=proxy,
+                                       headers=UA, ssl=False,
+                                       timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                    body = await r.text(errors="ignore")
+                    ip = ""
+                    try:
+                        ip = str((json.loads(body) or {}).get("ip") or "")
+                    except Exception:
+                        ip = body.strip()[:40]
+                    if ip:
+                        out["ips"].append(ip)
+                        out["ms"].append(int((time.perf_counter() - t0) * 1000))
+                    else:
+                        out["errs"].append("HTTP %s" % r.status)
+            except Exception as exc:
+                out["errs"].append("%s: %s" % (type(exc).__name__, str(exc)[:60]))
+        # engine test — DDG Lite ek dork
+        try:
+            got = await fetch_engine(session, "ddgl", "site:gov.in inurl:login",
+                                     proxy=proxy, timeout=12.0)
+            out["urls"] = len(got)
+            out["engine"] = "ddgl"
+        except Exception as exc:
+            out["errs"].append("engine: %s" % str(exc)[:60])
+    return out
+
+
+def rot_test_card(res: dict) -> str:
+    ips = res.get("ips") or []
+    uniq = len(set(ips))
+    ok_rot = uniq >= 2
+    lines = [KV("Requests", "<code>%d</code>" % (len(ips) + len(res.get("errs") or [])), "🌐"),
+             KV("Working", "<code>%d</code>" % len(ips), "✅"),
+             KV("Unique IPs", "<code>%d</code>" % uniq, "🔁"),
+             KV("Engine test", "<code>%s</code> → <code>%d URLs</code>"
+                % (res.get("engine") or "—", res.get("urls", 0)), "🔍")]
+    head = ("ROTATION WORKS ✅" if ok_rot else
+            ("END POINT OK — IP same" if ips else "ROTATION FAILED ❌"))
+    body = "\n".join(lines)
+    if ips:
+        body += "\n\n" + B("IPs") + "\n" + "\n".join(
+            "• <code>%s</code>%s" % (esc(ip), (" — %sms" % res["ms"][i]) if i < len(res.get("ms") or []) else "")
+            for i, ip in enumerate(ips[:5]))
+    if res.get("errs"):
+        body += "\n\n" + B("Errors") + "\n" + "\n".join(
+            "• <code>%s</code>" % esc(e) for e in (res.get("errs") or [])[:4])
+    tip = ("\n\n" + P("Parser ready — run DORKER → DEEP SCAN now.")
+           if ips else
+           "\n\n" + P("Check host / port / username / password. "
+                       "On Webshare the username must end with -rotate."))
+    return H("ROTATION TEST", "%d/%d ok" % (len(ips), max(1, len(ips) + len(res.get("errs") or [])))) \
+        + "\n\n" + head + "\n\n" + body + tip
+
+
+async def input_rot_paste(update, context, text: str):
+    """Admin rotating endpoint paste karta hai → parse → save → live test."""
+    if not is_admin(update.effective_user.id):
+        return
+    px = parse_proxies(text or "")
+    if not px:
+        await update.effective_message.reply_text(
+            "❌ Nothing parsed. Format:\n"
+            "<code>p.webshare.io:80:USER-rotate:PASS</code>\n"
+            "<code>http://USER-rotate:PASS@p.webshare.io:80</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
+        await_set(context, "rot_paste")
+        context.user_data["await_admin"] = True
+        return
+    rot_save(px)
+    sset("proxy_rotate", 1)
+    msg = await update.effective_message.reply_text(
+        "🔁 <b>Saved %d endpoint(s)</b> — testing (3 requests + engine)…" % len(px),
+        parse_mode=ParseMode.HTML,
+        reply_markup=RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
+    res = await rot_live_test(px, tries=3)
+    try:
+        await msg.edit_text(rot_test_card(res), parse_mode=ParseMode.HTML,
+                            reply_markup=RK([
+                                [InlineKeyboardButton("🔁 TEST AGAIN", callback_data="a:rottest")],
+                                [InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
+    except Exception:
+        pass
+    await_clear(context)
 
 
 async def input_px_paste(update, context, text: str):
@@ -7344,6 +7514,7 @@ def kb_file(kind: str) -> InlineKeyboardMarkup:
 
 # file ko seedha in flows me daal sakte hain (text chahiye, number nahi)
 FILE_FLOW_TEXT = {"gen_kw", "dpgen_kw", "kw_input", "qa_keywords", "nc_kw", "px_paste",
+                  "rot_paste",
                   "qa_dorks", "qa_urls", "rev_urls", "inj_urls", "parse_dorks",
                   "rand_items", "pro_combo", "pro_domains", "pro_params",
                   "pro_filetypes", "pro_sfilters", "pro_pfilters"}
@@ -8723,24 +8894,31 @@ async def admin_callback(update, context, action: str):
             [InlineKeyboardButton("🚀 SCAN NOW", callback_data="a:pxscan")],
             [InlineKeyboardButton("➕ ADD PROXIES (paste / file)",
                                   callback_data="a:pxadd")],
+            [InlineKeyboardButton("🔁 ROTATING PROXY (webshare / any)",
+                                  callback_data="a:rotadd")],
+            [InlineKeyboardButton("🧪 TEST ROTATION (%d)" % len(rot_proxies()),
+                                  callback_data="a:rottest"),
+             InlineKeyboardButton("🗑 ROT", callback_data="a:rotclear")],
             [InlineKeyboardButton("🔄 ROTATION: %s"
                                   % ("ON" if sget("proxy_rotate", 1) else "OFF"),
                                   callback_data="a:pxrot")],
             [InlineKeyboardButton("📦 CHECK BATCH: %s" % fmt(proxy_batch_size()),
                                   callback_data="a:pzbatch")],
             [InlineKeyboardButton("🎯 TARGET ALIVE: %s"
-                                  % ("SAARE" if not want_alive_n() else fmt(want_alive_n())),
+                                  % ("ALL" if not want_alive_n() else fmt(want_alive_n())),
                                   callback_data="a:pzwant")],
             [InlineKeyboardButton("🗑 CLEAR", callback_data="a:pxclear")],
             [InlineKeyboardButton("⬅️ BACK", callback_data="a:home")],
         ])
         return await ed(H("ADMIN — PROXY") + "\n\n✅ Alive: <code>%d</code>\n📄 Manual: <code>%d</code>\n"
                         "🌐 Sources: <code>%d</code>\n📦 Batch: <code>%s</code> • 🎯 Target: <code>%s</code>\n"
-                        "🔄 Rotation: <code>%s</code> • 14+ formats\n\n%s"
+                        "🔁 Rotating endpoint: <code>%s</code> • pool rotation: <code>%s</code>\n"
+                        "14+ formats\n\n%s"
                         "\n\n<i>Batch = how many are checked at once. With 60k found, 15 batches cover all.</i>"
                         % (len(pool), len(manual_proxies()), len(PROXY_SOURCES),
                            fmt(proxy_batch_size()),
                            ("all" if not want_alive_n() else fmt(want_alive_n())),
+                           ("✅ %d set" % len(rot_proxies())) if rot_proxies() else "⚪ none",
                            ("ON" if sget("proxy_rotate", 1) else "OFF"),
                            short_list([p["url"].replace("http://", "") for p in pool[:12]], 12)), kb)
 
@@ -8770,6 +8948,40 @@ async def admin_callback(update, context, action: str):
     if action == "pxrot":
         sset("proxy_rotate", 0 if sget("proxy_rotate", 1) else 1)
         return await admin_callback(update, context, "proxy")
+
+    if action == "rotadd":
+        await ed(H("ROTATING PROXY", "one endpoint • new IP every request") + "\n\n"
+                 "Send the rotating endpoint in <b>any</b> of these formats:\n"
+                 "<code>host:port:user:pass</code>\n"
+                 "<code>user:pass@host:port</code>\n"
+                 "<code>http://user:pass@host:port</code>\n"
+                 "<code>socks5h://user:pass@host:port</code>\n\n"
+                 "Webshare example:\n"
+                 "<code>p.webshare.io:80:USER-rotate:PASS</code>\n\n"
+                 "<i>One endpoint gives a new IP on every request — it is kept separately, "
+                 "never marked dead for long (only a 10s rest).</i>",
+                 RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
+        await_set(context, "rot_paste")
+        context.user_data["await_admin"] = True
+        return
+
+    if action == "rottest":
+        urls = rot_proxies()
+        if not urls:
+            return await admin_callback(update, context, "rotadd")
+        await ed("🧪 <b>TESTING ROTATION</b>\n\n"
+                 "3 requests → IP dekhte hain, phir ek engine se dork test…",
+                 RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
+        res = await rot_live_test(urls, tries=3)
+        return await ed(rot_test_card(res),
+                        RK([[InlineKeyboardButton("🔁 TEST AGAIN", callback_data="a:rottest")],
+                            [InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
+
+    if action == "rotclear":
+        rot_save([])
+        return await ed(H("ROTATING PROXY", "removed") + "\n\n"
+                        "Rotating endpoint removed. Pool proxies are unchanged.",
+                        RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
 
     if action == "pxadd":
         await ed(H("ADD PROXIES", "14+ formats") + "\n\n"
@@ -9078,6 +9290,7 @@ AWAIT_HANDLERS["deep_max"] = lambda *a, **k: input_deep_max(*a, **k)
 AWAIT_HANDLERS["nc_kw"] = lambda *a, **k: input_nc_kw(*a, **k)
 AWAIT_HANDLERS["nc_name"] = lambda *a, **k: input_nc_name(*a, **k)
 AWAIT_HANDLERS["px_paste"] = lambda *a, **k: input_px_paste(*a, **k)
+AWAIT_HANDLERS["rot_paste"] = lambda *a, **k: input_rot_paste(*a, **k)
 AWAIT_HANDLERS["dork_domain"] = lambda *a, **k: input_pro_set(*a, "domains", k.get("text", ""), ) if False else _dork_domain_shim(*a, **k)
 AWAIT_HANDLERS["gen_count"] = lambda *a, **k: input_gen_count(*a, **k)
 AWAIT_HANDLERS["gen_kw"] = lambda *a, **k: input_gen_kw(*a, **k)
@@ -9213,6 +9426,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("setkey", cmd_setkey))
     app.add_handler(CommandHandler("apis", cmd_apis))
     app.add_handler(CommandHandler("batch", cmd_batch))
+    app.add_handler(CommandHandler("rotproxy", cmd_rotproxy))
     app.add_handler(CommandHandler("engines", cmd_engines))
     app.add_handler(CommandHandler("enginetest", cmd_enginetest))
     app.add_handler(CommandHandler("admin", cmd_admin))
@@ -9539,6 +9753,59 @@ APIS_TEXT = (
     "If you need volume: Serper paid $0.30/1k — 10k dorks for about $3\n\n"
     "Check status: <code>/setkey</code>"
 )
+
+
+async def cmd_rotproxy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /rotproxy host:port:user:pass — rotating endpoint add + test."""
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        return
+    arg = " ".join(context.args or []).strip()
+    if not arg:
+        cur = rot_proxies()
+        await update.effective_message.reply_text(
+            (H("ROTATING PROXY", "%d set" % len(cur)) + "\n\n"
+             + ("\n".join("• <code>%s</code>" % esc(_mask_proxy(u)) for u in cur) + "\n\n"
+                if cur else P("No rotating endpoint set.") + "\n\n")
+             + B("Add") + "\n<code>/rotproxy p.webshare.io:80:USER-rotate:PASS</code>\n"
+             + "<i>Formats: host:port:user:pass · user:pass@host:port · http://user:pass@host:port</i>\n\n"
+             + B("Test") + "\n<code>/rotproxy test</code>"),
+            parse_mode=ParseMode.HTML)
+        return
+    if arg.lower() in ("test", "t"):
+        urls = rot_proxies()
+        if not urls:
+            await update.effective_message.reply_text(
+            "Add one first: <code>/rotproxy host:port:user:pass</code>", parse_mode=ParseMode.HTML)
+            return
+        msg = await update.effective_message.reply_text("🧪 Testing rotation…")
+        res = await rot_live_test(urls, tries=3)
+        await msg.edit_text(rot_test_card(res), parse_mode=ParseMode.HTML)
+        return
+    if arg.lower() in ("clear", "off", "remove"):
+        rot_save([])
+        await update.effective_message.reply_text("🗑 Rotating endpoint removed.")
+        return
+    px = parse_proxies(arg)
+    if not px:
+        await update.effective_message.reply_text(
+            "❌ Could not parse. Example: <code>/rotproxy p.webshare.io:80:USER-rotate:PASS</code>",
+            parse_mode=ParseMode.HTML)
+        return
+    rot_save(px)
+    sset("proxy_rotate", 1)
+    msg = await update.effective_message.reply_text(
+        "🔁 Saved <b>%d</b> endpoint(s) — testing…" % len(px), parse_mode=ParseMode.HTML)
+    res = await rot_live_test(px, tries=3)
+    await msg.edit_text(rot_test_card(res), parse_mode=ParseMode.HTML)
+
+
+def _mask_proxy(url: str) -> str:
+    """user:pass@host → user:***@host (screen pe password chhupao)."""
+    m = re.match(r"^(\w+://)?([^:@/]+):([^@/]*)@(.+)$", str(url or ""))
+    if not m:
+        return str(url or "")
+    return "%s%s:***@%s" % (m.group(1) or "", m.group(2), m.group(4))
 
 
 async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
