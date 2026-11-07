@@ -8798,7 +8798,7 @@ async def admin_callback(update, context, action: str):
 
     if action == "pxadd":
         await ed(H("ADD PROXIES", "14+ formats") + "\n\n"
-                 "Paste proxies (ya .txt file bhejo). Supported:\n"
+                 "Paste proxies (or send a .txt file). Supported:\n"
                  "<code>1.2.3.4:8080</code>\n"
                  "<code>http://1.2.3.4:8080</code>\n"
                  "<code>socks5://1.2.3.4:1080</code>\n"
@@ -8806,8 +8806,8 @@ async def admin_callback(update, context, action: str):
                  "<code>socks4a://1.2.3.4:1080</code>\n"
                  "<code>1.2.3.4 8080</code> · <code>1.2.3.4,8080</code>\n"
                  "<code>[2001:db8::1]:8080</code> (IPv6)\n"
-                 "JSON (<code>data/proxies/results</code>) bhi chalega\n\n"
-                 "<i>Sab check honge (multi-endpoint) → pool me save.</i>",
+                 "JSON (<code>data/proxies/results</code>) also works\n\n"
+                 "<i>All of them are checked (multi-endpoint) → saved to the pool.</i>",
                  RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
         await_set(context, "px_paste")
         context.user_data["await_admin"] = True
