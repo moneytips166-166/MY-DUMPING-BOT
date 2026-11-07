@@ -74,7 +74,7 @@ async def cb_screens():
     # admin API cards + proxy/engine batch screens
     for data in ("a:keys_api", "a:apis", "a:home", "a:proxy", "a:eng",
                  "a:pzbatch", "a:pzwant", "a:injbatch",
-                 "m:dork", "dk:cms", "dp:country", "m:dump"):
+                 "m:dork", "dk:cms", "dp:country", "m:dump", "kw:niche"):
         ctx = FakeContext({})
         upd = FakeUpdate(data=data)
         try:

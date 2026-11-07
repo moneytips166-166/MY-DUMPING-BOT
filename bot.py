@@ -4098,8 +4098,7 @@ async def send_file(update, path: str, caption: str = ""):
 # ═══════════════════════════════════════════════════════════════════════════════
 def kb_main(uid=0) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton("🔑 HQ KEYWORDS", callback_data="m:kw"),
-         InlineKeyboardButton("➕ ADD NICHE", callback_data="nc:add")],
+        [InlineKeyboardButton("🔑 HQ KEYWORDS", callback_data="m:kw")],
     ]
     nch = niche_list()
     for i in range(0, len(nch), 2):
@@ -4342,7 +4341,6 @@ def help_text() -> str:
         ("💉", "INJECTOR", "%s payloads in %d categories × every parameter, %s DBMS error patterns (%d databases)."
          % (fmt(len(PAYLOADS)), len(PAYLOAD_CATS), fmt(DBMS_COUNT), len(DBMS_ERRORS))),
         ("📦", "DUMPER", "every file you have made — txt / json / zip, plus a full export with no row caps."),
-        ("🧅", "PROXY", "%s sources + DoH bypass + rotating pool + parallel checker (admin only)." % len(PROXY_SOURCES)),
         ("📊", "QUALITY", "0-100 score for dorks and keywords, with the reasons."),
         ("🎲", "RANDOMIZER", "shuffles dorks + mutates operators."),
     ]
@@ -4533,6 +4531,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── admin ──
     if data.startswith("a:"):
         return await admin_callback(update, context, data[2:])
+
+    # ── proxy sirf admin — user panel me kuch bhi na dikhe ──
+    if data.startswith(("px:", "m:proxy")) and not is_admin(uid):
+        return await show_home(update, uid)
 
     # ── tool sub-buttons (dd / pr / rd / df / px / inj) ──
     if data.startswith(("dd:", "dp:", "pr:", "rd:", "df:", "px:", "inj:", "dk:")):
@@ -4939,7 +4941,8 @@ async def niche_menu(update, context, name: str):
                               callback_data="nc:dork:%d" % idx)],
         [InlineKeyboardButton("🔍 DEEP SCAN", callback_data="pr:deep")],
         [InlineKeyboardButton("🗑 DELETE", callback_data="nc:del:%d" % idx)],
-        [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
+        [InlineKeyboardButton("⬅️ MY NICHES", callback_data="kw:niche"),
+         InlineKeyboardButton("🏠 HOME", callback_data="m:home")],
     ])
     txt = (H("NICHE", name) + "\n\n"
            + KV("Keywords", "<code>%s</code>" % fmt(len(kws)), "🔑") + "\n"
@@ -5040,8 +5043,10 @@ async def input_nc_name(update, context, text: str):
         (H("NICHE SAVED", name) + "\n\n"
          + KV("Keywords", "<code>%s</code>" % fmt(len(kws)), "🔑") + "\n"
          + KV("Total niches", "<code>%s</code>" % fmt(len(niche_list())), "📁") + "\n\n"
-         + P("This niche is now a button on the main menu — use it whenever you want.")),
-        parse_mode=ParseMode.HTML, reply_markup=kb_main(update.effective_user.id))
+         + P("This niche is now a button in HQ KEYWORDS → MY NICHES and on the main menu.")),
+        parse_mode=ParseMode.HTML,
+        reply_markup=RK([[InlineKeyboardButton("📁 MY NICHES", callback_data="kw:niche")],
+                         [InlineKeyboardButton("🏠 HOME", callback_data="m:home")]]))
 
 
 async def cb_dk_cms(update, context, arg: str = ""):
@@ -5756,7 +5761,7 @@ async def tool_kw(update, context):
                            ".txt .csv .json .xlsx .docx all work."))
     try:
         await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK([
-            [InlineKeyboardButton("📦 NICHE PACKS (ready HQ)", callback_data="kw:niche")],
+            [InlineKeyboardButton("📁 MY NICHES (add / use)", callback_data="kw:niche")],
             [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
         ]))
     except Exception:
@@ -5891,48 +5896,44 @@ def kw_to_dorks(kws, n: int = 3000, tld: str = "") -> list:
 
 
 def niche_kb() -> InlineKeyboardMarkup:
-    rows = []
-    keys = list(NICHE_PACKS.keys())
-    for i in range(0, len(keys), 2):
+    """Mere niches — ➕ ADD NICHE + har niche ka button (ready packs nahi)."""
+    rows = [[InlineKeyboardButton("➕ ADD NICHE", callback_data="nc:add")]]
+    nch = niche_list()
+    for i in range(0, len(nch), 2):
         row = []
-        for k in keys[i:i + 2]:
-            row.append(InlineKeyboardButton(NICHE_PACKS[k][0], callback_data="kw:niche:" + k))
+        for nm in nch[i:i + 2]:
+            kws = niche_get(nm) or []
+            row.append(InlineKeyboardButton("📁 %s (%d)" % (nm[:16], len(kws)),
+                                            callback_data="nc:use:%d" % nch.index(nm)))
         rows.append(row)
     rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:kw")])
     return RK(rows)
 
 
 async def cb_niche(update, context, key: str = ""):
+    """📁 MY NICHES — user ke apne niches (ready packs hataye ja chuke)."""
     q = update.callback_query
-    if key and key in NICHE_PACKS:
-        seeds = niche_seeds(key)
-        context.user_data["kw_items"] = seeds
-        context.user_data["kw_cores"] = kw_cores(seeds)
-        cap = kw_capacity(seeds)
-        try:
-            await q.edit_message_text(
-                (H("NICHE PACK", NICHE_PACKS[key][0]) + "\n\n"
-                 "%s\n%s\n\n<b>%s</b>\n%s\n\n"
-                 "🔢 <b>%s</b> (1 – %s)"
-                 % (KV("Seeds", "<code>%s</code>" % esc(", ".join(seeds[:6])), "🌱"),
-                    KV("Max", "<code>%s</code> keywords" % fmt(min(cap, KW_MAX)), "📊"),
-                    B("Preview"), short_list(seeds, 6),
-                    B("How many keywords?"), fmt(KW_MAX))),
-                parse_mode=ParseMode.HTML, reply_markup=kb_back("m:kw"))
-        except Exception:
-            pass
-        await_set(context, "kw_count")
-        return
+    mine = niche_list()
+    lines = []
+    for nm in mine[:12]:
+        kws = niche_get(nm) or []
+        lines.append(KV(esc(nm)[:20], "<code>%s</code> keywords" % fmt(len(kws)), "📁"))
+    if mine:
+        body = "\n".join(lines)
+        if len(mine) > 12:
+            body += "\n<i>+ %d more…</i>" % (len(mine) - 12)
+    else:
+        body = P("No niches yet. Tap ➕ ADD NICHE, send your keywords, "
+                 "give it a name — it becomes a button here forever.")
     try:
         await q.edit_message_text(
-            (H("NICHE PACKS", "%d ready packs" % len(NICHE_PACKS)) + "\n\n"
-             "%s\n%s\n\n%s"
-             % (P("Every pack ships with ready HQ seeds"),
-                P("it builds as many keywords as you ask for (max 100,000)"),
-                B("Pick a niche"))),
+            (H("MY NICHES", "%d saved" % len(mine)) + "\n\n" + body + "\n\n"
+             + P("Your own keywords only — no ready-made packs anymore.") + "\n\n"
+             + B("Pick a niche or add a new one")),
             parse_mode=ParseMode.HTML, reply_markup=niche_kb())
     except Exception:
         pass
+    await_clear(context)
 
 
 async def cb_kw_action(update, context, action: str):
@@ -6224,13 +6225,14 @@ async def tool_parse(update, context):
            + KV("Mode", "<b>%s</b>" % ENGINE_LABEL[mode], "🎛")
            + "\n" + KV("Engines", "<code>%s</code>" % ", ".join(engine_list(mode)), "⚙️")
            + "\n" + KV("Free Google", "✅ ON (no key)" if gj_enabled() else "⚪ OFF", "🐦")
-           + "\n" + KV("Proxy", ("✅ %d alive" % len(pool)) if pool else "⚪ none — no-proxy mode", "🧅")
+           + ("\n" + KV("Proxy", ("✅ %d alive" % len(pool)) if pool else "⚪ none — direct mode", "🧅")
+              if is_admin(update.effective_user.id) else "")
            + "\n" + KV("Dorks ready", "<code>%s</code>" % fmt(len(last)), "🎯")
            + "\n" + KV("URL limit", ("<b>ALL</b> — as many as found"
                                       if not int(sget("parse_url_limit", 0) or 0)
                                       else "<code>%s</code>" % fmt(int(sget("parse_url_limit", 0)))), "🌐")
-           + "\n\n" + P("DDG Lite • DDG • Bing run without a proxy. "
-                           "Google and Yandex block your IP unless a proxy is rotating.")
+           + "\n\n" + P("DDG Lite • DDG • Bing run fine on mobile data. "
+                           "Google and Yandex often block mobile IPs — use fast mode.")
            + "\n\n" + B("Send the dork list") + "\n"
            + P("One per line — or send a file. You can also reuse the last dorks.")
            + "\n\n<code>/engines fast</code> for more speed.")
@@ -6453,7 +6455,9 @@ async def input_deep_max(update, context, text: str):
              + "\n\n" + B("Now do this") + "\n"
              + "1️⃣ <code>/enginetest</code> — which engine works, with the reason\n"
              + "2️⃣ <code>/engines fast</code> — ddgl • ddg • bing\n"
-             + "3️⃣ 🧅 PROXY ENGINE → add proxies (Jio/Airtel can block some engines)\n"
+             + (("3️⃣ 🧅 PROXY ENGINE → add proxies (Jio/Airtel can block some engines)\n")
+                if is_admin(update.effective_user.id) else
+                ("3️⃣ Try again in a few minutes (engines rate-limit)\n"))
              + "4️⃣ Simplify the dork: <code>site:x.in inurl:login</code>\n\n"
              + "<i>Google and Yandex block your IP without a proxy. DDG Lite, DDG and Bing usually work.</i>"),
             parse_mode=ParseMode.HTML, reply_markup=kb_back("m:parse"))
@@ -6533,12 +6537,14 @@ async def input_parse_max(update, context, text: str):
         txt = (H("PARSER — 0 URLs") + "\n\n"
                "❌ Koi URL nahi mila.\n\n"
                "🔍 Queries   : <code>%d</code>\n"
-               "🚫 Blocked   : <code>%d</code>\n"
-               "🧅 Proxies   : <code>%d</code>\n\n"
-               "👉 <b>Proxy add karo</b> — 🧅 PROXY ENGINE se\n"
-               "👉 Ya mode badlo: dork simple karo\n"
-               "👉 Ya thodi der baad try karo (engine rate-limit)"
-               % (st["queries"], blocked, len(PROXIES)))
+               "🚫 Blocked   : <code>%d</code>\n\n"
+               "%s"
+               "👉 Make the dork simpler: <code>site:x.in inurl:login</code>\n"
+               "👉 Or try again in a few minutes (engine rate-limit)"
+               % (st["queries"], blocked,
+                  ("🧅 Proxies   : <code>%d</code>\n\n"
+                   "👉 <b>Add proxies</b> from 🧅 PROXY ENGINE (admin)\n"
+                   % len(PROXIES)) if is_admin(update.effective_user.id) else ""))
     else:
         eng = ", ".join("%s:%d" % (k, v) for k, v in sorted(st["engine_hits"].items(), key=lambda z: -z[1])[:4])
         txt = (H("PARSER — DONE") + "\n\n"
@@ -8333,45 +8339,14 @@ def feat_kb() -> InlineKeyboardMarkup:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  📦 NICHE KEYWORD PACKS — ready HQ seeds
+#  NICHE PACKS — ready packs hata diye. Sirf user ke apne niches (nc:add)
 # ═══════════════════════════════════════════════════════════════════════════════
-NICHE_PACKS = OrderedDict([
-    ("crypto", ("₿ CRYPTO", ["crypto wallet", "bitcoin wallet", "metamask seed",
-                             "private key", "crypto exchange", "ledger backup"])),
-    ("creds", ("🔐 EMAIL:PASS", ["email password", "mail login", "smtp account",
-                                 "inbox access", "email list", "mail pass combo"])),
-    ("cc", ("💳 CARD (CC)", ["credit card bin", "carding shop", "cvv fullz",
-                            "card checker", "cc shop", "carding forum"])),
-    ("ecommerce", ("🛒 ECOMMERCE", ["shopify store", "woocommerce shop", "online store",
-                                    "product catalog", "checkout page", "order tracking"])),
-    ("admin", ("👑 ADMIN PANEL", ["admin panel", "admin login", "cpanel access",
-                                  "phpmyadmin login", "dashboard admin", "control panel"])),
-    ("db", ("🗄 DATABASE", ["mysql database", "sql backup", "database dump",
-                            "phpmyadmin db", "mssql server", "mongodb dump"])),
-    ("api", ("🔌 API / KEYS", ["api key", "api token", "rest api endpoint",
-                               "swagger docs", "graphql endpoint", "open api"])),
-    ("files", ("📁 FILES / BKP", ["backup file", "database backup", "config backup",
-                                  "sql dump file", "site backup", "full backup"])),
-    ("shop", ("🛍 SHOPPING", ["shopping cart", "payment gateway", "coupon code",
-                              "discount deal", "price comparison", "buy online"])),
-    ("smtp", ("📧 SMTP / MAIL", ["smtp server", "mail server", "smtp relay",
-                                 "email sender", "smtp credentials", "mail server login"])),
-    ("tools", ("🛠 TOOLS", ["admin finder", "sql scanner", "vuln scanner",
-                            "dork generator", "subdomain finder", "port scanner"])),
-    ("leak", ("🕵 LEAK / DB", ["leaked database", "breach dump", "combo list",
-                               "credential dump", "password leak", "data leak"])),
-    ("gov", ("🏛 GOV / EDU", ["government portal", "govt login", "education portal",
-                              "university login", "gov database", "public records"])),
-    ("mobile", ("📱 MOBILE / APK", ["apk download", "android app", "mod apk",
-                                    "premium apk", "ios app", "app store"])),
-    ("hosting", ("🖥 HOSTING", ["shared hosting", "vps server", "web hosting panel",
-                                "ftp access", "server login", "hosting cpanel"])),
-])
+NICHE_PACKS = OrderedDict()          # legacy naam — khaali (packs hata diye)
 
 
 def niche_seeds(key: str) -> list:
-    v = NICHE_PACKS.get((key or "").lower())
-    return list(v[1]) if v else []
+    """Legacy helper — ab khaali (ready packs nahi hain)."""
+    return []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -8549,7 +8524,7 @@ def kb_admin() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📊 DASHBOARD", callback_data="a:dash"),
          InlineKeyboardButton("👥 USERS", callback_data="a:users")],
         [InlineKeyboardButton("🔑 KEYS", callback_data="a:keys"),
-         InlineKeyboardButton("🧅 PROXY", callback_data="a:proxy")],
+         InlineKeyboardButton("🧅 PROXY SCRAPE", callback_data="a:proxy")],
         [InlineKeyboardButton("⚙️ ENGINE", callback_data="a:eng"),
          InlineKeyboardButton("📦 DUMPS", callback_data="a:dumps")],
         [InlineKeyboardButton("🎨 THEME / FONT", callback_data="a:theme"),
@@ -9209,7 +9184,7 @@ async def _post_init(app) -> None:
             BotCommand("start", "🏠 Menu"),
             BotCommand("redeem", "🔑 Redeem a key"),
             BotCommand("help", "📖 Help"),
-            BotCommand("theme", "🎨 Theme badlo"),
+            BotCommand("theme", "🎨 Change theme"),
             BotCommand("myid", "🪪 Apni ID"),
             BotCommand("ping", "🏓 Bot zinda?"),
             BotCommand("gtest", "🐦 Free Google test"),

@@ -15,10 +15,10 @@
 | ⛔ **STOP button** — DORKER deep scan, PARSER, injector, proxy check (sab me) | ✅ NEW |
 | 📊 **New progress bar** — `▰▰▰▱▱` + %, proxies alive, engines up, speed, time left | ✅ NEW |
 | 🏠 **Main menu redesign** — HQ KEYWORDS top, ADD NICHE, small-caps labels, counts+disclaimer hataye | ✅ NEW |
-| 📁 **Niches** — apne keywords se niche banao (40 max), menu me button, ek tap se dorks | ✅ NEW |
+| 📁 **Niches** — `HQ KEYWORDS → 📁 MY NICHES → ➕ ADD NICHE` (ready packs hata diye), 40 max, menu me button | ✅ NEW |
 | 💉 **Injector 311 payloads** — 11 cats incl. blind/UNION/WAF/NoSQL/GraphQL, **240 DBMS patterns (21 DBs)** | ✅ |
 | 🔑 **HQ keywords** — 16 verb + 20 qual + 20 noun + geo layers, 1M cap, ~38k unique per core | ✅ |
-| 🧅 **Proxy scrape admin-only** — home se hata, admin panel me; ➕ ADD PROXIES (14+ formats) + rotation toggle | ✅ |
+| 🧅 **Proxy scrape admin-only** — user panel me bilkul nahi (`/admin` → PROXY SCRAPE); ➕ ADD PROXIES (14+ formats) + rotation | ✅ |
 | 📤 **Dumper FULL EXPORT** — txt + json + csv, no row caps | ✅ NEW |
 | 🇬🇧 **UI 100% English** — har screen, har prompt, har error | ✅ NEW |
 | 🎨 Stylish fonts har screen pe (cursive/bold/italic headings) | ✅ |

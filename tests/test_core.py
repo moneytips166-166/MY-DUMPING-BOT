@@ -287,9 +287,11 @@ def test_niche_country():
     group("niche/country")
     kb = core.niche_kb()
     ok(kb is not None, "niche kb")
-    ok(len(core.NICHE_PACKS) >= 8, "niche packs")
-    for k in list(core.NICHE_PACKS)[:4]:
-        ok(core.niche_seeds(k), "niche seeds %s" % k)
+    eq(len(core.NICHE_PACKS), 0, "ready-made packs hata diye")
+    eq(core.niche_seeds("crypto"), [], "legacy seeds khaali")
+    kw_niche_kb = core.niche_kb()
+    cbz = [b.callback_data for row in kw_niche_kb.inline_keyboard for b in row]
+    ok("nc:add" in cbz, "ADD NICHE keywords ke andar")
     ok(core.cb_country is not None, "cb_country")
     ok(core.country_kb() is not None, "country kb")
 
@@ -720,13 +722,38 @@ def test_v28_tools():
     kb = core.kb_main(8999053405)
     cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
     eq(cbs[0], "m:kw", "HQ keywords pehla")
-    eq(cbs[1], "nc:add", "ADD NICHE doosra")
+    ok("nc:add" not in cbs, "ADD NICHE home pe nahi (keywords ke andar hai)")
     ok("m:proxy" in cbs, "admin ko proxy dikhta hai")
     kbn = core.kb_main(12345)
     cbn = [b.callback_data for row in kbn.inline_keyboard for b in row]
     ok("m:proxy" not in cbn, "non-admin ko proxy nahi")
     ok(core.niche_del("testniche"), "niche del")
     ok("testniche" not in core.niche_list(), "niche gone")
+
+
+def test_proxy_hidden_from_users():
+    """Proxy scrape sirf admin panel me — user panel me kuch bhi nahi."""
+    group("proxy hidden")
+    ht = core.help_text().upper()
+    ok("ᴘʀᴏxʏ" not in ht and "PROXY ENGINE" not in ht, "help me proxy tool line nahi")
+    kb_user = core.kb_main(12345)
+    cbs = [b.callback_data for row in kb_user.inline_keyboard for b in row]
+    ok(not any(c.startswith("px:") or c == "m:proxy" for c in cbs), "user kb me proxy nahi")
+    kb_admin = core.kb_main(8999053405)
+    cbs_a = [b.callback_data for row in kb_admin.inline_keyboard for b in row]
+    ok("m:proxy" in cbs_a, "admin ko proxy dikhta hai")
+
+    # parse screen — user ko proxy line nahi
+    ctx = FakeContext({})
+    core.SETTINGS.setdefault("users", {})
+    core.USERS.setdefault("777", {})["expires"] = "2099-01-01T00:00:00"
+    upd = FakeUpdate(data="m:parse", uid=777)
+    asyncio.run(core.tool_parse(upd, ctx))
+    txt = upd.last_text()
+    ok("🧅" not in txt, "user parse screen pe proxy line nahi")
+    upd2 = FakeUpdate(data="m:parse", uid=8999053405)
+    asyncio.run(core.tool_parse(upd2, ctx))
+    ok("🧅" in upd2.last_text(), "admin ko proxy status dikhta hai")
 
 
 def test_v29_parser():
@@ -855,7 +882,8 @@ def main():
                test_file_in_flow, test_pending_file, test_enginetest,
                test_single_file, test_diagnostics, test_batch,
                test_parse_everything, test_v28_tools, test_v29_parser,
-               test_v29_payloads, test_v29_keywords, test_ui_is_english):
+               test_v29_payloads, test_v29_keywords, test_ui_is_english,
+               test_proxy_hidden_from_users):
         try:
             fn()
         except Exception as exc:
