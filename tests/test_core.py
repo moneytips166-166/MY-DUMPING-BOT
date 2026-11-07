@@ -49,7 +49,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.9", "VERSION")
+    eq(core.VERSION, "v2.9.2", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -464,10 +464,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.9"')
+    contains(btxt, 'VERSION = "v2.9.2"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.9", "shim se version")
+    eq(core.VERSION, "v2.9.2", "shim se version")
 
 
 def test_diagnostics():
@@ -638,7 +638,7 @@ def test_parse_everything():
 
 
 def test_v28_tools():
-    group("v2.9")
+    group("v2.9.2")
     # grade
     eq(core.dork_grade(97), "S+")
     eq(core.dork_grade(90), "S")
