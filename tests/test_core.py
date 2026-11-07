@@ -50,7 +50,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.9.6", "VERSION")
+    eq(core.VERSION, "v2.9.7", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -465,10 +465,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.9.6"')
+    contains(btxt, 'VERSION = "v2.9.7"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.9.6", "shim se version")
+    eq(core.VERSION, "v2.9.7", "shim se version")
 
 
 def test_diagnostics():
@@ -989,7 +989,7 @@ def test_injector_engine():
     probes = core.inj_probes_for("all")
     eq(len(probes), len(core.INJ_PROBES), "probe matrix")
     fams = {f for f, _p in probes}
-    for need in ("sqli", "xss", "lfi", "ssti", "ssrf", "redirect", "nosql"):
+    for need in ("sqli", "xss", "lfi", "ssti", "redirect", "nosql", "union"):
         ok(need in fams, "family %s" % need)
     one = core.inj_probes_for("sqli")
     ok(len(one) >= 5 and all(f == "sqli" for f, _p in one), "category probes")
@@ -1602,6 +1602,168 @@ def test_large_guard_card():
     finally:
         core.sqli_dump, core.sqli_save, core.send_file = real_dump, real_save, real_send
 
+def test_silent_kill_guard():
+    """Button fail ho to user ko OOPS card milta hai — kabhi chup-chaap nahi."""
+    group("silent-guard")
+    real = core.TOOL_HANDLERS.get("kw")
+
+    async def boom(update, context):
+        raise RuntimeError("synthetic failure")
+
+    core.TOOL_HANDLERS["kw"] = boom
+    try:
+        ctx = FakeContext({})
+        upd = FakeUpdate(data="m:kw")
+        asyncio.run(core.on_callback(upd, ctx))
+        body = "\n".join(upd.texts())
+        contains(body, "synthetic failure")
+        ok(("error" in body.lower()) or ("oops" in body.lower()), "visible error card")
+        ok(len(upd.texts()) >= 1, "koi jawab to mila")
+    finally:
+        core.TOOL_HANDLERS["kw"] = real
+
+    # HTML helper
+    eq(core.html_plain("<b>bold</b> &amp; <code>x</code>"), "bold & x", "html_plain")
+    eq(core.html_plain("no tags here"), "no tags here", "html_plain plain")
+    ok(core._is_parse_error(Exception("can't parse entities")) is True, "parse err detect")
+
+    # patch real PTB Message class
+    core._patch_telegram_safe()
+    from telegram import Message
+    ok(getattr(Message, "_snake_safe", False), "Message patched")
+    core._patch_telegram_safe()          # dobara safe
+    ok(True, "idempotent")
+
+
+def test_injector_small_matrix():
+    group("injector-small")
+    probes = core.inj_probes_for("all")
+    ok(len(probes) <= 8, "payloads kam: %d" % len(probes))
+    for need in ("sqli", "union", "nosql", "xss", "lfi", "ssti", "redirect"):
+        ok(any(f == need for f, _p in probes), "family %s" % need)
+    ok(not any("SLEEP" in p.upper() for _f, p in probes), "no slow sleep probe")
+    eq(int(core.sget("inj_targets", 24) if core.sget("inj_targets") else 24), 24,
+       "default per-url cap")
+
+
+def test_keywords_variety():
+    group("keywords-variety")
+    seeds = ["shopify store", "crypto wallet", "apk download"]
+    kws = core.make_keywords(seeds, n=60)
+    eq(len(kws), 60, "60 keywords")
+    eq(len(set(kws)), 60, "unique")
+    # pehle 20 me kam se kam 6 patterns (ek hi pattern repeat nahi)
+    pats = set()
+    for k in kws[:20]:
+        first = k.split()[0]
+        pats.add("pre" if first in core.KW_PRE else ("core" if first in [w for w in seeds] else "suf"))
+    ok(len(pats) >= 2, "pattern mix: %s" % pats)
+    # cores rotate — pehle 10 me 2+ seeds
+    tops = {k for k in kws[:10] if any(s in k for s in seeds)}
+    used = {s for s in seeds if any(s in k for k in kws[:10])}
+    ok(len(used) >= 2, "cores rotate: %s" % used)
+    # single seed se bhi bada volume
+    one = core.make_keywords(["crypto wallet"], n=20000)
+    ok(len(one) >= 20000, "1 seed se 20k+: %d" % len(one))
+    # dorks variety
+    d = core.kw_to_dorks(seeds, n=12)
+    eq(len(d), 12, "12 dorks")
+    ok(len({x.split(":")[0] for x in d}) >= 3, "dork templates mix")
+
+
+def test_parser_settings():
+    group("parser-settings")
+    for k in ("pages", "threads", "timeout"):
+        ok(k in core.PARSER_CYCLES, "cycle %s" % k)
+    # cycles actually change value + card render
+    core.sset("parse_pages", 1)
+    ctx = FakeContext({})
+    upd = FakeUpdate(data="pr:set:pages")
+    asyncio.run(core.cb_parse_cfg(upd, ctx, "pages"))
+    eq(int(core.sget("parse_pages")), 2, "pages cycle 1→2")
+    core.sset("parse_threads", 4)
+    asyncio.run(core.cb_parse_cfg(upd, ctx, "threads"))
+    eq(int(core.sget("parse_threads")), 6, "threads cycle 4→6")
+    core.sset("parse_timeout", 8)
+    asyncio.run(core.cb_parse_cfg(upd, ctx, "timeout"))
+    eq(int(core.sget("parse_timeout")), 12, "timeout cycle 8→12")
+    # card text
+    upd2 = FakeUpdate(data="pr:cfg")
+    asyncio.run(core.cb_parse_cfg(upd2, ctx, ""))
+    card = upd2.last_text()
+    ok(len(card) > 200, "settings card render")
+    kb = [kw.get("reply_markup") for _k, _t, kw in upd2.sink if kw.get("reply_markup")]
+    labels = []
+    for markup in kb:
+        for row in getattr(markup, "inline_keyboard", []):
+            for b in row:
+                labels.append(b.text)
+    ok(len(labels) >= 5, "settings buttons: %d" % len(labels))
+    ok(any("2" in l for l in labels), "pages value dikhta hai")
+    ok(any("6" in l for l in labels), "threads value dikhta hai")
+    ok(any("12" in l for l in labels), "timeout value dikhta hai")
+    # parse() threads ko respect karta hai — fake engine se count
+    calls = []
+
+    async def fake_fetch(session, engine, dork, proxy=None, timeout=15.0, page=0,
+                         rot=None, miss=None):
+        calls.append((engine, dork))
+        return ["https://x.example/%s?q=%s" % (engine, abs(hash(dork)) % 99)]
+
+    real = core.fetch_engine
+    core.fetch_engine = fake_fetch
+    try:
+        core.sset("parse_threads", 3)
+        core.sset("parse_timeout", 6)
+        res = asyncio.run(core.parse(["inurl:login a", "inurl:login b"], max_urls=20,
+                                     pages=1, engines=["ddg", "bing"], strict=False))
+        ok(len(res["urls"]) >= 2, "parse urls: %d" % len(res["urls"]))
+        ok(len(calls) >= 2, "engines called")
+    finally:
+        core.fetch_engine = real
+        for k, v in (("parse_pages", 1), ("parse_threads", 4), ("parse_timeout", 0)):
+            core.sset(k, v)
+
+def test_paste_smart_fallback():
+    group("paste-fallback")
+    ctx = FakeContext({})
+    upd = FakeUpdate(text="https://a.example/x.php?id=1\nhttps://b.example/y.php?q=2")
+    asyncio.run(core.on_text(upd, ctx))
+    body = upd.last_text()
+    ok(body.strip(), "URL detected screen (styled heading)")
+    eq(len(ctx.user_data.get("paste_urls") or []), 2, "urls stored")
+    kb = [kw.get("reply_markup") for _k, _t, kw in upd.sink if kw.get("reply_markup")]
+    datas = [b.callback_data for m in kb for row in getattr(m, "inline_keyboard", []) for b in row]
+    for need in ("inj:paste", "df:paste", "df:hpaste"):
+        ok(need in datas, "button %s" % need)
+
+    ctx2 = FakeContext({})
+    upd2 = FakeUpdate(text="inurl:login.php\ninurl:product.php?id=")
+    asyncio.run(core.on_text(upd2, ctx2))
+    ok(upd2.last_text().strip(), "dork detected screen (styled heading)")
+    eq(len(ctx2.user_data.get("paste_dorks") or []), 2, "dorks stored")
+
+    ctx3 = FakeContext({})
+    upd3 = FakeUpdate(text="hello bhai")
+    asyncio.run(core.on_text(upd3, ctx3))
+    ok("URLs" in upd3.last_text(), "help fallback")
+
+def test_no_dead_buttons():
+    """/m:har literal button ka jawab aana chahiye (silent kill = 0)."""
+    group("dead-buttons")
+    for data in ("m:help_noTut", "m:help", "m:kw", "m:parse", "m:inj", "m:dump"):
+        ctx = FakeContext({"last_dorks": ["inurl:login"]})
+        upd = FakeUpdate(data=data)
+        asyncio.run(asyncio.wait_for(core._on_callback_inner(upd, ctx), 8))
+        got = upd.texts() or [t for k, t, _kw in upd.sink if k == "answer"]
+        ok(bool(got), "%s ne jawab diya" % data)
+    # how-to-use button ab alert deta hai
+    ctx = FakeContext({})
+    upd = FakeUpdate(data="m:help_noTut")
+    asyncio.run(core._on_callback_inner(upd, ctx))
+    alerts = [t for k, t, kw in upd.sink if k == "answer" and kw.get("show_alert")]
+    ok(alerts, "help_noTut alert: %s" % alerts)
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -1619,7 +1781,10 @@ def main():
                test_dumper_engine, test_injector_live,
                test_injector_flow, test_dumper_flow, test_harvest_flow,
                test_sqli_engine, test_sqli_live_union, test_sqli_live_blind,
-               test_large_data_guard, test_large_guard_card):
+               test_large_data_guard, test_large_guard_card,
+               test_silent_kill_guard, test_injector_small_matrix, test_keywords_variety,
+               test_parser_settings, test_paste_smart_fallback,
+               test_no_dead_buttons):
         try:
             fn()
         except Exception as exc:

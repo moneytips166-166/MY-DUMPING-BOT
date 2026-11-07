@@ -46,7 +46,8 @@ class FakeQuery:
         self.sink = sink
         self.message = FakeMessage("", sink)
 
-    async def answer(self, *a, **k):
+    async def answer(self, text="", **k):
+        self.sink.append(("answer", text or "", dict(k)))
         return True
 
     async def edit_message_text(self, text, **kw):

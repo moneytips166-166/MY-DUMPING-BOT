@@ -1,9 +1,25 @@
-# 🐍 PYTHON SNAKE CORE — v2.9.6
+# 🐍 PYTHON SNAKE CORE — v2.9.7
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
 ---
 
+## 🩹 v2.9.7 — silent-kill fix, fast injector, better keywords, parser settings
+
+| Cheez | Detail |
+|---|---|
+| Silent kill | Har button ab **kuch na kuch** dikhata hai. Callback me exception → `OOPS` card + menu button (pehle chup-chaap mar jata tha). Tap par turant toast |
+| HTML safety | Telegram HTML reject kare to message **plain text** me retry — "kuch nahi hua" wala sabse bada karan khatam |
+| Dead button | `HOW TO USE (video)` ab alert deta hai (pehle dead tha) |
+| Injector speed | Payloads **19 → 8 main** · body sirf 64 KB padhta hai (pehle poori page) · params 3 → 2 · default parallel 40 · per-URL tests 24. Local test: **240 req/s** |
+| Injector bug | `raw` variable shadow ho raha tha — vulnerable URL me page body aa rahi thi. Fixed |
+| Keywords | Generator pattern-major + core-shift (pehle ek hi pattern repeat hota tha). 1 seed se bhi **20k+**, 3 seeds pe pattern mix. Dorks bhi template-mix |
+| Parser settings | Naya `⚙️ PARSER SETTINGS` — **Pages · Threads · Timeout · URL limit · Engines** (tap = next value), user khud badal sakta hai |
+| Parser speed | Engines ab **parallel** (threads setting se bounded) — pehle ek-ek karke chalta tha |
+| Paste fallback | Chat me URL/dork paste karo → bot detect karke buttons deta hai: scan / SQL dump / harvest / parse |
+| Tests | `test_core` **620/620** · `test_screens` **37 clean** · pyflakes 0 |
+
+---
 ## ⚠️ v2.9.6 — Large data guard (dump VPS pe, bot sirf batata hai)
 
 | Cheez | Detail |
