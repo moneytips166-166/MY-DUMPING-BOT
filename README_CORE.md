@@ -1,6 +1,41 @@
-# 🐍 PYTHON SNAKE CORE — v2.11.0
+# 🐍 PYTHON SNAKE CORE — v2.13.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🛡️ v2.13.0 — token loss + duplicate sessions (pakka fix)
+
+### 1) Har update par token remove ho jata tha
+| Kya galat tha | Fix |
+|---|---|
+| `_migrate_config()` ne ek baar `snake_config.json` **khaali token** ke saath bana diya | config me token invalid mile to **khud repair** — `_recover_from_backups()` se token wapas, `_save_config()` se likha jata hai |
+| repaired file dobara kharab na ho | repair branch har start par chalta hai (valid token ho to kuch nahi badalta) |
+| `./update.sh` config ko chhoota hi nahi | `snake_config.json` sirf **read** hoti hai — token/admin delete nahi hote |
+
+Log me dikhega: `🔧 config repaired — token wapas set`.
+
+### 2) `./restart.sh` → "screen already exists"
+| Kya galat tha | Fix |
+|---|---|
+| phone pe purani/tuti scripts (naye version se pehle ki) | bot khud **v5 scripts** install/overwrite karta hai: `snake_lib.sh`, `start.sh`, `stop.sh`, `restart.sh`, `status.sh`, `update.sh` |
+| `screen -dmS snake` pehle purana session band nahi karta tha | `snake_kill_all()` pehle **saare `snake*` sessions + bot pids** band karta hai, `screen -wipe`, lock clear — phir fresh `snake_start` |
+| update ke baad bhi purani script | `vps/termux_update.sh` **UPDATER_V=5** — khud `snake_lib.sh` source karke wahi flow chalata hai |
+
+### 3) Ek se zyada sessions / 409 conflict
+- `.snake.lock` single-instance lock — doosra `bot.py` chalte hi saaf message ke saath exit:
+  `⚠️ BOT ALREADY RUNNING (pid …)` → `./stop.sh` ya `./restart.sh`
+- lock `atexit` + crash path dono pe release hota hai (stale lock nahi banta)
+
+### Update karna
+```bash
+cd ~/snake
+./update.sh
+./restart.sh
+```
+Telegram me `/ping` → `v2.13.0 (build self-heal+lock)`.
+
+Tests: **801/801** · screens 37 clean · pyflakes 0
 
 ---
 

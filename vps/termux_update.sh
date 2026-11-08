@@ -1,10 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=4)
+# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=5)
 #   ./update.sh   →  khud ko latest karta hai, phir bot.py (Termux + DBF) + restart
 #   ./update.sh --no-self   →  self-update skip
 # NOTE: Termux me /tmp writable nahi — log script folder ke logs/ me jata hai.
 set -u
-UPDATER_V=3
+UPDATER_V=5
 
 REPO="moneytips166-166/MY-DUMPING-BOT"
 BRANCH="arena/063f862a-my-dumping-bot"
@@ -188,8 +188,8 @@ if [ -f "$CFG" ] && [ -d "$EXT" ] && \
 fi
 
 # ══════════════ 3) SCRIPTS REFRESH ══════════════
-# Ye scripts hi phone pe "restart kaam nahi karta" ka karan thi — repo me hi
-# nahi thi. Ab har update pe nayi install hoti hain.
+# v2.13.0: phone pe purani/tuti scripts hi "screen already exists" + duplicate
+# sessions ka karan thi. Ab har update pe saari scripts overwrite hoti hain.
 _install_script() {                       # $1 = filename, $2 = marker (sanity)
     if DL "$RAW/$1" "$DIR/$1.new" 2>/dev/null || DL "$GH/$1" "$DIR/$1.new" 2>/dev/null; then
         if [ -s "$DIR/$1.new" ] && grep -q "$2" "$DIR/$1.new" 2>/dev/null \
@@ -202,13 +202,13 @@ _install_script() {                       # $1 = filename, $2 = marker (sanity)
     fi
     return 1
 }
-_install_script snake_lib.sh "snake_alive" && echo "✅ snake_lib.sh" \
+_install_script snake_lib.sh "SNAKE_LIB_V" && echo "✅ snake_lib.sh" \
     || echo "⚠️ snake_lib.sh download fail (purana chalega)"
 for _s in start.sh stop.sh restart.sh status.sh; do
     case "$_s" in
         start.sh)   _m="snake_start" ;;
         stop.sh)    _m="snake_kill_all" ;;
-        restart.sh) _m="PYTHON SNAKE restart" ;;
+        restart.sh) _m="snake_kill_all" ;;
         *)          _m="PYTHON SNAKE" ;;
     esac
     _install_script "$_s" "$_m" && echo "✅ $_s" || echo "⚠️ $_s fail"
@@ -226,45 +226,54 @@ if DL "$SELFC_URL" "$DIR/setconfig.sh.new" 2>/dev/null \
     fi
 fi
 
-if command -v screen >/dev/null 2>&1; then
-    screen -S snake -X quit >/dev/null 2>&1
-fi
-OLD="$(BOT_PIDS)"
-if [ -n "$OLD" ]; then
-    echo "→ purana bot band (pids: $(echo "$OLD" | tr '\n' ' '))"
-    for p in $OLD; do kill "$p" 2>/dev/null; done        # graceful SIGTERM
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-        [ -z "$(BOT_PIDS)" ] && break
-        sleep 1
-    done
-fi
-LEFT="$(BOT_PIDS)"
-if [ -n "$LEFT" ]; then
-    echo "→ zabardasti band…"
-    for p in $LEFT; do kill -9 "$p" 2>/dev/null; done
-    sleep 2
-fi
-
-RLOG="$LOGDIR/bot_$STAMP.log"
+# ══════════════ 4) RESTART — purane SAARE sessions saaf, fresh start ══════
+cd "$DIR" || exit 1
 START_OK=0
-# naya restart.sh (jo abhi install hua) — ye khud screen/nohup handle karta hai.
-# NOTE: `setsid` Termux me hota hi nahi — isliye fallback sirf nohup.
-if [ -f "./restart.sh" ]; then
-    bash ./restart.sh > "$LOGDIR/restart_$STAMP.log" 2>&1 && START_OK=1
-    tail -n 4 "$LOGDIR/restart_$STAMP.log" 2>/dev/null
-fi
-if [ "$START_OK" != "1" ] && command -v screen >/dev/null 2>&1; then
-    echo "→ screen se start…"
-    screen -dmS snake bash -c "cd '$DIR' && exec '$PY' bot.py >> '$RLOG' 2>&1"
-    START_OK=1
-fi
-if [ "$START_OK" != "1" ]; then
-    echo "→ nohup se start…"
-    ( cd "$DIR" && nohup "$PY" bot.py >>"$RLOG" 2>&1 & )
-    START_OK=1
+if [ -f ./snake_lib.sh ] && grep -q "SNAKE_LIB_V" ./snake_lib.sh 2>/dev/null; then
+    . ./snake_lib.sh                      # v5 lib → snake_kill_all + snake_start
+    if [ "${SNAKE_LIB_V:-0}" -ge 5 ] 2>/dev/null; then
+        echo "→ purane sessions/process saaf…"
+        snake_kill_all
+        echo "→ fresh start…"
+        if snake_start; then
+            START_OK=1
+        fi
+    fi
 fi
 
-sleep 7
+if [ "$START_OK" != "1" ]; then              # fallback (lib na mile)
+    if command -v screen >/dev/null 2>&1; then
+        screen -ls 2>/dev/null \
+            | sed -n 's/^[[:space:]]*\([0-9][0-9]*\.snake[^[:space:]]*\).*/\1/p' \
+            | while read -r sid; do screen -S "$sid" -X quit >/dev/null 2>&1; done
+        screen -wipe >/dev/null 2>&1
+    fi
+    OLD="$(BOT_PIDS)"
+    if [ -n "$OLD" ]; then
+        echo "→ purana bot band (pids: $(echo "$OLD" | tr '\n' ' '))"
+        for p in $OLD; do kill "$p" 2>/dev/null; done
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            [ -z "$(BOT_PIDS)" ] && break
+            sleep 1
+        done
+    fi
+    LEFT="$(BOT_PIDS)"
+    if [ -n "$LEFT" ]; then
+        for p in $LEFT; do kill -9 "$p" 2>/dev/null; done
+        sleep 2
+    fi
+    rm -f "$DIR/.snake.lock" 2>/dev/null
+    RLOG="$LOGDIR/bot_$STAMP.log"
+    if command -v screen >/dev/null 2>&1; then
+        screen -dmS snake bash -c "cd '$DIR' && exec '$PY' bot.py >> '$RLOG' 2>&1"
+    else
+        ( cd "$DIR" && nohup "$PY" bot.py >>"$RLOG" 2>&1 & )
+    fi
+    echo "$RLOG" > "$DIR/.last_log"
+    sleep 7
+    [ -n "$(BOT_PIDS)" ] && START_OK=1
+fi
+
 PIDS="$(BOT_PIDS)"
 if [ -z "$PIDS" ]; then            # ek aur mauka — slow phone
     sleep 6
@@ -284,9 +293,8 @@ if [ -n "$PIDS" ]; then
     fi
 else
     echo "❌ bot start hote hi band ho gaya — log:"
-    _lastlog="$(cat "$DIR/.last_log" 2>/dev/null || echo "$RLOG")"
+    _lastlog="$(cat "$DIR/.last_log" 2>/dev/null || echo "$LOGDIR/bot_$STAMP.log")"
     tail -n 25 "$_lastlog" 2>/dev/null || echo "   (log khaali)"
-    [ -s "$RLOG" ] && tail -n 25 "$RLOG" 2>/dev/null
     echo ""
     echo "   wapas purana version: cp backups/bot_$STAMP.py bot.py && ./restart.sh"
     exit 1

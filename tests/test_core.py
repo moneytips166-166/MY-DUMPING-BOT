@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.12.2", "VERSION")
+    eq(core.VERSION, "v2.13.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.12.2"')
+    contains(btxt, 'VERSION = "v2.13.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.12.2", "shim se version")
+    eq(core.VERSION, "v2.13.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1781,7 +1781,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.12.2", "version")
+    eq(core.VERSION, "v2.13.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2095,6 +2095,82 @@ def test_v2122_bing_quality():
                             "bot.py"), encoding="utf-8").read()
     contains(src, 'sget("parse_pages", 2)')
 
+def test_v2130_token_repair():
+    """v2.13.0 — khaali-token config khud repair ho + scripts self-install + lock."""
+    group("v2.13.0 token repair")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "bot.py"), encoding="utf-8").read()
+    contains(src, "config repaired")
+    contains(src, "_HELPER_FILES")
+    contains(src, "def install_helpers")
+    contains(src, "def acquire_lock")
+    contains(src, "BOT ALREADY RUNNING")
+
+    tmp = tempfile.mkdtemp(prefix="snake213_")
+    old_base, old_cfg, old_path = core.BASE_DIR, dict(core._CONFIG), core.CONFIG_PATH
+    old_tok, old_adm = core.BOT_TOKEN, list(core.ADMIN_IDS)
+    old_nomig = os.environ.pop("SNAKE_NO_MIGRATE", None)
+    try:
+        core.BASE_DIR = tmp
+        # khaali token wali config (purani galti)
+        cfgp = os.path.join(tmp, "snake_config.json")
+        with open(cfgp, "w", encoding="utf-8") as f:
+            json.dump({"bot_token": "", "admin_ids": [8999053405]}, f)
+        core._CONFIG.clear()
+        core._CONFIG.update({"bot_token": "", "admin_ids": [8999053405]})
+        core.CONFIG_PATH = cfgp
+        core.BOT_TOKEN = "123456:AAHrepair_me_now"
+        core._migrate_config()
+        core._migrate_config()          # dobara chalao — token na khoye
+        with open(cfgp, encoding="utf-8") as f:
+            fixed = json.load(f)
+        eq(fixed.get("bot_token"), "123456:AAHrepair_me_now", "config repaired")
+
+        # scripts khud install (purani tuti file bhi overwrite ho)
+        stale = os.path.join(tmp, "start.sh")
+        with open(stale, "w", encoding="utf-8") as f:
+            f.write("#!/bin/bash\necho purana tuta start\n")
+        wrote = core.install_helpers()
+        for name in ("snake_lib.sh", "start.sh", "stop.sh", "restart.sh",
+                     "status.sh", "update.sh"):
+            ok(name in wrote, "installed %s" % name)
+            ok(os.path.isfile(os.path.join(tmp, name)), "%s file" % name)
+        lib = open(os.path.join(tmp, "snake_lib.sh"), encoding="utf-8").read()
+        contains(lib, "snake_kill_all")
+        contains(lib, "SNAKE_LIB_V")
+        contains(lib, "screen -wipe")
+        boot = open(os.path.join(tmp, "update.sh"), encoding="utf-8").read()
+        contains(boot, "SNAKE_BOOT_V")
+        contains(boot, "termux_update.sh")
+
+        # scripts already latest → dobara likhne ki zarurat nahi
+        eq(core.install_helpers(), [], "scripts idempotent")
+
+        # lock — doosra zinda bot instance block ho
+        lockp = os.path.join(tmp, ".snake.lock")
+        core.LOCK_FILE = lockp
+        with open(lockp, "w", encoding="utf-8") as f:
+            f.write("424242")
+        _orig_pidcheck = core._pid_is_bot
+        core._pid_is_bot = lambda pid: int(pid) == 424242
+        ok(not core.acquire_lock(), "running instance block")
+        core._pid_is_bot = _orig_pidcheck
+        os.remove(lockp)
+        with open(lockp, "w", encoding="utf-8") as f:
+            f.write("1")            # PID 1 zinda hai, par bot.py nahi → lock allow
+        ok(core.acquire_lock(), "stale lock allow")
+        eq(open(lockp).read().strip(), str(os.getpid()), "lock me apna pid")
+        core.release_lock()
+        ok(not os.path.exists(lockp), "release lock")
+    finally:
+        core.BASE_DIR, core.CONFIG_PATH = old_base, old_path
+        core._CONFIG.clear()
+        core._CONFIG.update(old_cfg)
+        core.BOT_TOKEN, core.ADMIN_IDS = old_tok, old_adm
+        if old_nomig:
+            os.environ["SNAKE_NO_MIGRATE"] = old_nomig
+        shutil.rmtree(tmp, ignore_errors=True)
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -2118,7 +2194,8 @@ def main():
                test_no_dead_buttons, test_build_stamp,
                test_config_persistence, test_menu_emoji,
                test_premium_emoji, test_v211_bugfixes,
-               test_v212_engines, test_v2122_bing_quality):
+               test_v212_engines, test_v2122_bing_quality,
+               test_v2130_token_repair):
         try:
             fn()
         except Exception as exc:

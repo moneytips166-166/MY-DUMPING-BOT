@@ -26,6 +26,7 @@ import re
 import sys
 import json
 import signal
+import atexit
 import socket
 import platform
 import time
@@ -70,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.12.2"
-BUILD = "parser-parallel+inj-fast+rev-vuln"   # feature flags — /ping me dikhte hain
+VERSION = "v2.13.0"
+BUILD = "self-heal+lock"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -235,7 +236,9 @@ def _save_config(*, token=None, admin_ids=None):
 # config se override (env > file > hardcoded fallback)
 _tok_file = _cfg_token()
 if _tok_file:
-    BOT_TOKEN = _tok_file
+    BOT_TOKEN = _tok_file                     # config jeetta hai (update-safe)
+# config khaali ho to bot.py ka inline token chalta rahega (_migrate_config use
+# config me daal deta hai, isliye agla update usse nahi uda sakta)
 ADMIN_IDS = _cfg_admins(ADMIN_IDS)
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DUMP_DIR = os.path.join(BASE_DIR, "dumps")
@@ -282,13 +285,308 @@ def _recover_from_backups():
     return "", []
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SELF-HEALING SCRIPTS — bot khud start/stop/restart/update install karta hai
+#  (phone pe purani/tuti hui scripts hi "screen already exists" ka karan thi)
+# ═══════════════════════════════════════════════════════════════════════════════
+HELPERS_V = "5"
+
+_HELPER_FILES = {
+    "snake_lib.sh": r"""#!/data/data/com.termux/files/usr/bin/bash
+# 🐍 PYTHON SNAKE helpers  (SNAKE_LIB_V=5)
+SNAKE_LIB_V=5
+SNAKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SNAKE_EXT="/storage/emulated/0/DBF"
+SNAKE_SCREEN="snake"
+SNAKE_LOGDIR="$SNAKE_DIR/logs"
+mkdir -p "$SNAKE_LOGDIR" "$SNAKE_DIR/backups" 2>/dev/null
+
+snake_py() { command -v python3 2>/dev/null || command -v python 2>/dev/null; }
+
+# SIRF asli bot process (last arg bot.py) — screen/bash wrappers nahi
+snake_pids() {
+    for p in $(pgrep -f "bot\.py" 2>/dev/null); do
+        [ -r "/proc/$p/cmdline" ] || continue
+        _c="$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)"
+        _last=""; for _w in $_c; do _last="$_w"; done
+        [ "$_last" = "bot.py" ] && [ "$p" != "$$" ] && echo "$p"
+    done
+}
+snake_alive() { [ -n "$(snake_pids)" ]; }
+
+# screen sessions jo "snake" naam se hain — naam se hi, PID se bhi
+snake_screen_kill() {
+    command -v screen >/dev/null 2>&1 || return 0
+    # real screen: "1234.snake" / "1234.snake_stale" — dono band
+    screen -ls 2>/dev/null \
+        | sed -n 's/^[[:space:]]*\([0-9][0-9]*\.snake[^[:space:]]*\).*/\1/p' \
+        | while read -r sid; do
+            screen -S "$sid" -X quit >/dev/null 2>&1
+        done
+    screen -S "$SNAKE_SCREEN" -X quit >/dev/null 2>&1
+    screen -wipe >/dev/null 2>&1
+}
+
+snake_kill_all() {
+    local waited=0 pids
+    snake_screen_kill
+    pids="$(snake_pids)"
+    if [ -n "$pids" ]; then
+        for p in $pids; do kill "$p" 2>/dev/null; done
+        while [ -n "$(snake_pids)" ] && [ "$waited" -lt 8 ]; do
+            sleep 1; waited=$((waited + 1))
+        done
+    fi
+    pids="$(snake_pids)"
+    if [ -n "$pids" ]; then
+        for p in $pids; do kill -9 "$p" 2>/dev/null; done
+        sleep 1
+    fi
+    snake_screen_kill
+    rm -f "$SNAKE_DIR/.snake.lock" 2>/dev/null
+}
+
+snake_start() {
+    local py log rc=1 waited=0
+    py="$(snake_py)"
+    [ -z "$py" ] && { echo "❌ python nahi mila — pkg install python"; return 1; }
+    [ -f "$SNAKE_DIR/bot.py" ] || { echo "❌ bot.py nahi mila ($SNAKE_DIR)"; return 1; }
+    log="$SNAKE_LOGDIR/bot_$(date +%Y%m%d_%H%M%S).log"
+    cd "$SNAKE_DIR" || return 1
+
+    if command -v screen >/dev/null 2>&1; then
+        snake_screen_kill
+        screen -dmS "$SNAKE_SCREEN" bash -c "cd '$SNAKE_DIR' && exec '$py' bot.py >> '$log' 2>&1"
+        rc=0
+    fi
+    if [ "$rc" != "0" ]; then
+        nohup "$py" bot.py >>"$log" 2>&1 &
+        rc=0
+    fi
+
+    while [ "$waited" -lt 12 ]; do
+        sleep 1; waited=$((waited + 1))
+        snake_alive && break
+    done
+    echo "$log" > "$SNAKE_DIR/.last_log"
+    if snake_alive; then
+        echo "🚀 bot chalu (pid $(snake_pids | tr '\n' ' '))"
+        echo "📝 log: $log"
+        command -v screen >/dev/null 2>&1 && screen -ls 2>/dev/null | grep -q snake \
+            && echo "🖥 screen: snake  →  screen -r snake"
+        return 0
+    fi
+    echo "❌ bot start nahi hua — log tail:"
+    tail -n 25 "$log" 2>/dev/null || echo "   (log khaali)"
+    return 1
+}
+
+snake_version() {
+    [ -f "$SNAKE_DIR/bot.py" ] && \
+        grep -m1 '^VERSION = ' "$SNAKE_DIR/bot.py" | cut -d'"' -f2 || echo "?"
+}
+""",
+
+    "start.sh": r"""#!/data/data/com.termux/files/usr/bin/bash
+cd "$(dirname "$0")" || exit 1
+. ./snake_lib.sh
+if snake_alive; then
+    echo "ℹ️ bot pehle se chal raha hai (pid $(snake_pids | tr '\n' ' '))"
+    exit 0
+fi
+snake_start
+""",
+
+    "stop.sh": r"""#!/data/data/com.termux/files/usr/bin/bash
+cd "$(dirname "$0")" || exit 1
+. ./snake_lib.sh
+if ! snake_alive; then
+    snake_screen_kill
+    echo "ℹ️ bot pehle se band hai"
+    exit 0
+fi
+echo "→ band: $(snake_pids | tr '\n' ' ')"
+snake_kill_all
+snake_alive && { echo "❌ band nahi hua"; exit 1; }
+echo "✅ band"
+""",
+
+    "restart.sh": r"""#!/data/data/com.termux/files/usr/bin/bash
+cd "$(dirname "$0")" || exit 1
+. ./snake_lib.sh
+echo "🐍 PYTHON SNAKE restart — $(date '+%d-%m %H:%M:%S')"
+echo "📦 version: $(snake_version)"
+if snake_alive; then
+    echo "→ purana process band: $(snake_pids | tr '\n' ' ')"
+else
+    echo "→ koi purana process nahi mila"
+fi
+snake_kill_all
+sleep 1
+if snake_alive; then
+    echo "❌ purana process band nahi hua — kill -9 $(snake_pids | tr '\n' ' ')"
+    exit 1
+fi
+if ! snake_start; then
+    echo ""
+    echo "↩️ wapas: cp backups/$(ls -t backups/bot_*.py 2>/dev/null | head -1 | xargs -r basename) bot.py && ./restart.sh"
+    exit 1
+fi
+[ -f snake_config.json ] && ! grep -q '"bot_token": ""' snake_config.json 2>/dev/null \
+    && echo "🔐 token/admin config se load honge"
+echo "✅ done — Telegram me /ping bhejo (v$(snake_version | sed 's/^v//'))"
+""",
+
+    "status.sh": r"""#!/data/data/com.termux/files/usr/bin/bash
+cd "$(dirname "$0")" || exit 1
+. ./snake_lib.sh
+echo "🐍 PYTHON SNAKE — status"
+echo "📁 dir  : $SNAKE_DIR"
+echo "📦 file : $(snake_version)"
+if snake_alive; then
+    echo "🟢 running: pid $(snake_pids | tr '\n' ' ')"
+else
+    echo "🔴 running: nahi chal raha"
+fi
+if command -v screen >/dev/null 2>&1; then
+    n=$(screen -ls 2>/dev/null | grep -c 'snake')
+    echo "🖥 screen sessions: $n"
+fi
+[ -f .last_log ] && echo "📝 last log: $(cat .last_log)"
+[ -f snake_config.json ] && grep -q '"bot_token": ""' snake_config.json 2>/dev/null \
+    && echo "⚠️ token khaali — ./setconfig.sh --token <TOKEN>"
+exit 0
+""",
+
+    # bootstrap — har baar latest updater khud download karta hai
+    "update.sh": r"""#!/data/data/com.termux/files/usr/bin/bash
+# 🐍 PYTHON SNAKE updater bootstrap (SNAKE_BOOT_V=5)
+# Ye hamesha latest updater download karta hai, phir use chalata hai.
+set -u
+DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="moneytips166-166/MY-DUMPING-BOT"
+BRANCH="arena/063f862a-my-dumping-bot"
+URL1="https://raw.githubusercontent.com/$REPO/$BRANCH/vps/termux_update.sh"
+URL2="https://github.com/$REPO/raw/$BRANCH/vps/termux_update.sh"
+cd "$DIR" || exit 1
+
+DL() { if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 60 "$1" -o "$2";
+       else wget -q -T 60 "$1" -O "$2"; fi; }
+
+if DL "$URL1" .upd.new 2>/dev/null || DL "$URL2" .upd.new 2>/dev/null; then
+    if grep -q "SNAKE_UPDATER_V" .upd.new 2>/dev/null && bash -n .upd.new 2>/dev/null; then
+        mv -f .upd.new update_run.sh
+        chmod +x update_run.sh
+        SNAKE_NO_SELF=1 exec bash ./update_run.sh "$@"
+    fi
+    rm -f .upd.new
+fi
+echo "❌ updater download nahi hua — internet check karo"
+echo "   retry: ./update.sh"
+exit 1
+""",
+}
+
+
+def install_helpers(force: bool = False) -> list:
+    """Current start/stop/restart/status/update scripts likho (purani tuti ho to)."""
+    done = []
+    try:
+        if os.environ.get("SNAKE_NO_MIGRATE") == "1":
+            return done
+        for name, body in _HELPER_FILES.items():
+            pth = os.path.join(BASE_DIR, name)
+            try:
+                if (not force) and os.path.isfile(pth):
+                    cur = open(pth, encoding="utf-8", errors="ignore").read()
+                    # same content → kuch mat likho; purani/tuti → overwrite
+                    if cur.strip() == body.strip():
+                        continue
+                with open(pth, "w", encoding="utf-8") as f:
+                    f.write(body)
+                try:
+                    os.chmod(pth, 0o755)
+                except Exception:
+                    pass
+                done.append(name)
+            except Exception as exc:
+                logger.warning("helper %s skip: %s", name, exc)
+        if done:
+            logger.info("🧰 scripts install: %s", ", ".join(done))
+    except Exception as exc:
+        logger.warning("helpers skip: %s", exc)
+    return done
+
+
+# ── ek hi instance — warna Telegram 409 + multiple screen sessions ────────
+LOCK_FILE = os.path.join(BASE_DIR, ".snake.lock")
+
+
+def _pid_is_bot(pid: int) -> bool:
+    try:
+        cl = open("/proc/%d/cmdline" % int(pid), "rb").read().decode("utf-8", "ignore")
+        return "bot.py" in cl
+    except Exception:
+        return False
+
+
+def acquire_lock() -> bool:
+    """Doosra instance chal raha ho to False (aur saaf message)."""
+    try:
+        if os.path.isfile(LOCK_FILE):
+            try:
+                old = int(open(LOCK_FILE).read().strip() or "0")
+            except Exception:
+                old = 0
+            if old and old != os.getpid() and _pid_is_bot(old):
+                print("\n" + "=" * 62)
+                print("  ⚠️ BOT ALREADY RUNNING (pid %d)" % old)
+                print("=" * 62)
+                print("  Ek hi token pe doosra instance nahi chal sakta.")
+                print("  Band karo pehle:")
+                print("      ./stop.sh")
+                print("      ./restart.sh        # ye purana band karke naya chalata hai")
+                print("=" * 62 + "\n")
+                return False
+        with open(LOCK_FILE, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+        return True
+    except Exception:
+        return True
+
+
+def release_lock() -> None:
+    try:
+        if os.path.isfile(LOCK_FILE):
+            if open(LOCK_FILE).read().strip() == str(os.getpid()):
+                os.remove(LOCK_FILE)
+    except Exception:
+        pass
+
+
 def _migrate_config():
     """Purani install (token bot.py ke andar) → ek baar config file bana do.
 
     Isse pehli update ke baad bhi token/admin safe rahenge.
     """
     try:
+        if os.environ.get("SNAKE_NO_MIGRATE") == "1":
+            return
         if CONFIG_PATH and os.path.isfile(CONFIG_PATH):
+            # config hai — lekin token khaali? (purani galti) → repair karo
+            have = str((_CONFIG or {}).get("bot_token") or "").strip()
+            if _token_ok(have):
+                return
+            fix, adm = str(BOT_TOKEN or "").strip(), []
+            if not _token_ok(fix):
+                fix, adm = _recover_from_backups()
+            if not _token_ok(fix):
+                return
+            _save_config(token=fix, admin_ids=(adm or ADMIN_IDS))
+            globals()["BOT_TOKEN"] = fix
+            if adm:
+                globals()["ADMIN_IDS"] = adm
+            logger.info("🔧 config repaired — token wapas set (%s)", CONFIG_PATH)
             return
         if os.environ.get("SNAKE_NO_MIGRATE") == "1":
             return                      # tests me kabhi file na likhe
@@ -336,6 +634,7 @@ START_TS = time.time()
 BUILD_TS = time.strftime("%d-%m %H:%M", time.localtime())
 
 _migrate_config()          # token/admin ek baar bahar nikaal do (update-safe)
+install_helpers()          # start/stop/restart/status/update scripts refresh
 
 TOKEN = BOT_TOKEN
 if (not TOKEN) or ("PUT_YOUR_BOT_TOKEN_HERE" in str(TOKEN)) or (":" not in str(TOKEN)):
@@ -349,6 +648,7 @@ if (not TOKEN) or ("PUT_YOUR_BOT_TOKEN_HERE" in str(TOKEN)) or (":" not in str(T
         print("      ./settoken.sh 123456789:AAxxxxxxxxxxxxxxxxxxxxxxx\n")
         print("  Then:  ./restart.sh")
         print("=" * 62 + "\n")
+        release_lock()
         raise SystemExit(2)
 
 
@@ -13211,6 +13511,7 @@ def _run_loop(app, stop_ev=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        release_lock()
         try:
             pending = asyncio.all_tasks(loop)
             for t in pending:
@@ -13237,6 +13538,10 @@ def main():
     logger.info("🐍 %s CORE %s starting… (Python %s • PTB %s)",
                 BRAND, VERSION, platform.python_version(),
                 getattr(__import__("telegram"), "__version__", "?"))
+    # ek hi instance — warna 2 screen sessions + Telegram 409 conflict
+    if not acquire_lock():
+        sys.exit(1)
+    atexit.register(release_lock)
     try:
         load_proxy_pool()
     except Exception:
