@@ -1,0 +1,32 @@
+
+spidey_offline_workspace/
+__pycache__/
+*.pyc
+data/
+bot.log
+bot_crash.log
+bot_fixed.py.v18_backup_*.py
+*.backup.*.py
+
+bot_fixed.py.v*_backup_*
+bot_fixed.py.v*bak_*
+bot_fixed.py.*.bak
+
+# 🔐 secrets — kabhi commit na karo
+.env
+config.py
+.bot_new.py
+bot_fixed.local.py
+dumps/
+
+# 🧪 tests ka venv (commit na karo)
+.venv/
+.pytest_cache/
+
+# 🔐 token/admin (phone pe rehta hai, repo me kabhi nahi)
+snake_config.json
+snake_config.json.tmp
+update.sh.new
+setconfig.sh.new
+logs/
+backups/
