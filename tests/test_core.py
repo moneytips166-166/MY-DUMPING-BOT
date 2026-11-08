@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.18.0", "VERSION")
+    eq(core.VERSION, "v2.19.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.18.0"')
+    contains(btxt, 'VERSION = "v2.19.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.18.0", "shim se version")
+    eq(core.VERSION, "v2.19.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1183,7 +1183,7 @@ def _inj_fake_stats(urls, cat, vulns, tested=None):
     return {"urls": len(urls), "urls_done": len(urls), "tested": tested,
             "total": tested, "vulns": vulns, "blocked": 2, "errors": 0,
             "start": core.time.time() - 2, "cat": cat, "stopped": 0,
-            "by_type": {}, "took": 2.0, "vuln_urls": _vb,
+            "by_type": {}, "took": 2.0, "done_urls": list(urls), "vuln_urls": _vb,
             "safe_urls": [u for u in urls if u not in _vset],
             "speed_urls": 12.5, "eta": 0.0, "precheck": 0.0}
 
@@ -1795,7 +1795,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.18.0", "version")
+    eq(core.VERSION, "v2.19.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2514,7 +2514,9 @@ def test_v2180_url_truth():
             return _Resp()
 
     real_sess = core.aiohttp.ClientSession
+    _old_gap = core.SETTINGS.get("inj_host_gap_ms")
     core.aiohttp.ClientSession = _Sess
+    core.SETTINGS["inj_host_gap_ms"] = 0        # test me host spacing off
     try:
         urls = ["http://h%d.test/p%05d.php?id=%d" % (i % 6, i, i) for i in range(20000)]
         urls += urls[:500]                     # 500 duplicate lines
@@ -2531,6 +2533,10 @@ def test_v2180_url_truth():
         ok(st["speed_urls"] > 0, "speed computed")
     finally:
         core.aiohttp.ClientSession = real_sess
+        if _old_gap is None:
+            core.SETTINGS.pop("inj_host_gap_ms", None)
+        else:
+            core.SETTINGS["inj_host_gap_ms"] = _old_gap
 
     # precheck hard-fail me "temporary failure" zinda maana jata hai
     src = open(os.path.join(os.path.dirname(os.path.dirname(
@@ -2687,6 +2693,158 @@ def test_v2180_tsp_engine():
         contains(src, bit)
 
 
+def test_v2190_resume_pool_gap():
+    """v2.19.0 — injector RESUME (disk), dumper bounded queue, per-host spacing."""
+    group("v2.19.0 resume + pool + gap")
+    import time as _t
+
+    real_scan, real_send, real_one = core.inj_scan, core.send_file, core.sqli_dump_one
+    sent = []
+
+    async def fake_send(update, path, caption=""):
+        sent.append(path)
+        return True
+
+    def mk_scan(stop_after=None):
+        async def fake_scan(urls, cat="all", progress=None, uid=None, timeout=8.0,
+                            conc=30, max_targets=0):
+            st = _inj_fake_stats(urls, cat, [])
+            if stop_after is not None:
+                st["urls"] = len(urls)
+                st["urls_done"] = stop_after
+                st["done_urls"] = list(urls[:stop_after])
+                st["stopped"] = 1
+            if progress:
+                await progress(st)
+            return st
+        return fake_scan
+
+    core.send_file = fake_send
+    try:
+        # (a) helpers
+        core.inj_resume_clear()
+        eq(core.inj_resume_load()["urls"], [], "shuru me khaali")
+        n = core.inj_resume_save(["https://a.com/1?id=1", "https://b.com/2?id=2"],
+                                 "xss")
+        eq(n, 2, "save count")
+        d = core.inj_resume_load()
+        eq(d["urls"], ["https://a.com/1?id=1", "https://b.com/2?id=2"], "load urls")
+        eq(d["cat"], "xss", "cat wapas mila")
+        core.inj_resume_save([], "all")
+        eq(core.inj_resume_load()["urls"], [], "khaali save = clear")
+
+        # (b) screen par RESUME button
+        core.inj_resume_save(["https://z.com/p?id=%d" % i for i in range(7)], "sqli")
+        upd = FakeUpdate(data="m:inj")
+        asyncio.run(core.tool_inj(upd, FakeContext({})))
+        kb_txt = " ".join(str(kw.get("reply_markup")) for _k, _t, kw in upd.sink)
+        ok("inj:resume" in kb_txt, "resume button screen par")
+        ok("7" in kb_txt, "button me bachi hui count")
+
+        # (c) resume click → wahi 7 URLs scan
+        seen = {}
+
+        async def capture(urls, cat="all", progress=None, uid=None, timeout=8.0,
+                          conc=30, max_targets=0):
+            seen["urls"] = list(urls)
+            seen["cat"] = cat
+            st = _inj_fake_stats(urls, cat, [])
+            return st
+
+        core.inj_scan = capture
+        upd2 = FakeUpdate(data="inj:resume")
+        asyncio.run(core.cb_inj_resume(upd2, FakeContext({})))
+        eq(len(seen.get("urls") or []), 7, "resume ne 7 URLs liye")
+        eq(seen.get("cat"), "sqli", "cat resume se")
+        eq(core.inj_resume_load()["urls"], [], "poora scan → resume file clear")
+
+        # (d) STOP → bachi hui URLs disk par
+        core.inj_scan = mk_scan(stop_after=2)
+        upd3 = FakeUpdate(text="\n".join("https://h%d.com/a?id=%d" % (i, i)
+                                          for i in range(5)))
+        asyncio.run(core.input_inj_urls(upd3, FakeContext({}), upd3.message.text))
+        left = core.inj_resume_load()["urls"]
+        eq(len(left), 3, "3 URLs resume me bachi")
+        ok("resume" in kb_txt or "inj_resume" in str(upd3.sink), "resume flow chala")
+        core.inj_resume_clear()
+
+        # (e) dumper bounded queue — 300 URLs, koi task explosion nahi
+        calls = {"n": 0}
+
+        async def fake_one(session, raw, param="", caps=None, timeout=8.0, rot=None,
+                           on_stage=None):
+            calls["n"] += 1
+            return {"url": raw, "param": "", "status": "not injectable", "ok": False,
+                    "tables": {}, "dbs": [], "rows": 0, "took": 0.0, "requests": 1,
+                    "notes": [], "why": "no param"}
+
+        core.sqli_dump_one = fake_one
+        st = asyncio.run(core.sqli_dump(["https://d%d.com/x?id=1" % i for i in range(300)],
+                                        conc=4, timeout=2))
+        eq(st["done"], 300, "dumper 300/300")
+        eq(calls["n"], 300, "har URL ek baar")
+        eq(st["skipped"], 0, "kuch skip nahi")
+
+        # (f) per-host spacing — 1 host, 8 URLs, 80ms gap
+        core.inj_scan = real_scan
+        class _Cont:
+            async def read(self, n=-1):
+                return b"<html>ok</html>"
+
+        class _Resp:
+            status = 200
+            headers = {"Content-Type": "text/html"}
+            content = _Cont()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+        class _Sess:
+            def __init__(self, connector=None, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def get(self, url, **kw):
+                return _Resp()
+
+        real_sess = core.aiohttp.ClientSession
+        old_gap = core.SETTINGS.get("inj_host_gap_ms")
+        core.aiohttp.ClientSession = _Sess
+        core.SETTINGS["inj_host_gap_ms"] = 80
+        try:
+            t0 = _t.time()
+            st2 = asyncio.run(core.inj_scan(
+                ["http://one.test/p%d.php?id=%d" % (i, i) for i in range(8)],
+                "all", timeout=2, conc=16, max_targets=1))
+            took = _t.time() - t0
+            eq(st2["urls_tested"], 8, "8/8 tested")
+            ok(took >= 0.45, "host spacing lagu (%.2fs)" % took)
+        finally:
+            core.aiohttp.ClientSession = real_sess
+            if old_gap is None:
+                core.SETTINGS.pop("inj_host_gap_ms", None)
+            else:
+                core.SETTINGS["inj_host_gap_ms"] = old_gap
+
+        src = open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+        for bit in ("inj_resume_save", "inj_resume_load", "inj:resume",
+                    "async def worker(session)", "inj_host_gap_ms", "RESUME_TAG"):
+            contains(src, bit)
+    finally:
+        core.inj_scan, core.send_file = real_scan, real_send
+        core.sqli_dump_one = real_one
+        core.inj_resume_clear()
+
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -2715,7 +2873,8 @@ def main():
                test_v2160_proxy_scope, test_v2170_big_lists,
                test_v2180_url_truth,
                test_v2180_live_injector,
-               test_v2180_tsp_engine):
+               test_v2180_tsp_engine,
+               test_v2190_resume_pool_gap):
         try:
             fn()
         except Exception as exc:

@@ -1,6 +1,55 @@
-# 🐍 PYTHON SNAKE CORE — v2.18.0
+# 🐍 PYTHON SNAKE CORE — v2.19.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 📥 v2.19.0 — RESUME (restart-proof), dumper memory-safe, per-host throttle
+
+### ▶️ 1) Injector RESUME — bada list beech me ruka to 0 se nahi
+Pehle STOP/crash ke baad 100k list dobara **shuru se** chalti thi. Ab:
+
+- Scan rukte hi jo URLs **test hi nahi hue** wo disk par chale jate (`data/inj_resume.json`).
+- Card par button: **▶️ RESUME — N URLs left** (Injector screen par bhi).
+- **Bot restart ke baad bhi kaam karta hai** — list memory me nahi, file me hai.
+- Poora scan hone par file khud delete (koi purana junk nahi).
+
+```
+📥 Total URLs     : 100,000
+🌐 URLs tested    : 41,200
+⛔ Stopped early
+▶️ Resume ready — 58,800 URLs bache
+```
+
+### 🧠 2) Dumper — bounded queue (phone RAM safe)
+Pehle `asyncio.gather(*[one(u) for u in urls])` — 20k URLs = **20k tasks ek saath**
+(phone par memory spike, UI freeze). Ab **N workers + chhoti queue** (injector
+jaisa hi pattern). Plus:
+
+- `⛔ Not tested (stopped)` line final card par (pehle chup-chaap kam dikhta tha)
+- Live card: **Speed URLs/s** + ETA format (`3m 20s`)
+
+### 🌐 3) Per-host throttle (WAF block kam)
+Ek hi site par 40 parallel probes = WAF block + jhoothi "dead". Ab har host ki
+requests me **50ms gap** (default) — multi-host lists par asar nahi, single host
+par ~20 req/s cap.
+
+- `/batch hostgap 100` → 100ms (aur slow/stealth)
+- `/batch hostgap 0` → off (max speed, apni risk)
+
+### ✅ Test proof (v2.19.0)
+| Test | Result |
+|---|---|
+| 20k URLs (network stub) | 20,000 tested · 0 drop |
+| Duplicate lines | 20,500 → 500 dup · 20,000 unique · 20,000 tested |
+| Temp DNS fail (half hosts) | 20,000 tested (koi drop nahi) |
+| Refused hosts | 13,364 tested + 6,636 dead-skip (sum check ✅) |
+| Dumper 300 URLs | 300/300 done · har URL ek baar (queue) |
+| Host gap 80ms × 8 URLs | ≥0.45s — spacing sach me lagu |
+| Resume | save → button → 7 URLs dobara → file clear |
+| Live local app | SQLi/XSS/LFI/SSTI/Redirect detect · clean page FP-free |
+
+`1005 / 1005` tests pass · screens clean.
 
 ---
 
@@ -66,8 +115,8 @@
 
 ### ➕ Kaam ki missing cheezein (priority order)
 1. ~~TSP dorking tool ka zip~~ — **git history se mil gaya aur poora merge ho gaya** (upar TSP ENGINE).
-2. **Resume/checkpoint** — 100k list beech me ruk jaye to dobara 0 se na chale (`done_urls` ab save kar sakte hain).
-3. **Per-host throttle** — ek hi host par 24 probes bhejne se WAF block; 2 req/s/host cap.
+2. ~~Resume/checkpoint~~ — **ho gaya (v2.19.0)**, restart-proof bhi.
+3. ~~Per-host throttle~~ — **ho gaya (v2.19.0)**, `/batch hostgap` se tune.
 4. **`/batch` me probe-per-URL** (`inj_targets`) ka button — abhi admin command se.
 5. **SERP key pool** — 3-4 free keys rotate → parser yield 3x.
 6. **Vuln URL dedupe by (host, param, type)** — file me same site ke 40 rows aate hain.
