@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.14.0", "VERSION")
+    eq(core.VERSION, "v2.15.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.14.0"')
+    contains(btxt, 'VERSION = "v2.15.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.14.0", "shim se version")
+    eq(core.VERSION, "v2.15.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1781,7 +1781,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.14.0", "version")
+    eq(core.VERSION, "v2.15.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2093,7 +2093,7 @@ def test_v2122_bing_quality():
     # default pages = 2 (display bhi wahi dikhaye)
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "bot.py"), encoding="utf-8").read()
-    contains(src, 'sget("parse_pages", 2)')
+    contains(src, 'sget("parse_pages", 3)')
 
 def test_v2130_token_repair():
     """v2.13.0 — khaali-token config khud repair ho + scripts self-install + lock."""
@@ -2242,10 +2242,11 @@ def test_v2140_no_dork_left():
     group("v2.14.0 dork coverage")
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
-    contains(src, "COVERAGE FIRST")
+    contains(src, "YIELD MODE")
     contains(src, "Not attempted:")
-    contains(src, "pass %s/2")
-    for bit in ("_retry", "_ready_list", "_REST_FOR", "engine_rest"):
+    contains(src, "Yield:")
+    for bit in ("_again", "_ready_list", "_REST_FOR", "engine_rest",
+                "url_goal", "yield_target", "goal_hit", "avg_req"):
         contains(src, bit)
 
     import asyncio as _aio
@@ -2311,6 +2312,73 @@ def test_v2140_no_dork_left():
         core.SETTINGS["parse_budget"] = old_budget
         core.SETTINGS["parse_pages"] = old_pages
 
+def test_v2150_yield_mode():
+    """v2.15.0 — dorks ka Nx URLs: 1 request par nahi rukta, target tak jata hai."""
+    group("v2.15.0 yield mode")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    for bit in ("YIELD MODE", "_one_request", "_max_req", "URL TARGET",
+                "Sources/dork", "Target reached"):
+        contains(src, bit)
+
+    import asyncio as _aio
+    import random as _random
+    old_fetch = core.fetch_engine
+    old_gj_on, old_gj_live = core.gj_enabled, core.gj_alive
+    old_settings = dict(core.SETTINGS)
+    pool = ["https://s%d.example.com/p%d?id=%d" % (i % 300, i % 9, i) for i in range(4000)]
+
+    async def fake_fetch(session, engine, dork, proxy=None, timeout=15.0,
+                         page=0, rot=None, miss=None):
+        _random.seed(abs(hash((engine, dork, page))) % 10 ** 6)
+        return _random.sample(pool, 10)          # 10 results, heavy overlap
+
+    try:
+        core.fetch_engine = fake_fetch
+        core.gj_enabled = lambda: False
+        core.gj_alive = lambda: True
+        core.SETTINGS["engine_rest"] = 1
+        core.SETTINGS["parse_pages"] = 3
+        core.SETTINGS["yield_target"] = 10       # 10x maango
+        dorks = ["inurl:y%d" % i for i in range(200)]
+        res = _aio.run(core.parse_deep(dorks, max_urls=200000, pages=3,
+                                       use_proxy=False, mode="fast", budget=120))
+        st = res["stats"]
+        eq(st["url_goal"], 2000, "target = dorks x 10")
+        ok(st["unique"] >= 1200, "yield >= 6x (%d URLs)" % st["unique"])
+        ok(st["avg_req"] > 1.3, "ek request par nahi ruka (%.1f/dork)" % st["avg_req"])
+        ok(st["attempts"] > st["total"], "requests > dorks")
+        eq(st["skipped"], 0, "koi dork nahi chhoota")
+        eq(st["remaining_dorks"], [], "target/pass ke baad kuch bacha nahi")
+
+        # saturation — pool khatam ho to jhoothi mehnat band
+        old_pool = list(pool)
+        core.SETTINGS["yield_target"] = 20
+        res_sat = _aio.run(core.parse_deep(["inurl:s%d" % i for i in range(600)],
+                                           max_urls=200000, pages=3, use_proxy=False,
+                                           mode="fast", budget=120))
+        st_sat = res_sat["stats"]
+        ok(st_sat["saturated"] == 1, "saturation detect")
+        ok(st_sat["attempts"] < 600 * 9, "saturated par request band (%d)" % st_sat["attempts"])
+        eq(st_sat["remaining_dorks"], [], "saturated → CONTINUE nahi")
+        ok(st_sat["unique"] > 0, "urls mile")
+        pool[:] = old_pool
+
+        # 3x target → kam requests me pura
+        core.SETTINGS["yield_target"] = 3
+        res2 = _aio.run(core.parse_deep(["inurl:z%d" % i for i in range(120)],
+                                        max_urls=200000, pages=3, use_proxy=False,
+                                        mode="fast", budget=120))
+        st2 = res2["stats"]
+        eq(st2["url_goal"], 360, "3x target")
+        ok(st2["unique"] >= 360 or st2["goal_hit"], "3x target reach")
+        ok(st2["attempts"] < st["attempts"] * 2, "kam mehnat me 3x")
+    finally:
+        core.fetch_engine = old_fetch
+        core.gj_enabled, core.gj_alive = old_gj_on, old_gj_live
+        core.SETTINGS.clear()
+        core.SETTINGS.update(old_settings)
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -2336,7 +2404,7 @@ def main():
                test_premium_emoji, test_v211_bugfixes,
                test_v212_engines, test_v2122_bing_quality,
                test_v2130_token_repair, test_v2131_update_proof,
-               test_v2140_no_dork_left):
+               test_v2140_no_dork_left, test_v2150_yield_mode):
         try:
             fn()
         except Exception as exc:

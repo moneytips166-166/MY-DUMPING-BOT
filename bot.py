@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.14.0"
-BUILD = "full-coverage"   # feature flags — /ping me dikhte hain
+VERSION = "v2.15.0"
+BUILD = "yield-mode"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -5313,18 +5313,29 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                             seen.add(kk)
                             out.append(kk)
 
-        # 3) saare dorks — COVERAGE FIRST (v2.14.0)
-        #    Purana bug: engines "dead" mark hote hi baaki hazaaron dorks bina
-        #    ek bhi request ke "scanned" gin liye jate the — card 10000/10000
-        #    dikhata tha jabki sirf 30-40 dork chale the. Ab:
-        #      • pass 1 — HAR dork ko kam se kam 1 asli request
-        #      • pass 2 — jo dork khaali aaya usko 2 engine aur
-        #      • engine permanently dead nahi hota — 90s rest ke baad wapas
-        #      • jo dork chhoot gaya wo `skipped` me ginte hain, jhooth nahi
+        # 3) saare dorks — YIELD MODE (v2.15.0)
+        #    v2.14: har dork par kam se kam 1 asli request (jhooth khatam).
+        #    v2.15: 1 request ke baad rukte nahi. Har agle "pass" me HAR dork
+        #    ko ek aur source (engine/page) milta hai — jab tak URLs ka target
+        #    (dorks × yield_target) na bhar jaye ya time budget na khatam ho.
+        #    Isi se raw hits 10x the to unique URLs bhi 10x ke qareeb aate hain.
         gj_budget = min(20, len(dorks))          # free Google — 20 dork kaafi
         gj_deadline = time.time() + float(sget("gj_window", 45) or 45)
-        _queue = deque((i, d, 1) for i, d in enumerate(dorks, 1))
-        _retry = deque()
+        try:
+            _yield_target = max(1.0, min(50.0, float(sget("yield_target", 5) or 5)))
+        except Exception:
+            _yield_target = 5.0
+        _goal = min(max_urls, int(len(dorks) * _yield_target))
+        try:
+            _max_req = int(sget("parse_sources", 0) or 0)
+        except Exception:
+            _max_req = 0
+        if _max_req <= 0:                        # auto — goal ke hisaab se
+            _max_req = max(2, min(12, int(round(_goal / max(1, len(dorks))) + 1)))
+        _max_req = max(1, min(24, _max_req))
+        _max_req = min(_max_req, max(1, len(eng_list)) * max(1, pages))
+        _queue = deque((i, d) for i, d in enumerate(dorks, 1))
+        _again = deque()
         _lock = asyncio.Lock()
         _ok_count = defaultdict(int)
         _tries = defaultdict(int)
@@ -5337,13 +5348,24 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
         except Exception:
             _REST_FOR = 90.0
         _t_quiet = [time.time()]
+        _st_req = defaultdict(int)               # dork -> kitne asli request
+        _st_page = defaultdict(int)              # dork -> agla page
+        _st_eng = defaultdict(int)               # dork -> engine pointer
         _counted = set()                         # dork sirf ek baar ginti me
-        # block hone par engine ka rasta badlo: proxy ↔ direct (auto-heal)
+        _done = set()                            # dork ke saare sources ho gaye
         _px = {e: bool(parse_engine_proxy(e, _px_mode)) for e in eng_list}
         st["pass"] = 1
         st["skipped"] = 0
         st["waited"] = 0
         st["attempts"] = 0
+        st["url_goal"] = _goal
+        st["yield_target"] = _yield_target
+        st["max_req"] = _max_req
+        st["goal_hit"] = 0
+        st["avg_req"] = 0.0
+        st["saturated"] = 0
+        st["new_recent"] = 0
+        _gap = [0]                               # bina naye URL ke kitni requests
 
         def _ready(eng) -> bool:
             return time.time() >= _rest.get(eng, 0.0)
@@ -5384,15 +5406,19 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                                     time.time())
                 return []
 
-        async def _scan_dork(i, dork, want):
-            """Ek dork — `want` ASLI requests. (urls, tried) wapas."""
-            dl = time.time() + max(8.0, eng_to * (1.3 * want + 0.7))
-            added, tried = [], 0
-            order = list(eng_list)
-            order.sort(key=lambda e: (not _ready(e),
-                                      _miss.get(e, 0) >= ENGINE_DEAD_AFTER,
+        def _pick_engines():
+            """Healthy engines, best-first (blocked/resting sabse peeche)."""
+            order = [e for e in eng_list if _ready(e)]
+            order.sort(key=lambda e: (_miss.get(e, 0) >= ENGINE_DEAD_AFTER,
                                       -_ok_count.get(e, 0), random.random()))
-            if i <= gj_budget and gj_enabled() and gj_alive() and time.time() < gj_deadline:
+            return order
+
+        async def _one_request(i, dork):
+            """Ek dork ko ek aur source do — (urls, tried, eng)."""
+            dl = time.time() + max(6.0, eng_to * 1.6)
+            # free Google pehle source ke roop me (sirf shuru ke dorks, rate-limit)
+            if (not _st_req.get(i, 0) and i <= gj_budget and gj_enabled()
+                    and gj_alive() and time.time() < gj_deadline):
                 try:
                     gurls = await asyncio.wait_for(
                         gjerm_search(session, dork, pages=min(2, pages)), timeout=12)
@@ -5401,60 +5427,65 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                 async with _lock:
                     st["raw"] += len(gurls)
                     st["gj"] += len(gurls)
+                keep = []
                 for u in gurls:
                     if strict and not dork_match(u, dork):
                         async with _lock:
                             st["mismatch"] += 1
                             st["filtered"] += 1
                         continue
-                    added.append(u)
-            for page in range(pages):
-                if tried >= want or time.time() > dl:
-                    break
-                for eng in order:
-                    if tried >= want or time.time() > dl:
-                        break
-                    urls = await _call_engine(eng, dork, page, dl)
-                    if urls is None:
-                        continue                    # rest me — request nahi hui
-                    tried += 1
-                    if not urls:
-                        # jawab aaya par kuch nahi — block ho to rest do
-                        async with _lock:
-                            st["errors"] += 1
-                        if (_miss.get(eng, 0) >= max(4, ENGINE_DEAD_AFTER)
-                                and _is_block(eng) and _ready(eng)):
-                            _rest[eng] = time.time() + _REST_FOR
-                            # proxy se block hua → direct try, direct se → proxy
-                            if rot is not None and len(rot):
-                                _px[eng] = not _px.get(eng, False)
-                            logger.info("parse_deep: %s rest %.0fs (blocked) — %s "
-                                        "→ %s", eng, _REST_FOR,
-                                        ENGINE_LAST.get(eng, ("",))[0][:40],
-                                        "proxy" if _px.get(eng) else "direct")
-                        continue
+                    keep.append(u)
+                if keep:
+                    _st_req[i] += 1
+                    return keep, 1, "gj"
+            order = _pick_engines()
+            if not order:
+                return [], 0, ""
+            page = min(max(0, _st_page.get(i, 0)), max(0, pages - 1))
+            start = _st_eng.get(i, 0) % len(order)
+            for k in range(len(order)):
+                eng = order[(start + k) % len(order)]
+                urls = await _call_engine(eng, dork, page, dl)
+                if urls is None:
+                    continue
+                _st_req[i] += 1
+                _st_eng[i] = (start + k + 1) % max(1, len(order))
+                if _st_req[i] % max(1, len(order)) == 0:   # ek chakkar poora
+                    _st_page[i] = min(page + 1, max(0, pages - 1))
+                if not urls:
                     async with _lock:
-                        _ok_count[eng] += 1
-                        _miss[eng] = 0                  # healthy — count reset
-                        st["engine_hits"][eng] += len(urls)
-                        st["raw"] += len(urls)
-                    if strict:
-                        matched = [u for u in urls if dork_match(u, dork)]
-                        if matched:
-                            urls = matched
-                        else:
-                            async with _lock:
-                                st["relaxed"] += 1
-                    added.extend(urls)
-                    tried = max(tried, want)             # mil gaya → dork done
-                    break
-            return added, tried
+                        st["errors"] += 1
+                    if (_miss.get(eng, 0) >= max(4, ENGINE_DEAD_AFTER)
+                            and _is_block(eng) and _ready(eng)):
+                        _rest[eng] = time.time() + _REST_FOR
+                        # proxy se block hua → direct try, direct se → proxy
+                        if rot is not None and len(rot):
+                            _px[eng] = not _px.get(eng, False)
+                        logger.info("parse_deep: %s rest %.0fs (blocked) — %s → %s",
+                                    eng, _REST_FOR,
+                                    ENGINE_LAST.get(eng, ("",))[0][:40],
+                                    "proxy" if _px.get(eng) else "direct")
+                    continue
+                async with _lock:
+                    _ok_count[eng] += 1
+                    _miss[eng] = 0                  # healthy — count reset
+                    st["engine_hits"][eng] += len(urls)
+                    st["raw"] += len(urls)
+                if strict:
+                    matched = [u for u in urls if dork_match(u, dork)]
+                    if matched:
+                        urls = matched
+                    else:
+                        async with _lock:
+                            st["relaxed"] += 1
+                return urls, 1, eng
+            return [], 0, ""
 
         def _next_item():
             if _queue:
                 return _queue.popleft()
-            if _retry:
-                return _retry.popleft()
+            if _again:
+                return _again.popleft()
             return None
 
         async def _worker():
@@ -5466,6 +5497,12 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                 if budget and (time.time() - _t_start) > budget:
                     async with _lock:
                         st["time_up"] = 1
+                    return
+                if len(out) >= _goal:                     # target bhar gaya
+                    async with _lock:
+                        st["goal_hit"] = 1
+                    return
+                if st["saturated"] and not _queue:        # naya kuch nahi mil raha
                     return
                 if not _ready_list():
                     # saare engines blocked — cooldown ka intezaar, dork chhodte nahi
@@ -5483,18 +5520,22 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                     item = _next_item()
                 if item is None:
                     return
-                i, dork, want = item
+                i, dork = item
+                if i in _done:
+                    continue
                 try:
-                    got, tried = await _scan_dork(i, dork, want)
+                    got, tried, _eng = await _one_request(i, dork)
                 except Exception as exc:
                     logger.info("dork %d fail: %s", i, str(exc)[:70])
                     got, tried = [], 0
                 if not tried:
                     # ek bhi asli request nahi hui — dork CHHODA nahi, wapas queue
                     async with _lock:
-                        _queue.appendleft((i, dork, want))
+                        if i in _done:
+                            continue
+                        _queue.appendleft((i, dork))
                         st["waited"] += 1
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(1.0)
                     continue
                 async with _lock:
                     if i not in _counted:
@@ -5502,8 +5543,10 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                         st["scanned"] += 1
                     st["attempts"] += tried
                     st["unique"] = len(out)
+                    st["avg_req"] = round(st["attempts"] / max(1, st["scanned"]), 1)
                     st["per_dork"] = round(st["scanned"] /
                                            max(0.001, time.time() - _t_start), 2)
+                    _fresh = 0
                     for u in got:
                         kk = u.split("#")[0]
                         if kk in seen:
@@ -5512,12 +5555,27 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                             continue
                         seen.add(kk)
                         out.append(kk)
+                        _fresh += 1
                         if len(out) >= max_urls:
                             break
-                    if want == 1 and not got:            # pass 2 ke liye rakho
-                        _retry.append((i, dork, 2))
-                    if not _queue and _retry:
-                        st["pass"] = 2
+                    # diminishing returns — SERP se jitna mil sakta tha mil gaya
+                    st["new_recent"] += _fresh
+                    _gap[0] += 1
+                    if _gap[0] >= 120:                 # 120 requests ka window
+                        if st["new_recent"] < 5 and not st["saturated"]:
+                            st["saturated"] = 1
+                            logger.info("parse_deep: saturated — 120 requests me "
+                                        "sirf %d naye URL (unique %d)",
+                                        st["new_recent"], len(out))
+                        _gap[0] = 0
+                        st["new_recent"] = 0
+                    # agla source chahiye? (goal bacha hai aur is dork ke sources bache)
+                    if (_st_req[i] < _max_req and len(out) < _goal
+                            and not st["saturated"]):
+                        _again.append((i, dork))
+                        st["pass"] = max(1, min(_max_req, _st_req[i] + 1))
+                    else:
+                        _done.add(i)
                     _do_prog = bool(progress and (time.time() - _prog_at[0] > 1.8))
                     if _do_prog:
                         _prog_at[0] = time.time()
@@ -5527,11 +5585,19 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                     except Exception:
                         pass
 
-        logger.info("parse_deep: %d dorks • %d workers • engines %s (coverage mode)",
-                    len(dorks), min(_dork_conc, len(dorks)), ",".join(eng_list))
+        logger.info("parse_deep: %d dorks • %d workers • engines %s • goal %d URLs "
+                    "(%.0fx) • sources/dork %d",
+                    len(dorks), min(_dork_conc, len(dorks)), ",".join(eng_list),
+                    _goal, _yield_target, _max_req)
         await asyncio.gather(*[_worker() for _ in range(min(_dork_conc, len(dorks)))])
-        st["remaining_dorks"] = [d for _i, d, _w in
-                                 (list(_queue) + list(_retry))[:6000]]
+        if st["goal_hit"] or st["saturated"] or len(out) >= max_urls:
+            _left = []                              # target bhar gaya / saturated
+        else:
+            _left = [d for _i, d in (list(_queue) + list(_again))[:6000]]
+            if not _left:
+                _left = [d for i, d in enumerate(dorks, 1)
+                         if _st_req.get(i, 0) < _max_req][:6000]
+        st["remaining_dorks"] = _left
         st["skipped"] = max(0, st["total"] - st["scanned"])
         st["workers"] = _dork_conc
         st["engines_resting"] = sum(1 for e in eng_list if not _ready(e))
@@ -8549,7 +8615,7 @@ async def tool_parse(update, context):
                                       if not int(sget("parse_url_limit", 0) or 0)
                                       else "<code>%s</code>" % fmt(int(sget("parse_url_limit", 0)))), "🌐")
            + "\n" + KV("Pages / Threads", "<code>%d</code> · <code>%d</code> parallel"
-                       % (int(sget("parse_pages", 2) or 2),
+                       % (int(sget("parse_pages", 3) or 3),
                           int(sget("parse_threads", 12) or 12)), "⚙️")
            + "\n" + KV("Timeout", "<code>%ss</code>" % int(sget("parse_timeout", 0) or
                                                             ENGINE_TIMEOUT.get(mode, 8)), "⏱")
@@ -8628,6 +8694,7 @@ async def cb_parse_limit(update, context):
 
 
 PARSER_CYCLES = {
+    "yield":   ("yield_target", [3, 5, 10, 20], "URL target (dorks × N)"),
     "pages":   ("parse_pages", [1, 2, 3, 5], "Pages per dork"),
     "threads": ("parse_threads", [4, 6, 8, 12, 16, 20, 24], "Parallel dorks"),
     "budget": ("parse_budget", [900, 1800, 3600, 7200, 0], "Time budget"),
@@ -8653,13 +8720,18 @@ async def cb_parse_cfg(update, context, key: str = ""):
             pass
         return await cb_parse_cfg(update, context, "")
     mode = user_mode(context)
-    pages = int(sget("parse_pages", 2) or 2)
+    pages = int(sget("parse_pages", 3) or 3)
     threads = int(sget("parse_threads", 12) or 12)
     to = int(sget("parse_timeout", 0) or ENGINE_TIMEOUT.get(mode, 8))
     limit = int(sget("parse_url_limit", 0) or 0)
+    try:
+        yld = int(float(sget("yield_target", 5) or 5))
+    except Exception:
+        yld = 5
     rows = [
-        [InlineKeyboardButton("📄 PAGES: %d" % pages, callback_data="pr:set:pages"),
-         InlineKeyboardButton("🧵 THREADS: %d" % threads, callback_data="pr:set:threads")],
+        [InlineKeyboardButton("🏆 URL TARGET: %dx" % yld, callback_data="pr:set:yield"),
+         InlineKeyboardButton("📄 PAGES: %d" % pages, callback_data="pr:set:pages")],
+        [InlineKeyboardButton("🧵 THREADS: %d" % threads, callback_data="pr:set:threads")],
         [InlineKeyboardButton("⏱ TIMEOUT: %ss" % to, callback_data="pr:set:timeout")],
         [InlineKeyboardButton("🎯 URL LIMIT: %s" % ("ALL" if not limit else fmt(limit)),
                               callback_data="pr:limit")],
@@ -8668,7 +8740,9 @@ async def cb_parse_cfg(update, context, key: str = ""):
         [InlineKeyboardButton("⬅️ BACK", callback_data="m:parse")],
     ]
     txt = (H("PARSER SETTINGS", "your own speed") + "\n\n"
-           + KV("Pages", "<code>%d</code> — har dork ke kitne result pages" % pages, "📄")
+           + KV("URL target", "<b>%dx</b> of dorks (jitne dorks, utne × %d URLs)"
+                 % (yld, yld), "🏆")
+           + "\n" + KV("Pages", "<code>%d</code> — har dork ke kitne result pages" % pages, "📄")
            + "\n" + KV("Threads", "<code>%d</code> — ek saath kitne dorks" % threads, "🧵")
            + "\n" + KV("Timeout", "<code>%ss</code> per engine request" % to, "⏱")
            + "\n" + KV("URL limit", "<b>ALL</b>" if not limit else "<code>%s</code>" % fmt(limit), "🎯")
@@ -8739,8 +8813,11 @@ async def input_deep_max(update, context, text: str):
          + KV("Dorks", "<code>%s</code>" % fmt(len(dorks)), "🎯") + "\n"
          + KV("URL limit", "<b>%s</b>" % ("ALL (whatever we get)" if _auto else fmt(mx)), "🌐") + "\n"
          + KV("Time budget", "<code>%.0f min</code>" % (budget / 60), "⏱") + "\n"
-         + KV("Coverage", "<b>every dork gets a real request</b> — pass 1 sab, "
-              "pass 2 khaali dorks dobara", "🎯") + "\n"
+         + KV("Coverage", "<b>every dork gets a real request</b> — phir har dork "
+              "ko extra sources (engines × pages)", "🎯") + "\n"
+         + KV("URL target", "<b>%gx</b> of dorks = <code>%s</code> URLs"
+              % (float(sget("yield_target", 5) or 5),
+                 fmt(int(len(dorks) * float(sget("yield_target", 5) or 5)))), "🏆") + "\n"
          + KV("Mode", "<b>%s</b>" % ENGINE_LABEL.get(user_mode(context), "—"), "⚙️")),
         parse_mode=ParseMode.HTML, reply_markup=kb_stop(_uid, _tok))
     t0 = time.time()
@@ -8757,10 +8834,16 @@ async def input_deep_max(update, context, text: str):
                 (F("PARSER — RUNNING", "%s" % ENGINE_LABEL.get(st.get("mode", "fast"), "")
                    .split("—")[0].strip()) + "\n" + T()["div"][:22] + "\n\n"
                  + bar_pct(pct, 16) + "\n"
-                 + "<code>%s / %s dorks</code>  <i>(pass %s/2)</i>\n\n"
-                   % (fmt(st["scanned"]), fmt(st["total"]), st.get("pass", 1))
+                 + "<code>%s / %s dorks</code>  <i>(source %s/%s)</i>\n\n"
+                   % (fmt(st["scanned"]), fmt(st["total"]),
+                      st.get("pass", 1), st.get("max_req", 1))
                  + "◆ Attempts    : <code>%s</code> real requests\n" % fmt(st.get("attempts", 0))
-                 + "◆ URLs found  : <code>%s</code>\n" % fmt(st["unique"])
+                 + "◆ URLs found  : <code>%s</code>  <b>(%.1fx)</b>\n"
+                   % (fmt(st["unique"]),
+                      st["unique"] / max(1, st.get("total", 1)))
+                 + "◆ Target      : <code>%sx</code> = <code>%s</code> URLs\n"
+                   % (("%g" % st.get("yield_target", 5)),
+                      fmt(st.get("url_goal", 0)))
                  + "◆ Raw hits    : <code>%s</code>\n" % fmt(st["raw"])
                  + "◆ Blocked     : <code>%s</code>\n" % fmt(st.get("errors", 0))
                  + "◆ Engines up  : <code>%s/%s</code>\n"
@@ -8777,7 +8860,7 @@ async def input_deep_max(update, context, text: str):
         except Exception:
             pass
 
-    res = await parse_deep(dorks, max_urls=mx, pages=int(sget("parse_pages", 2) or 2),
+    res = await parse_deep(dorks, max_urls=mx, pages=int(sget("parse_pages", 3) or 3),
                            use_proxy=None, progress=prog,
                            mode=user_mode(context), budget=budget)
     took = time.time() - t0
@@ -8798,10 +8881,22 @@ async def input_deep_max(update, context, text: str):
             _health.append("❌ %s <i>%s</i>" % (_e, esc(_why[:28])))
     health_line = " · ".join(_health[:6])
     _skip = int(st.get("skipped", 0) or 0)
+    _uniq = int(st.get("unique", 0) or 0)
+    _ratio = _uniq / max(1, st.get("total", 1))
+    _tgt = float(st.get("yield_target", 5) or 5)
+    _goal = int(st.get("url_goal", 0) or 0)
     _head = ("Scanned: <code>%d/%d</code> dorks\n" % (st["scanned"], st["total"])
              + ("Not attempted: <code>%s</code>  <i>(engines blocked — CONTINUE dabao)</i>\n"
                 % fmt(_skip) if _skip else "")
-             + "Real requests: <code>%s</code>\n" % fmt(st.get("attempts", 0)))
+             + "Real requests: <code>%s</code>  ·  Sources/dork: <code>%s</code>\n"
+               % (fmt(st.get("attempts", 0)), st.get("avg_req", 0))
+             + "🏆 Yield: <b>%.1fx</b>  ·  target <code>%gx</code> = <code>%s</code> URLs\n"
+               % (_ratio, _tgt, fmt(_goal))
+             + ("✅ <b>Target reached</b>\n" if st.get("goal_hit")
+                else "🟡 <b>SERPs saturated</b> — engines se jitne naye URLs "
+                     "mil sakte the mil gaye\n" if st.get("saturated")
+                else "⚠️ Target se kam — budget badhao ya CONTINUE dabao "
+                     "(har dork ko aur sources milenge)\n"))
     card = (H("DEEP PARSER — COMPLETE", "%.1fs" % took) + "\n\n" + _head
             + "Raw URLs: <code>%s</code>\n"
             "Unique URLs: <code>%s</code>\n\n"
@@ -8837,8 +8932,10 @@ async def input_deep_max(update, context, text: str):
                 if st.get("time_up") else
                 (KV("Stopped", "🛑 engines blocked — %s dorks ki request hi nahi hui" % fmt(_skip), "🛑")
                  if st.get("aborted") else
-                 KV("Finished", ("✅ all %d dorks scanned" % st["scanned"]) if not _skip
-                    else "⚠️ %d scanned, %s baaki (CONTINUE)" % (st["scanned"], fmt(_skip)), "✅"))),
+                 KV("Finished", ("✅ all %d dorks scanned · %.1fx yield"
+                                 % (st["scanned"], _ratio)) if not _skip
+                    else "⚠️ %d scanned, %s baaki (CONTINUE)"
+                         % (st["scanned"], fmt(_skip)), "✅"))),
                bar(int(100 * st["scanned"] / max(1, st["total"])), 22)))
     try:
         await msg.delete()
@@ -8953,7 +9050,7 @@ async def input_parse_max(update, context, text: str):
         except Exception:
             pass
 
-    res = await parse(dorks, max_urls=mx, pages=sget("parse_pages", 2),
+    res = await parse(dorks, max_urls=mx, pages=sget("parse_pages", 3),
                       use_proxy=None, progress=prog, mode=user_mode(context))
     took = time.time() - t0
     urls = res["urls"]
@@ -12582,7 +12679,7 @@ async def admin_callback(update, context, action: str):
 
     if action == "eng":
         kb = RK([
-            [InlineKeyboardButton("Pages: %s" % sget("parse_pages", 2), callback_data="a:setpages")],
+            [InlineKeyboardButton("Pages: %s" % sget("parse_pages", 3), callback_data="a:setpages")],
             [InlineKeyboardButton("Check timeout: %ss" % sget("check_timeout", 6), callback_data="a:setto")],
             [InlineKeyboardButton("Concurrency: %s" % sget("concurrency", 400), callback_data="a:setconc")],
             [InlineKeyboardButton("💉 INJECT BATCH: %s" % fmt(inj_batch_size()),

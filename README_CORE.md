@@ -1,6 +1,41 @@
-# 🐍 PYTHON SNAKE CORE — v2.14.0
+# 🐍 PYTHON SNAKE CORE — v2.15.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🏆 v2.15.0 — URLs bhi utne hi: dorks × N (yield mode)
+
+### Problem
+Raw hits 10x dikh raha tha, par **unique URLs sirf ~2x** — kyunki har dork par
+**sirf 1 request** hoti thi (pehla engine result deta hi loop break). 10,000 dorks
+× 1 request × ~50 results = 5 lakh raw, par dedupe ke baad ~20k unique.
+
+### Ab — YIELD MODE
+| Kya | Kaise |
+|---|---|
+| **1 request par nahi rukta** | har dork ko baari-baari **extra sources** milte hain: har engine × har page |
+| **Target** | `dorks × N` URLs (default **5x**, button se 3x/5x/10x/20x) |
+| **Breadth-first** | pehle sab dorks ko 1 request, phir sab ko 2nd source, phir 3rd… (isliye koi dork peeche nahi chhootta) |
+| **Guard** | ek dork par max `engines × pages` requests (fast mode: 3×3 = 9) |
+| **Saturation** | 120 requests me 5 se kam naye URL → matlab SERP khatam, wahin ruk jata hai (battery/time bachta hai) |
+| **Honest card** | `🏆 Yield: 4.8x · target 5x = 50000 URLs` + `Target reached / SERPs saturated / target se kam` |
+| **Pages default 3** | bingr RSS 50/page → ek dork se 150 tak |
+
+### Parser settings me naya button
+```
+🏆 URL TARGET: 5x   |   📄 PAGES: 3
+🧵 THREADS: 12
+```
+Tap = 3x → 5x → 10x → 20x. Jitna zyada, utna lamba scan (budget ke andar).
+
+### Sach
+SERPs me overlap hota hai. 10,000 dorks × 10x = 1,00,000 unique URLs sirf tab
+milte hain jab engines itna alag-alag dein. Bot ab **poori koshish** karta hai
+(har dork ko 9 sources tak), saturation par ruk jata hai aur **sach batata hai** —
+jhoothi 10x nahi likhta. 5x practically har baar mil jata hai.
+
+Tests: **865/865** · screens 37 clean · pyflakes 0
 
 ---
 
