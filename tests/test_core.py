@@ -8,9 +8,13 @@ Har test ke saath ✅/❌ print hota hai, end me total count.
 """
 import asyncio
 import atexit
+import importlib.util
+import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -50,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.9.8", "VERSION")
+    eq(core.VERSION, "v2.9.9", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -465,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.9.8"')
+    contains(btxt, 'VERSION = "v2.9.9"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.9.8", "shim se version")
+    eq(core.VERSION, "v2.9.9", "shim se version")
 
 
 def test_diagnostics():
@@ -1767,7 +1771,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.9.8", "version")
+    eq(core.VERSION, "v2.9.9", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -1791,6 +1795,76 @@ def test_build_stamp():
     contains(up, "SNAKE_NO_SELF")
     contains(up, "DBF copy skip")
 
+def test_config_persistence():
+    """Token/Admin update ke baad bhi bache — external config file."""
+    group("config-safe")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bot = os.path.join(root, "bot.py")
+    src = open(bot, encoding="utf-8").read()
+    contains(src, 'CONFIG_NAME = "snake_config.json"')
+    contains(src, "def _read_config")
+    contains(src, "def _save_config")
+    contains(src, "_migrate_config()")
+    contains(src, "Config")
+    eq(core.CONFIG_NAME, "snake_config.json", "config name")
+
+    # update.sh: config guard hai aur config kabhi delete nahi karta
+    up = open(os.path.join(root, "vps", "termux_update.sh"), encoding="utf-8").read()
+    contains(up, "CONFIG GUARD")
+    contains(up, "snake_config.json")
+    ok('rm -f "$CFG"' not in up, "update.sh config delete nahi karta")
+    contains(up, "setconfig.sh")
+
+    # setconfig.sh maujood + usable
+    sc = os.path.join(root, "setconfig.sh")
+    ok(os.path.exists(sc), "setconfig.sh file hai")
+    sct = open(sc, encoding="utf-8").read()
+    contains(sct, "--addadmin")
+    contains(sct, "--token")
+    contains(sct, "--show")
+    ok("snake_config.json" in sct, "setconfig config file likhta hai")
+
+    # runtime: temp install me config se token/admin load hote hain
+    tmp = tempfile.mkdtemp(prefix="snakecfg_")
+    try:
+        shutil.copy(bot, os.path.join(tmp, "bot.py"))
+        with open(os.path.join(tmp, "snake_config.json"), "w", encoding="utf-8") as f:
+            json.dump({"bot_token": "123456:AAHfrom_config_0001",
+                       "admin_ids": [111222333, 444555666]}, f)
+        spec = importlib.util.spec_from_file_location(
+            "snake_cfg_probe", os.path.join(tmp, "bot.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        eq(mod.BOT_TOKEN, "123456:AAHfrom_config_0001", "config se token")
+        eq(mod.ADMIN_IDS, [111222333, 444555666], "config se admins")
+        eq(mod.CONFIG_PATH, os.path.join(tmp, "snake_config.json"), "config path")
+        ok(any(os.path.abspath(p) == os.path.abspath(os.path.join(tmp, "snake_config.json"))
+               for p in mod._config_paths()), "config paths me temp dir")
+
+        # token ud gaya ho to backup se recover
+        os.makedirs(os.path.join(tmp, "backups"), exist_ok=True)
+        with open(os.path.join(tmp, "backups", "bot_20260101_000000.py"), "w",
+                  encoding="utf-8") as f:
+            f.write('BOT_TOKEN = "999999:AAHbackup_token_recover"\n'
+                    "ADMIN_IDS = [111222333, 909090909]\n")
+        tok, adm = mod._recover_from_backups()
+        eq(tok, "999999:AAHbackup_token_recover", "backup se token")
+        eq(adm, [111222333, 909090909], "backup se admins")
+        ok(mod._token_ok(tok), "_token_ok true")
+        ok(not mod._token_ok("PUT_YOUR_BOT_TOKEN_HERE"), "_token_ok placeholder false")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # placeholder token se config file na bane (repo saaf rahe)
+    ok(not os.path.exists(os.path.join(root, "snake_config.json")),
+       "repo me config file nahi")
+
+    # /ping me config line
+    ctx = FakeContext({})
+    upd = FakeUpdate(uid=ADMIN, text="/ping")
+    asyncio.run(core.cmd_ping(upd, ctx))
+    contains(upd.last_text(), "Config")
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -1811,7 +1885,8 @@ def main():
                test_large_data_guard, test_large_guard_card,
                test_silent_kill_guard, test_injector_small_matrix, test_keywords_variety,
                test_parser_settings, test_paste_smart_fallback,
-               test_no_dead_buttons, test_build_stamp):
+               test_no_dead_buttons, test_build_stamp,
+               test_config_persistence):
         try:
             fn()
         except Exception as exc:

@@ -64,20 +64,189 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CONFIG  (./setconfig.sh se badlo — repo me placeholder hi rehta hai)
 # ═══════════════════════════════════════════════════════════════════════════════
+# ⚠️ In do values ko bot.py me mat dhoondho — update ke baad bhi rahengi
+#    kyunki ye SNAKE_CONFIG (JSON file) se aati hain, bot.py se nahi.
 BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.9.8"
-BUILD = "guard+fast+kw+cfg"      # feature flags — /ping me dikhte hain
+VERSION = "v2.9.9"
+BUILD = "cfg-safe+guard+fast+kw+cfg"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_NAME = "snake_config.json"
+
+
+def _config_paths():
+    """Token/admin kahan dhoondhein — pehla jo mile wahi use hoga."""
+    home = os.path.expanduser("~")
+    return [os.path.join(BASE_DIR, CONFIG_NAME),
+            os.path.join("/storage/emulated/0", "DBF", CONFIG_NAME),
+            os.path.join(home, "snake", CONFIG_NAME),
+            os.path.join(BASE_DIR, "data", CONFIG_NAME)]
+
+
+def _read_config():
+    for pth in _config_paths():
+        try:
+            if os.path.isfile(pth) and os.path.getsize(pth) < 200000:
+                with open(pth, encoding="utf-8", errors="ignore") as f:
+                    cfg = json.load(f)
+                if isinstance(cfg, dict) and cfg:
+                    return cfg, pth
+        except Exception:
+            continue
+    return {}, ""
+
+
+_CONFIG, CONFIG_PATH = _read_config()
+
+
+def _cfg_token():
+    tok = (os.environ.get("BOT_TOKEN") or _CONFIG.get("bot_token") or
+           os.environ.get("SNAKE_BOT_TOKEN") or "").strip()
+    return tok
+
+
+def _cfg_admins(base):
+    raw = _CONFIG.get("admin_ids")
+    if raw is None:
+        raw = os.environ.get("ADMIN_IDS", "")
+        raw = [x for x in re.split(r"[,\s]+", str(raw)) if x.strip().isdigit()]
+    out = []
+    for x in (raw if isinstance(raw, (list, tuple)) else [raw]):
+        try:
+            v = int(str(x).strip())
+        except Exception:
+            continue
+        if v > 0 and v not in out:
+            out.append(v)
+    return out or list(base)
+
+
+def _save_config(*, token=None, admin_ids=None):
+    """Config ko disk pe likho. Token kabhi log/chat me print nahi hota."""
+    cfg = dict(_CONFIG)
+    if token is not None:
+        cfg["bot_token"] = str(token).strip()
+    if admin_ids is not None:
+        cfg["admin_ids"] = [int(x) for x in admin_ids]
+    cfg.setdefault("brand", BRAND)
+    cfg["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    targets = [os.path.join(BASE_DIR, CONFIG_NAME)]
+    ext = os.path.join("/storage/emulated/0", "DBF")
+    if os.path.isdir(ext) and os.path.abspath(ext) != os.path.abspath(BASE_DIR):
+        targets.append(os.path.join(ext, CONFIG_NAME))
+    written = []
+    for pth in targets:
+        try:
+            tmp = pth + ".tmp"
+            os.makedirs(os.path.dirname(pth), exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2)
+            try:
+                os.chmod(tmp, 0o600)
+            except Exception:
+                pass
+            os.replace(tmp, pth)
+            written.append(pth)
+        except Exception as exc:
+            logger.warning("config save fail %s: %s", pth, exc)
+    globals().update({"_CONFIG": cfg})
+    return written
+
+
+# config se override (env > file > hardcoded fallback)
+_tok_file = _cfg_token()
+if _tok_file:
+    BOT_TOKEN = _tok_file
+ADMIN_IDS = _cfg_admins(ADMIN_IDS)
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DUMP_DIR = os.path.join(BASE_DIR, "dumps")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(DUMP_DIR, exist_ok=True)
+
+
+def _token_ok(tok) -> bool:
+    tok = str(tok or "").strip()
+    return bool(tok) and "PUT_YOUR" not in tok and ":" in tok and len(tok) >= 20
+
+
+def _recover_from_backups():
+    """Token kisi purane update me ud gaya? backups/DBF se wapas nikaal lo."""
+    import glob
+    cands = []
+    for pat in (os.path.join(BASE_DIR, "backups", "bot_*.py"),
+                os.path.join(BASE_DIR, "bot*.py"),
+                "/storage/emulated/0/DBF/bot*.py",
+                os.path.join(os.path.expanduser("~"), "snake", "bot*.py")):
+        try:
+            cands.extend(sorted(glob.glob(pat), reverse=True)[:6])
+        except Exception:
+            continue
+    seen = set()
+    for pth in cands:
+        rp = os.path.abspath(pth)
+        if rp in seen or rp == os.path.abspath(__file__):
+            continue
+        seen.add(rp)
+        try:
+            if os.path.getsize(pth) > 5 * 1024 * 1024:
+                continue
+            src = open(pth, encoding="utf-8", errors="ignore").read()
+        except Exception:
+            continue
+        m = re.search(r"^BOT_TOKEN\s*=\s*[\"']([^\"']*)[\"']", src, re.M)
+        tok = (m.group(1) if m else "").strip()
+        if _token_ok(tok):
+            am = re.search(r"^ADMIN_IDS\s*=\s*\[([^\]]*)\]", src, re.M)
+            adm = [int(x) for x in re.findall(r"\d{5,}", am.group(1))] if am else []
+            logger.info("♻️ token/admin backup se recover — %s", os.path.basename(pth))
+            return tok, adm
+    return "", []
+
+
+def _migrate_config():
+    """Purani install (token bot.py ke andar) → ek baar config file bana do.
+
+    Isse pehli update ke baad bhi token/admin safe rahenge.
+    """
+    try:
+        if CONFIG_PATH and os.path.isfile(CONFIG_PATH):
+            return
+        if __name__ != "__main__":
+            return                      # tests/import pe kabhi file na likhe
+        tok = str(BOT_TOKEN or "").strip()
+        good = _token_ok(tok)
+        if not good:
+            tok, adm = _recover_from_backups()      # backup me ho to wapas
+            good = _token_ok(tok)
+            if good:
+                globals()["BOT_TOKEN"] = tok
+                if adm:
+                    globals()["ADMIN_IDS"] = adm
+                logger.info("♻️ admins recovered: %s", adm)
+        if not good:
+            return                      # placeholder token se config na banao
+        pth = os.path.join(BASE_DIR, CONFIG_NAME)
+        cfg = {"bot_token": tok if good else "",
+               "admin_ids": [int(x) for x in ADMIN_IDS],
+               "brand": BRAND,
+               "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+               "note": "Token/Admin yahan safe hain — ./update.sh inse touch nahi karta"}
+        with open(pth, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+        try:
+            os.chmod(pth, 0o600)
+        except Exception:
+            pass
+        globals().update({"_CONFIG": cfg, "CONFIG_PATH": pth})
+        logger.info("🔐 config saved → %s (token/admin update-safe)", pth)
+    except Exception as exc:
+        logger.warning("config migrate skip: %s", exc)
+
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -89,6 +258,8 @@ logger = logging.getLogger("snake")
 
 START_TS = time.time()
 BUILD_TS = time.strftime("%d-%m %H:%M", time.localtime())
+
+_migrate_config()          # token/admin ek baar bahar nikaal do (update-safe)
 
 TOKEN = BOT_TOKEN
 if (not TOKEN) or ("PUT_YOUR_BOT_TOKEN_HERE" in str(TOKEN)) or (":" not in str(TOKEN)):
@@ -11981,6 +12152,7 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "📦 Core: <b>%s</b>\n"
            "🧩 Build: <code>%s</code>\n"
            "🛡 Silent-guard: %s · 💉 payloads: <code>%d</code> · ⚙️ parser-cfg: %s\n"
+           "🔐 Config: %s\n"
            "🕒 Loaded: <code>%s</code>")
     txt = txt % (selfcheck.get("username") or "?",
                  F(THEMES[theme_name()]["label"], T()["head"]),
@@ -11990,6 +12162,9 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  "✅ ON" if globals().get("SILENT_GUARD") else "⚠️ OFF",
                  len(INJ_PROBES),
                  "✅ ON" if "cb_parse_cfg" in globals() else "⚠️ OFF",
+                 ("<code>%s</code> · admins %d" %
+                  (os.path.basename(CONFIG_PATH) if CONFIG_PATH else "⚠️ none (bot.py se)",
+                   len(ADMIN_IDS))),
                  BUILD_TS)
     await msg.edit_text(txt, parse_mode=ParseMode.HTML)
 

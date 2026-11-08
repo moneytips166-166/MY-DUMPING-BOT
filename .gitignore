@@ -22,3 +22,11 @@ dumps/
 # 🧪 tests ka venv (commit na karo)
 .venv/
 .pytest_cache/
+
+# 🔐 token/admin (phone pe rehta hai, repo me kabhi nahi)
+snake_config.json
+snake_config.json.tmp
+update.sh.new
+setconfig.sh.new
+logs/
+backups/

@@ -1,9 +1,25 @@
-# 🐍 PYTHON SNAKE CORE — v2.9.8
+# 🐍 PYTHON SNAKE CORE — v2.9.9
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
 ---
 
+## 🔐 v2.9.9 — token/admin update me kabhi delete nahi
+
+**Asli bug:** `BOT_TOKEN` aur `ADMIN_IDS` `bot.py` ke andar the, aur `./update.sh` poori `bot.py` replace karta hai — isliye har update pe token ud jata tha.
+
+| Fix | Detail |
+|---|---|
+| Config bahar | `snake_config.json` (bot.py ke saath) — isko update **kabhi touch nahi** karta |
+| Load order | env `BOT_TOKEN` → `snake_config.json` → `bot.py` default |
+| Auto-migrate | Purani install (token andar) pehli baar chalte hi khud config bana leta hai |
+| Auto-recover | Token kisi purane update me ud gaya ho to `backups/bot_*.py` + DBF se wapas nikaal leta hai (token + admin dono) |
+| Update guard | `./update.sh` replace se **pehle** purane `bot.py`/backups se token nikaal ke config bana deta hai |
+| `setconfig.sh` | Naya: `--show` (masked), `--token`, `--admin`, `--addadmin` |
+| `/ping` | `🔐 Config: snake_config.json · admins N` line |
+| Security | `snake_config.json` `.gitignore` me + chmod 600 (repo me kabhi nahi jata) |
+
+---
 ## 🔎 v2.9.8 — build verify + 409 fix + one-command update
 
 | Cheez | Detail |

@@ -15,6 +15,8 @@ BOT_URL="${SNAKE_URL:-https://raw.githubusercontent.com/$REPO/$BRANCH/bot.py}"
 BOT_FB="https://github.com/$REPO/raw/$BRANCH/bot.py"
 SELF_URL="https://raw.githubusercontent.com/$REPO/$BRANCH/vps/termux_update.sh"
 SELF_FB="https://github.com/$REPO/raw/$BRANCH/vps/termux_update.sh"
+SELFC_URL="https://raw.githubusercontent.com/$REPO/$BRANCH/setconfig.sh"
+SELFC_FB="https://github.com/$REPO/raw/$BRANCH/setconfig.sh"
 LOGDIR="$DIR/logs"
 mkdir -p "$DIR/backups" "$LOGDIR" 2>/dev/null
 LOG="$LOGDIR/compile_$$.txt"
@@ -67,6 +69,64 @@ BOT_PIDS() {
 # ══════════════ 1) BOT DOWNLOAD ══════════════
 [ -f bot.py ] && cp -f bot.py "backups/bot_$STAMP.py" && echo "💾 backup: backups/bot_$STAMP.py"
 
+# ── 1.5) 🔐 CONFIG GUARD — token/admin update me KABHI delete nahi honge ──
+#  bot.py replace hota hai, par ye file nahi chhooti.
+CFG="$DIR/snake_config.json"
+if [ ! -f "$CFG" ]; then
+    "$PY" - "$CFG" <<'PYEOF'
+import glob, json, os, re, sys, time
+
+out = sys.argv[1]
+
+
+def grab(path):
+    """bot.py (ya backup) se token + admins nikalo."""
+    tok, adm = "", []
+    try:
+        src = open(path, encoding="utf-8", errors="ignore").read()
+    except Exception:
+        return tok, adm
+    m = re.search(r"^BOT_TOKEN\s*=\s*[\"']([^\"']*)[\"']", src, re.M)
+    if m:
+        tok = m.group(1).strip()
+    if "PUT_YOUR" in tok or ":" not in tok or len(tok) < 20:
+        tok = ""
+    m = re.search(r"^ADMIN_IDS\s*=\s*\[([^\]]*)\]", src, re.M)
+    if m:
+        adm = [int(x) for x in re.findall(r"\d{5,}", m.group(1))]
+    return tok, adm
+
+
+cands = [p for p in ("bot.py", "bot.py.new") if os.path.isfile(p)]
+cands += sorted(glob.glob("backups/bot_*.py"), reverse=True)[:6]   # naye pehle
+tok, adm, src_used = "", [], ""
+for pth in cands:
+    t, a = grab(pth)
+    if t and not tok:
+        tok, src_used = t, pth
+    for x in a:
+        if x not in adm:
+            adm.append(x)
+    if tok and adm:
+        break
+
+if not tok and not adm:
+    print("🔐 config nahi mila (token khaali) — ./setconfig.sh --token <TOKEN>")
+else:
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump({"bot_token": tok, "admin_ids": adm, "brand": "PYTHON SNAKE",
+                   "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+                   "note": "Token/Admin yahan safe hain — ./update.sh inse touch nahi karta"},
+                  f, indent=2)
+    print("🔐 config banaya (%s se) — token %s, admins %d" %
+          (src_used or "-", "✅" if tok else "❌ khaali", len(adm)))
+PYEOF
+fi
+if [ -f "$CFG" ]; then
+    chmod 600 "$CFG" 2>/dev/null
+    echo "🔐 config safe hai: $CFG (isse touch nahi kiya)"
+fi
+
 echo "→ bot download…"
 if ! DL "$BOT_URL" bot.py.new; then
     echo "↩ primary fail, fallback…"
@@ -114,7 +174,28 @@ else
 fi
 echo "✅ version: $VER  (build: ${BUILD:-?})"
 
+# 🔐 config DBF folder me bhi (bot wahan se chale to bhi token mile)
+if [ -f "$CFG" ] && [ -d "$EXT" ] && \
+   [ "$(cd "$DIR" && pwd -P)" != "$(cd "$EXT" && pwd -P)" ]; then
+    if [ ! -f "$EXT/snake_config.json" ]; then
+        cp -f "$CFG" "$EXT/snake_config.json" 2>/dev/null \
+            && echo "🔐 DBF config copy ✅"
+    fi
+fi
+
 # ══════════════ 3) RESTART ══════════════
+# setconfig.sh bhi install/refresh (token badalne ka official tarika)
+if DL "$SELFC_URL" "$DIR/setconfig.sh.new" 2>/dev/null \
+   || DL "$SELFC_FB" "$DIR/setconfig.sh.new" 2>/dev/null; then
+    if grep -q "setconfig" "$DIR/setconfig.sh.new" 2>/dev/null \
+       && bash -n "$DIR/setconfig.sh.new" 2>/dev/null; then
+        mv -f "$DIR/setconfig.sh.new" "$DIR/setconfig.sh"
+        chmod +x "$DIR/setconfig.sh" 2>/dev/null
+    else
+        rm -f "$DIR/setconfig.sh.new"
+    fi
+fi
+
 if command -v screen >/dev/null 2>&1; then
     screen -S snake -X quit >/dev/null 2>&1
 fi
@@ -155,6 +236,13 @@ if [ -n "$PIDS" ]; then
     command -v screen >/dev/null 2>&1 && screen -ls 2>/dev/null | grep -q snake \
         && echo "🖥 screen: snake  →  dekhne ke liye: screen -r snake"
     echo "→ Telegram: /ping  →  $VER (build ${BUILD:-?})"
+    if [ -f "$CFG" ]; then
+        if grep -q '"bot_token": ""' "$CFG" 2>/dev/null; then
+            echo "⚠️ token khaali hai — chalao: ./setconfig.sh --token <TOKEN> && ./restart.sh"
+        else
+            echo "🔐 token/admin safe (config se load honge)"
+        fi
+    fi
 else
     echo "❌ bot start hote hi band ho gaya — log:"
     tail -n 20 "$RLOG" 2>/dev/null || echo "   (log khaali)"
