@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.12.1", "VERSION")
+    eq(core.VERSION, "v2.12.2", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.12.1"')
+    contains(btxt, 'VERSION = "v2.12.2"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.12.1", "shim se version")
+    eq(core.VERSION, "v2.12.2", "shim se version")
 
 
 def test_diagnostics():
@@ -1781,7 +1781,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.12.1", "version")
+    eq(core.VERSION, "v2.12.2", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2072,6 +2072,29 @@ def test_v212_engines():
     ok(any("a.com/p.php" in u for u in got), "bingr url 1")
     ok(any("b.com/q.php" in u for u in got), "bingr url 2")
 
+def test_v2122_bing_quality():
+    """v2.12.2 — Bing se zyada + saaf results (RSS 50/page, redirect unwrap)."""
+    group("v2.12.2 bing quality")
+    url = core.ENGINE_URLS["bingr"]
+    contains(url, "format=rss")
+    contains(url, "count=50")
+    contains(url, "mkt=en-US")
+    eq(core.ENGINE_PAGE["bingr"], (1, 50), "RSS page step 50")
+    # redirect unwrap — bing.com/ck/a?u=<base64> se asli URL
+    rss = ("<rss><channel>"
+           "<item><link>https://shop-a.com/product.php?id=12</link></item>"
+           "<item><link>https://www.bing.com/ck/a?!&amp;&amp;p=x&amp;u="
+           "a1aHR0cHM6Ly9nb3YtYi5pbi9sb2dpbi5waHA_aWQ9Nw</link></item>"
+           "</channel></rss>")
+    got = core.extract_urls("bingr", rss)
+    ok(any("shop-a.com/product.php" in u for u in got), "seedha link")
+    ok(any("gov-b.in/login.php" in u for u in got), "redirect unwrap")
+    ok(not any("bing.com" in u for u in got), "bing ke apne links nahi")
+    # default pages = 2 (display bhi wahi dikhaye)
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "bot.py"), encoding="utf-8").read()
+    contains(src, 'sget("parse_pages", 2)')
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -2095,7 +2118,7 @@ def main():
                test_no_dead_buttons, test_build_stamp,
                test_config_persistence, test_menu_emoji,
                test_premium_emoji, test_v211_bugfixes,
-               test_v212_engines):
+               test_v212_engines, test_v2122_bing_quality):
         try:
             fn()
         except Exception as exc:

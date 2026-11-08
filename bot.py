@@ -70,7 +70,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.12.1"
+VERSION = "v2.12.2"
 BUILD = "parser-parallel+inj-fast+rev-vuln"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
@@ -3687,7 +3687,7 @@ JUNK_EXT = {".css", ".js", ".woff", ".woff2", ".ttf", ".eot", ".ico", ".svg", ".
 ENGINE_URLS = {
     # ── SIRF WAHI ENGINES JO ROTATING PROXY PE BHI CHALTE HAIN ──
     # Bing RSS — sabse reliable: pure XML, koi JS/captcha nahi. Ye kabhi ni block hota.
-    "bingr":  "https://www.bing.com/search?q={q}&format=rss&first={p}&count=30",
+    "bingr":  "https://www.bing.com/search?q={q}&format=rss&first={p}&count=50&mkt=en-US",
     # Bing HTML — proxy pe bhi results deta hai
     "bing":   "https://www.bing.com/search?q={q}&first={p}&count=30&setlang=en",
     # Mojeek — apna independent index, koi bot-protection nahi
@@ -3703,7 +3703,7 @@ ENGINE_MULTI = {}      # koi multi-instance engine nahi (sab direct source)
 # (start, step) — har engine ka pagination offset
 ENGINE_PAGE = {
     "ddgl": (0, 10),
-    "bing": (1, 10), "bingr": (1, 10),
+    "bing": (1, 10), "bingr": (1, 50),
     "mojeek": (0, 10), "yahoo": (1, 10),
 }
 
@@ -8035,7 +8035,7 @@ async def tool_parse(update, context):
                                       if not int(sget("parse_url_limit", 0) or 0)
                                       else "<code>%s</code>" % fmt(int(sget("parse_url_limit", 0)))), "🌐")
            + "\n" + KV("Pages / Threads", "<code>%d</code> · <code>%d</code> parallel"
-                       % (int(sget("parse_pages", 1) or 1),
+                       % (int(sget("parse_pages", 2) or 2),
                           int(sget("parse_threads", 12) or 12)), "⚙️")
            + "\n" + KV("Timeout", "<code>%ss</code>" % int(sget("parse_timeout", 0) or
                                                             ENGINE_TIMEOUT.get(mode, 8)), "⏱")
@@ -8139,7 +8139,7 @@ async def cb_parse_cfg(update, context, key: str = ""):
             pass
         return await cb_parse_cfg(update, context, "")
     mode = user_mode(context)
-    pages = int(sget("parse_pages", 1) or 1)
+    pages = int(sget("parse_pages", 2) or 2)
     threads = int(sget("parse_threads", 12) or 12)
     to = int(sget("parse_timeout", 0) or ENGINE_TIMEOUT.get(mode, 8))
     limit = int(sget("parse_url_limit", 0) or 0)
@@ -8259,7 +8259,7 @@ async def input_deep_max(update, context, text: str):
         except Exception:
             pass
 
-    res = await parse_deep(dorks, max_urls=mx, pages=int(sget("parse_pages", 1) or 1),
+    res = await parse_deep(dorks, max_urls=mx, pages=int(sget("parse_pages", 2) or 2),
                            use_proxy=None, progress=prog,
                            mode=user_mode(context), budget=budget)
     took = time.time() - t0
@@ -8427,7 +8427,7 @@ async def input_parse_max(update, context, text: str):
         except Exception:
             pass
 
-    res = await parse(dorks, max_urls=mx, pages=sget("parse_pages", 1),
+    res = await parse(dorks, max_urls=mx, pages=sget("parse_pages", 2),
                       use_proxy=None, progress=prog, mode=user_mode(context))
     took = time.time() - t0
     urls = res["urls"]
@@ -12056,7 +12056,7 @@ async def admin_callback(update, context, action: str):
 
     if action == "eng":
         kb = RK([
-            [InlineKeyboardButton("Pages: %s" % sget("parse_pages", 1), callback_data="a:setpages")],
+            [InlineKeyboardButton("Pages: %s" % sget("parse_pages", 2), callback_data="a:setpages")],
             [InlineKeyboardButton("Check timeout: %ss" % sget("check_timeout", 6), callback_data="a:setto")],
             [InlineKeyboardButton("Concurrency: %s" % sget("concurrency", 400), callback_data="a:setconc")],
             [InlineKeyboardButton("💉 INJECT BATCH: %s" % fmt(inj_batch_size()),

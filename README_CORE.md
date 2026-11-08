@@ -54,6 +54,18 @@ https://site.com/product.php?id=12
 Tests: `test_core` **732/732** · `test_screens` **37 clean** · pyflakes 0
 
 ---
+## 🎯 v2.12.2 — Bing se zyada + saaf results
+
+| Change | Detail |
+|---|---|
+| Bing RSS volume | `count=50` (pehle 30) + `mkt=en-US` → ek page se **50 results** |
+| RSS pagination | step `50` — page 2 la 40-50 naye URLs deta hai |
+| Default pages | **2** (pehle 1) — same dork se double results, threads 12 hone se time same |
+| Redirect unwrap | `bing.com/ck/a?...u=<base64>` se **asli URL** nikalta hai — pehle ye junk me chala jata tha |
+
+Tests: **773/773** · screens 37 clean · pyflakes 0
+
+---
 ## 🧹 v2.12.1 — sirf proxy-safe engines (baaki hata diye)
 
 User rule: *"jo rotating proxy pe block na de aur achha results de, sirf wahi rakho."*
