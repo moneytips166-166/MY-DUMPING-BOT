@@ -13912,6 +13912,10 @@ BATCH_KEYS = {
     "pages": ("parse_pages", 1, 10, "Parser pages per dork", 1, "📄"),
     "threads": ("parse_threads", 2, 24, "Parser parallel dorks", 12, "🧵"),
     "ptimeout": ("parse_timeout", 4, 40, "Parser engine timeout (s)", 8, "⏱"),
+    "precheck": ("inj_precheck", 0, 300, "Precheck time cap (s, 0=off)", 45, "🏓"),
+    "rawcap":  ("parse_raw_cap", 1000, 1000000, "Parser raw URL cap", 200000, "🧾"),
+    "tsp":     ("tsp_count", 10, 100000, "TSP dork amount", 2000, "🧰"),
+    "tspnum":  ("tsp_numbers", 1, 9999, "TSP number range", 99, "🔢"),
 }
 
 

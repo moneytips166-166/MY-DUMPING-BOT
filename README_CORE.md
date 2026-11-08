@@ -109,6 +109,9 @@ TSP_DORK_TYPES[8]   →  inurl:shopify.php?id=7
 TSP_DORK_TYPES[12]  →  ?id= "shopify"
 ```
 
+**Tuning (admin):** `/batch tsp 5000` · `/batch tspnum 999` ·
+`/batch precheck 60` · `/batch rawcap 500000` · `/batch injtargets 36`
+
 ---
 
 ## 📥 v2.17.0 — 24k URLs: poore chale, precheck live, STOP sach me rukta hai
