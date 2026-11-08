@@ -1,6 +1,48 @@
-# 🐍 PYTHON SNAKE CORE — v2.13.0
+# 🐍 PYTHON SNAKE CORE — v2.13.1
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🧨 v2.13.1 — "update hi nahi hua" + token loss (asli karan)
+
+### 1) Token har update par kyun jata tha
+| Kya ho raha tha | Fix |
+|---|---|
+| bot 4 jagah config dhoondhta tha aur **pehli jo mile** use karta tha — khaali token wali file pehle mil jati thi | ab **valid token wali config jeetti hai**, khaali file sirf fallback |
+| `_save_config()` khaali token ko **DBF config me bhi copy** kar deta tha → token hamesha ke liye gaya | save se pehle guard: token khaali ho to disk/backup se wapas, **khaali token kabhi likha hi nahi jata** |
+| updater pehli baar config banate waqt `"bot_token": ""` likh deta tha (bot.py me placeholder hota hai) | updater ab token ke bina config **banata hi nahi**; mil jaye to repair karta hai |
+| `_migrate_config()` sirf backups dekhta tha | ab **saari config files + env + backups** — jo mile wahi wapas |
+
+### 2) "Update nahi hua" — asli karan: download block
+`raw.githubusercontent.com` India me kai ISPs pe block hota hai. Purana updater sirf wahi (aur `github.com/raw`, jo wahi redirect hai) try karta tha → **download fail → purana bot chalta rehta tha**.
+Ab har file **4 tarike** se aati hai:
+1. `raw.githubusercontent.com`
+2. `github.com/.../raw/...`
+3. **`api.github.com` contents** (raw accept header)
+4. **`codeload.github.com` tarball** → `tar` se extract
+
+`update.sh` bootstrap bhi wahi 4 tareeke use karta hai (`SNAKE_BOOT_V=6`).
+
+### 3) "screen already exists" / ek se zyada sessions
+- `snake_lib.sh` **v6**: saare `snake*` sessions (`9999.snake`, `snake_old`, `snake_stale`) band, `screen -wipe`, `.snake.lock` clear (HOME/DBF/current), phir start
+- naam clash ho jaye to **unique session name** (`snake_<timestamp>`) — "already exists" ab kabhi rukta nahi
+- single-instance lock: doosra bot `⚠️ BOT ALREADY RUNNING` bol kar exit
+- updater har baar saari scripts overwrite karta hai (sanity check ke saath)
+
+### 4) File deliver nahi ho rahi
+- `send_file` ab **2 baar** try karta hai (slow Termux network), aur fail hone par chat me **reason + file path** likhta hai — chup-chaap fail nahi hota
+- trial lock owner ko kabhi nahi rokta (`OWNER_IDS` hamesha admin)
+
+### 5) Update hua ya nahi — ab saaf dikhta hai
+`/ping` me:
+```
+📦 Core: v2.13.1
+📁 File: bot.py  v2.13.1
+🗂 Folder: /data/data/com.termux/files/home/snake
+```
+
+Tests: **821/821** · screens 37 clean · pyflakes 0
 
 ---
 

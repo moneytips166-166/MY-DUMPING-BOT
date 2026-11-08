@@ -1,10 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=5)
+# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=6)
 #   ./update.sh   →  khud ko latest karta hai, phir bot.py (Termux + DBF) + restart
 #   ./update.sh --no-self   →  self-update skip
 # NOTE: Termux me /tmp writable nahi — log script folder ke logs/ me jata hai.
 set -u
-UPDATER_V=5
+UPDATER_V=6
 
 REPO="moneytips166-166/MY-DUMPING-BOT"
 BRANCH="arena/063f862a-my-dumping-bot"
@@ -40,10 +40,48 @@ else
     exit 1
 fi
 
+# ── MULTI-SOURCE DOWNLOAD ────────────────────────────────────────────────
+# India me raw.githubusercontent.com kai baar block hota hai — isliye
+# api.github.com aur codeload tarball bhi try karte hain.
+API="https://api.github.com/repos/$REPO/contents"
+_TAR=""
+api_dl() {   # $1 = repo path, $2 = out
+    command -v curl >/dev/null 2>&1 || return 1
+    curl -fsSL --max-time 90 -H "Accept: application/vnd.github.raw" \
+        "$API/$1?ref=$BRANCH" -o "$2" 2>/dev/null \
+        && [ -s "$2" ] && ! head -c 200 "$2" | grep -q '"message": *"Not Found"'
+}
+tarball_dl() {
+    [ -n "$_TAR" ] && [ -d "$_TAR" ] && return 0
+    for _u in "https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH" \
+              "https://api.github.com/repos/$REPO/tarball/$BRANCH" \
+              "https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz"; do
+        rm -f "$DIR/.repo.tar.gz"
+        DL "$_u" "$DIR/.repo.tar.gz" 2>/dev/null || continue
+        [ -s "$DIR/.repo.tar.gz" ] || continue
+        rm -rf "$DIR/.repo.x"; mkdir -p "$DIR/.repo.x"
+        if tar -xzf "$DIR/.repo.tar.gz" -C "$DIR/.repo.x" 2>/dev/null; then
+            _TAR="$(find "$DIR/.repo.x" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)"
+            [ -n "$_TAR" ] && return 0
+        fi
+    done
+    _TAR=""
+    return 1
+}
+fetch_file() {   # $1 = repo path, $2 = out
+    DL "$RAW/$1" "$2" 2>/dev/null && [ -s "$2" ] && return 0
+    DL "$GH/$1"  "$2" 2>/dev/null && [ -s "$2" ] && return 0
+    api_dl "$1" "$2" && return 0
+    if tarball_dl && [ -f "$_TAR/$1" ]; then
+        cp -f "$_TAR/$1" "$2" 2>/dev/null && [ -s "$2" ] && return 0
+    fi
+    rm -f "$2" 2>/dev/null
+    return 1
+}
+
 # ── 0) SELF-UPDATE — ./update.sh hamesha latest rahe ──────────────────────
 if [ "${SNAKE_NO_SELF:-0}" != "1" ] && [ "${1:-}" != "--no-self" ] && [ -w "$0" ]; then
-    if DL "$SELF_URL" "$DIR/update.sh.new" 2>/dev/null \
-       || DL "$SELF_FB" "$DIR/update.sh.new" 2>/dev/null; then
+    if fetch_file "vps/termux_update.sh" "$DIR/update.sh.new" 2>/dev/null; then
         if grep -q "SNAKE_UPDATER_V" "$DIR/update.sh.new" 2>/dev/null \
            && bash -n "$DIR/update.sh.new" 2>/dev/null; then
             chmod +x "$DIR/update.sh.new" 2>/dev/null
@@ -66,7 +104,7 @@ BOT_PIDS() {
         c="$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)"
         last=""
         for w in $c; do last="$w"; done
-        [ "$last" = "bot.py" ] && echo "$p"
+        case "$last" in bot.py|*/bot.py) echo "$p" ;; esac
     done
 }
 
@@ -76,66 +114,93 @@ BOT_PIDS() {
 # ── 1.5) 🔐 CONFIG GUARD — token/admin update me KABHI delete nahi honge ──
 #  bot.py replace hota hai, par ye file nahi chhooti.
 CFG="$DIR/snake_config.json"
-if [ ! -f "$CFG" ]; then
-    "$PY" - "$CFG" <<'PYEOF'
+#  v2.13.1: config me KHAALI token kabhi nahi likha jayega (wahi token loss
+#  ka asli karan tha). Token kisi bhi config/backup se mil jaye to repair.
+"$PY" - "$CFG" "$DIR" <<'PYEOF'
 import glob, json, os, re, sys, time
 
-out = sys.argv[1]
+out, base = sys.argv[1], sys.argv[2]
+home = os.path.expanduser("~")
 
+def tok_ok(t):
+    t = str(t or "").strip()
+    return bool(t) and "PUT_YOUR" not in t and ":" in t and len(t) >= 20
 
-def grab(path):
-    """bot.py (ya backup) se token + admins nikalo."""
-    tok, adm = "", []
+def read_cfg(p):
     try:
-        src = open(path, encoding="utf-8", errors="ignore").read()
+        if os.path.isfile(p) and os.path.getsize(p) < 200000:
+            d = json.load(open(p, encoding="utf-8", errors="ignore"))
+            return d if isinstance(d, dict) else {}
     except Exception:
-        return tok, adm
-    m = re.search(r"^BOT_TOKEN\s*=\s*[\"']([^\"']*)[\"']", src, re.M)
-    if m:
-        tok = m.group(1).strip()
-    if "PUT_YOUR" in tok or ":" not in tok or len(tok) < 20:
-        tok = ""
-    m = re.search(r"^ADMIN_IDS\s*=\s*\[([^\]]*)\]", src, re.M)
-    if m:
-        adm = [int(x) for x in re.findall(r"\d{5,}", m.group(1))]
-    return tok, adm
+        pass
+    return {}
 
+cfgs = [out, "/storage/emulated/0/DBF/snake_config.json",
+        os.path.join(home, "snake", "snake_config.json"),
+        os.path.join(base, "data", "snake_config.json")]
 
-cands = [p for p in ("bot.py", "bot.py.new") if os.path.isfile(p)]
-cands += sorted(glob.glob("backups/bot_*.py"), reverse=True)[:6]   # naye pehle
-tok, adm, src_used = "", [], ""
-for pth in cands:
-    t, a = grab(pth)
+tok, src, admins = "", "", []
+for p in cfgs:
+    d = read_cfg(p)
+    t = str(d.get("bot_token") or "").strip()
+    if t and not tok_ok(t):
+        t = ""
     if t and not tok:
-        tok, src_used = t, pth
-    for x in a:
-        if x not in adm:
-            adm.append(x)
-    if tok and adm:
-        break
+        tok, src = t, p
+    for a in (d.get("admin_ids") or []):
+        try:
+            a = int(a)
+        except Exception:
+            continue
+        if a > 0 and a not in admins:
+            admins.append(a)
 
-if not tok and not adm:
-    print("🔐 config nahi mila (token khaali) — ./setconfig.sh --token <TOKEN>")
-else:
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump({"bot_token": tok, "admin_ids": adm, "brand": "PYTHON SNAKE",
-                   "created": time.strftime("%Y-%m-%d %H:%M:%S"),
-                   "note": "Token/Admin yahan safe hain — ./update.sh inse touch nahi karta"},
-                  f, indent=2)
-    print("🔐 config banaya (%s se) — token %s, admins %d" %
-          (src_used or "-", "✅" if tok else "❌ khaali", len(adm)))
+# backup bot.py se token (purani install)
+if not tok:
+    cands = sorted(glob.glob(os.path.join(base, "backups", "bot_*.py")),
+                   reverse=True)[:8]
+    cands += [os.path.join(base, "bot.py"),
+              "/storage/emulated/0/DBF/bot.py",
+              os.path.join(home, "snake", "bot.py")]
+    for p in cands:
+        try:
+            src_txt = open(p, encoding="utf-8", errors="ignore").read()
+        except Exception:
+            continue
+        m = re.search(r"^BOT_TOKEN\s*=\s*[\"']([^\"']*)[\"']", src_txt, re.M)
+        t = (m.group(1) if m else "").strip()
+        if tok_ok(t):
+            tok, src = t, p
+            break
+
+if not tok:
+    print("⚠️ token kahin nahi mila — config ko chheda nahi gaya")
+    print("   ek baar: ./setconfig.sh  (phir ./update.sh)")
+    sys.exit(0)
+
+if not admins:
+    admins = [8937044612]
+cfg = read_cfg(out)
+cfg.update({"bot_token": tok, "admin_ids": admins, "brand": "PYTHON SNAKE",
+            "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "note": "Token/Admin yahan safe hain — ./update.sh inse touch nahi karta"})
+tmp = out + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=2)
+os.replace(tmp, out)
+print("🔐 config ready (%s se) — token ✅, admins %d" % (os.path.basename(src), len(admins)))
 PYEOF
-fi
 if [ -f "$CFG" ]; then
     chmod 600 "$CFG" 2>/dev/null
-    echo "🔐 config safe hai: $CFG (isse touch nahi kiya)"
+    echo "🔐 config safe hai: $CFG (token isse nahi jayega)"
 fi
 
 echo "→ bot download…"
-if ! DL "$BOT_URL" bot.py.new; then
-    echo "↩ primary fail, fallback…"
-    if ! DL "$BOT_FB" bot.py.new; then
-        echo "❌ download fail — net/URL check karo (purana bot chalu hai)"
+if ! DL "$BOT_URL" bot.py.new 2>/dev/null || [ ! -s bot.py.new ]; then
+    echo "↩ raw fail — github.com/raw → api.github.com → tarball try…"
+    if ! fetch_file "bot.py" bot.py.new; then
+        echo "❌ download fail (raw + api + codeload sab band) — net check karo"
+        echo "   WiFi/data ON hai? Browser me github.com khulta hai?"
         rm -f bot.py.new
         exit 1
     fi
@@ -191,7 +256,7 @@ fi
 # v2.13.0: phone pe purani/tuti scripts hi "screen already exists" + duplicate
 # sessions ka karan thi. Ab har update pe saari scripts overwrite hoti hain.
 _install_script() {                       # $1 = filename, $2 = marker (sanity)
-    if DL "$RAW/$1" "$DIR/$1.new" 2>/dev/null || DL "$GH/$1" "$DIR/$1.new" 2>/dev/null; then
+    if fetch_file "$1" "$DIR/$1.new" 2>/dev/null; then
         if [ -s "$DIR/$1.new" ] && grep -q "$2" "$DIR/$1.new" 2>/dev/null \
            && bash -n "$DIR/$1.new" 2>/dev/null; then
             mv -f "$DIR/$1.new" "$DIR/$1"
@@ -215,8 +280,7 @@ for _s in start.sh stop.sh restart.sh status.sh; do
 done
 
 # setconfig.sh bhi install/refresh (token badalne ka official tarika)
-if DL "$SELFC_URL" "$DIR/setconfig.sh.new" 2>/dev/null \
-   || DL "$SELFC_FB" "$DIR/setconfig.sh.new" 2>/dev/null; then
+if fetch_file "setconfig.sh" "$DIR/setconfig.sh.new" 2>/dev/null; then
     if grep -q "setconfig" "$DIR/setconfig.sh.new" 2>/dev/null \
        && bash -n "$DIR/setconfig.sh.new" 2>/dev/null; then
         mv -f "$DIR/setconfig.sh.new" "$DIR/setconfig.sh"

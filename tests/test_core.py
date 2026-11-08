@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.13.0", "VERSION")
+    eq(core.VERSION, "v2.13.1", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.13.0"')
+    contains(btxt, 'VERSION = "v2.13.1"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.13.0", "shim se version")
+    eq(core.VERSION, "v2.13.1", "shim se version")
 
 
 def test_diagnostics():
@@ -1781,7 +1781,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.13.0", "version")
+    eq(core.VERSION, "v2.13.1", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2171,6 +2171,72 @@ def test_v2130_token_repair():
             os.environ["SNAKE_NO_MIGRATE"] = old_nomig
         shutil.rmtree(tmp, ignore_errors=True)
 
+def test_v2131_update_proof():
+    """v2.13.1 — token kabhi khaali disk pe nahi + updater multi-source."""
+    group("v2.13.1 update-proof")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    up = open(os.path.join(root, "vps", "termux_update.sh"), encoding="utf-8").read()
+    for bit in ("SNAKE_UPDATER_V=6", "fetch_file", "api.github.com", "codeload.github.com",
+                "token kahin nahi mila", "snake_kill_all", "UPDATER_V=6"):
+        contains(up, bit)
+    boot = open(os.path.join(root, "update.sh"), encoding="utf-8").read()
+    for bit in ("SNAKE_BOOT_V=6", "API_DL", "codeload.github.com", "TAR_DL"):
+        contains(boot, bit)
+    sc = open(os.path.join(root, "setconfig.sh"), encoding="utf-8").read()
+    contains(sc, "KHAALI token wali config KABHI nahi banti")
+    contains(sc, "khaali token kabhi disk pe nahi")
+    ok("8937044612" in sc, "owner default admin")
+    lib = open(os.path.join(root, "snake_lib.sh"), encoding="utf-8").read()
+    contains(lib, "SNAKE_LIB_V=6")
+    contains(lib, "*/bot.py")                 # absolute-path wala process bhi kill
+    contains(lib, "snake_$(date +%s)")          # naam clash → unique session name
+    contains(lib, "snake_lock_clear")
+
+    tmp = tempfile.mkdtemp(prefix="snake2131_")
+    old_paths = core._config_paths
+    old_cfg = dict(core._CONFIG)
+    old_tok = core.BOT_TOKEN
+    try:
+        empty_p = os.path.join(tmp, "snake_config.json")
+        good_p = os.path.join(tmp, "dbf_config.json")
+        with open(empty_p, "w", encoding="utf-8") as f:
+            json.dump({"bot_token": "", "admin_ids": [111]}, f)
+        with open(good_p, "w", encoding="utf-8") as f:
+            json.dump({"bot_token": "123456:AAHgood_token_here", "admin_ids": [222]}, f)
+        core._config_paths = lambda: [empty_p, good_p]
+        cfg, pth = core._read_config()
+        eq(cfg.get("bot_token"), "123456:AAHgood_token_here", "valid config wins")
+        eq(pth, good_p, "best config path")
+
+        # start par khaali config bhi heal ho jati hai
+        core._heal_configs("123456:AAHgood_token_here")
+        with open(empty_p, encoding="utf-8") as f:
+            eq(json.load(f).get("bot_token"), "123456:AAHgood_token_here",
+               "heal empty config")
+
+        # save: _CONFIG me token khaali ho to bhi disk ka token na khoye
+        old_base = core.BASE_DIR
+        core.BASE_DIR = tmp
+        core._CONFIG.clear()
+        core._CONFIG.update({"bot_token": "", "admin_ids": [222]})
+        core._save_config()
+        core.BASE_DIR = old_base
+        with open(empty_p, encoding="utf-8") as f:
+            eq(json.load(f).get("bot_token"), "123456:AAHgood_token_here",
+               "empty config repaired")
+        with open(good_p, encoding="utf-8") as f:
+            eq(json.load(f).get("bot_token"), "123456:AAHgood_token_here",
+               "source config intact")
+
+        ok(core.is_admin(8937044612), "owner hamesha admin")
+        ok(not core.is_admin(123), "unknown not admin")
+    finally:
+        core._config_paths = old_paths
+        core._CONFIG.clear()
+        core._CONFIG.update(old_cfg)
+        core.BOT_TOKEN = old_tok
+        shutil.rmtree(tmp, ignore_errors=True)
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -2195,7 +2261,7 @@ def main():
                test_config_persistence, test_menu_emoji,
                test_premium_emoji, test_v211_bugfixes,
                test_v212_engines, test_v2122_bing_quality,
-               test_v2130_token_repair):
+               test_v2130_token_repair, test_v2131_update_proof):
         try:
             fn()
         except Exception as exc:

