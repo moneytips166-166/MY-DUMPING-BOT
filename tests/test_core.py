@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.10.0", "VERSION")
+    eq(core.VERSION, "v2.11.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -380,7 +380,7 @@ def test_engines():
     ok("fast" in core.ENGINE_SETS and "max" in core.ENGINE_SETS, "engine sets")
     eq(len(core.ENGINE_SETS["fast"]), 3, "fast 3")
     eq(len(core.ENGINE_SETS["max"]), len(core.ENGINE_ORDER), "max all")
-    eq(core.engine_list("fast"), ["ddgl", "ddg", "bing"], "fast list")
+    eq(core.engine_list("fast"), ["bing", "mojeek", "ddgl"], "fast list")
     ctx = FakeContext({})
     ctx.user_data["engines_mode"] = "max"
     eq(core.user_mode(ctx), "max", "user mode")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.10.0"')
+    contains(btxt, 'VERSION = "v2.11.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.10.0", "shim se version")
+    eq(core.VERSION, "v2.11.0", "shim se version")
 
 
 def test_diagnostics():
@@ -495,10 +495,11 @@ def test_diagnostics():
     ok(any("a.com/x" in u for u in urls), "result-link")
     # abort setting
     ok("parse_abort_after" not in dir(core) or True, "abort config")
-    # v2.9 — sirf 7 engines (bing RSS hata diya)
+    # v2.11 — 9 engines (mojeek + marginalia; bing-only bug ka fix)
     eq(sorted(core.ENGINE_URLS), ["bing", "brave", "ddg", "ddgl", "google",
-                                  "yahoo", "yandex"], "7 engines only")
-    eq(sorted(core.ENGINE_SETS["max"]), sorted(core.ENGINE_URLS), "max = saare 7")
+                                  "marginalia", "mojeek", "yahoo", "yandex"],
+       "9 engines only")
+    eq(sorted(core.ENGINE_SETS["max"]), sorted(core.ENGINE_URLS), "max = saare 9")
     ok("ddgl" in core.ENGINE_SETS["fast"])
     import base64 as _b64
     enc = _b64.urlsafe_b64encode(b"https://x.example.com/p?q=1").decode().rstrip("=")
@@ -874,9 +875,9 @@ def test_rot_test_card():
 def test_v29_parser():
     group("v2.9 parser")
     # engines sirf 7
-    eq(len(core.ENGINE_URLS), 7, "7 engines")
-    eq(core.ENGINE_SETS["fast"], ["ddgl", "ddg", "bing"], "fast 3")
-    eq(len(core.ENGINE_SETS["max"]), 7, "max 7")
+    eq(len(core.ENGINE_URLS), 9, "9 engines")
+    eq(core.ENGINE_SETS["fast"], ["bing", "mojeek", "ddgl"], "fast 3")
+    eq(len(core.ENGINE_SETS["max"]), 9, "max 9")
     # reset_engine_miss + per-run miss
     core.ENGINE_MISS.update({"ddg": 9})
     core.reset_engine_miss()
@@ -1048,7 +1049,7 @@ def test_injector_engine():
     st = {"urls": 10, "urls_done": 4, "tested": 40, "total": 100, "vulns": [],
           "blocked": 2, "errors": 1, "start": core.time.time() - 4, "cat": "all"}
     card = core._inj_progress_card(st, 3)
-    for needle in ("Tested", "Vulnerable", "Blocked", "ETA", "⟦", "req/s"):
+    for needle in ("Requests", "Vulnerable", "Blocked", "ETA", "⟦", "req/s"):
         contains(card, needle)
     ok(any(sp in card for sp in core.INJ_SPIN), "scan spinner")
     ok(len(card) < 4096, "progress card size")
@@ -1202,7 +1203,7 @@ def test_injector_flow():
         upd = FakeUpdate(data="inj:last")
         asyncio.run(core.cb_inj_last(upd, ctx))
         body = "\n".join(upd.texts())
-        contains(body, "Total tested")
+        contains(body, "Requests")
         contains(body, "vulnerable URL(s) found")
         contains(body, "MySQL")
         contains(body, "id")
@@ -1226,7 +1227,7 @@ def test_injector_flow():
         asyncio.run(core.cb_inj_last(upd2, ctx2))
         body2 = "\n".join(upd2.texts())
         contains(body2, "No vulnerabilities found")
-        contains(body2, "Total tested")
+        contains(body2, "Requests")
         eq(sent, [], "clean scan pe koi file nahi")
 
         # ── 3) text input path ──
@@ -1234,7 +1235,7 @@ def test_injector_flow():
         ctx3 = FakeContext({})
         upd3 = FakeUpdate(text="https://d.com/a?x=1\nhttps://e.com/b?y=2\nkuch nahi")
         asyncio.run(core.input_inj_urls(upd3, ctx3, upd3.message.text))
-        contains("\n".join(upd3.texts()), "Total tested")
+        contains("\n".join(upd3.texts()), "Requests")
 
         # ── 4) koi URL nahi mila ──
         ctx4 = FakeContext({})
@@ -1772,7 +1773,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.10.0", "version")
+    eq(core.VERSION, "v2.11.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -1992,6 +1993,126 @@ def test_premium_emoji():
     asyncio.run(core.cmd_se(u3, ctx3))
     contains(u3.last_text(), "numeric")
 
+def test_v211_bugfixes():
+    """v2.11 — parser parallel, injector accuracy/speed, dumper sync, vuln→dorks."""
+    group("v2.11 fixes")
+
+    # ── 1) parser: dork-level parallel workers ──
+    real_fetch = core.fetch_engine
+    real_proxy = core.proxy_available
+    real_gj = core.gj_enabled
+    seen_dorks = []
+    concurrent = {"now": 0, "max": 0}
+
+    async def fake_fetch(session, engine, dork, proxy=None, timeout=15, page=0,
+                         rot=None, miss=None):
+        seen_dorks.append(dork)
+        concurrent["now"] += 1
+        concurrent["max"] = max(concurrent["max"], concurrent["now"])
+        await asyncio.sleep(0.05)
+        concurrent["now"] -= 1
+        if engine == "bing":
+            return ["https://p%s.example.com/item.php?id=%d" % (abs(hash(dork)) % 97, i)
+                    for i in range(4)]
+        return []
+
+    core.fetch_engine = fake_fetch
+    core.proxy_available = lambda: False
+    core.gj_enabled = lambda: False
+    try:
+        res = asyncio.run(core.parse_deep(
+            ["inurl:item.php?id=%d" % i for i in range(24)], max_urls=5000,
+            pages=1, use_proxy=False, strict=False, mode="fast", budget=30))
+    finally:
+        core.fetch_engine = real_fetch
+        core.proxy_available = real_proxy
+        core.gj_enabled = real_gj
+    st = res["stats"]
+    eq(st["scanned"], 24, "saare dorks scan")
+    ok(st["workers"] >= 2, "parallel workers >= 2 (%s)" % st["workers"])
+    ok(concurrent["max"] >= 2, "ek saath kai dorks (%d)" % concurrent["max"])
+    ok(st["unique"] >= 24, "urls mile (%d)" % st["unique"])
+    ok("remaining_dorks" in st, "resume list")
+
+    # ── 2) injector: false positives band ──
+    # normal page jisme "mysql"/"sqlite" likha hai — vulnerable NAHI
+    eq(core.inj_verdict("sqli", "'", 200, {},
+                        "<html>We use MySQL and SQLite and PostgreSQL.</html>"),
+       {}, "generic mysql text = clean")
+    eq(core.inj_verdict("sqli", "'", 200, {},
+                        "You have an error in your SQL syntax near '1'").get("type"),
+       "SQLi", "asli error = SQLi")
+    # SSTI: page me "49" hai par template evaluate nahi hua
+    eq(core.inj_verdict("ssti", "{{1337*1337}}", 200, {}, "price 49 rupees"), {},
+       "49 ≠ SSTI")
+    eq(core.inj_verdict("ssti", "{{1337*1337}}", 200, {}, "result 1787569").get("type"),
+       "SSTI", "unique number = SSTI")
+    # baseline me pehle se error hai (broken site) → XSS count nahi
+    eq(core.inj_verdict("xss", '"><svg/onload=alert(1)>', 200, {},
+                        '<body>"><svg/onload=alert(1)></body>',
+                        "shop.com", '<body>"><svg/onload=alert(1)></body>'), {},
+       "baseline me same = clean")
+    # LFI markers tight
+    eq(core.inj_verdict("lfi", "../x", 200, {}, "docs about /bin/bash usage"), {},
+       "bin/bash alone = clean")
+    eq(core.inj_verdict("lfi", "../x", 200, {}, "root:x:0:0:root:/root:/bin/sh").get("type"),
+       "LFI", "passwd = LFI")
+
+    # ── 3) injector: flat queue speed (slow URL doosre ko na roke) ──
+    from aiohttp import web
+
+    async def slow(req):
+        await asyncio.sleep(0.6)
+        return web.Response(text="ok", content_type="text/html")
+
+    async def fast(req):
+        return web.Response(text="ok", content_type="text/html")
+
+    async def go():
+        app = web.Application()
+        app.router.add_get("/slow.php", slow)
+        app.router.add_get("/fast.php", fast)
+        runner = web.AppRunner(app, access_log=None)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        base = "http://127.0.0.1:%d" % port
+        try:
+            return await core.inj_scan(
+                [base + "/slow.php?id=1"] + [base + "/fast.php?id=%d" % i for i in range(6)],
+                "all", timeout=3.0, conc=16, max_targets=8)
+        finally:
+            await runner.cleanup()
+
+    st2 = asyncio.run(go())
+    ok(st2["tested"] >= 40, "flat queue requests (%d)" % st2["tested"])
+    ok(st2["took"] < 8.0, "slow URL ne block nahi kiya (%.1fs)" % st2["took"])
+    ok(st2["urls_done"] == 7, "saari URLs done (%d)" % st2["urls_done"])
+
+    # ── 4) vuln URL → UHQ dorks (bina keywords) ──
+    ds = core.vuln_reverse_dorks(["https://shop.example.com/product.php?id=12&cat=5"],
+                                 n=90)
+    ok(len(ds) >= 10, "dorks bane (%d)" % len(ds))
+    ok(any("product.php?id=" in d for d in ds), "exact shape dork")
+    ok(any("ext:php" in d for d in ds), "extension dork")
+    ok(any("site:.gov.in" in d for d in
+           core.vuln_reverse_dorks(["https://a.gov.in/view.php?uid=1"])), "gov suffix")
+    ok(not any("site:.com" in d for d in ds), "broad .com target nahi")
+    ok(not any(k in " ".join(ds).lower() for k in ("buy", "cheap", "best")),
+       "keywords nahi")
+    eq(core.host_suffix("a.co.uk"), "co.uk", "co.uk suffix")
+    eq(core.host_suffix("shop.example.com"), "com", "com suffix")
+
+    # ── 5) dumper: injector ke confirmed URLs count dikhe ──
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "bot.py"), encoding="utf-8").read()
+    contains(src, "Injector confirmed")
+    contains(src, 'df:frominj')
+    contains(src, "injector ne confirm kiya tha")
+    contains(src, "INJ_CONFIRM")
+    contains(src, "1787569")
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -2014,7 +2135,7 @@ def main():
                test_parser_settings, test_paste_smart_fallback,
                test_no_dead_buttons, test_build_stamp,
                test_config_persistence, test_menu_emoji,
-               test_premium_emoji):
+               test_premium_emoji, test_v211_bugfixes):
         try:
             fn()
         except Exception as exc:

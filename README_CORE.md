@@ -1,9 +1,59 @@
-# 🐍 PYTHON SNAKE CORE — v2.10.0
+# 🐍 PYTHON SNAKE CORE — v2.11.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
 ---
 
+## 🚀 v2.11.0 — parser / injector / dumper ke asli bugs + naya URL reverse
+
+### 1) Parser — sirf bing chalta tha
+| Kya galat tha | Fix |
+|---|---|
+| DDG GET pe challenge page (200 OK) deta tha, uske 5 nav links "results" ban jaate the | DDG ab **POST** form se (asli results), challenge page detect hota hai |
+| `ddgl` extractor page ke **saare** links uthata tha | sirf `result-link` rows |
+| bing ke alawa kuch reliable nahi | **mojeek** + **marginalia** add, sets: fast 3 / normal 5 / max 9 |
+| "kaun sa engine chala" pata nahi | card me **🔎 engine health** — ✅ bing 15,669 · ❌ ddg (captcha) |
+
+### 2) Parser — 5000 dorks me se sirf 492 scan hue
+- **Asli karan:** dorks ek-ek karke chalte the (engine parallel tha, dork nahi)
+- Ab **dork-level parallel workers** (default **6**, settings se 2–8)
+- Speed: local test 40 dorks 5.27s (7.6 dork/s) — pehle ~0.27 dork/s
+- Time khatam hone par **▶️ CONTINUE — N dorks left** button (resume)
+- Card me `🧵 Parallel dorks: 6`
+
+### 3) Injector — 1.8 req/s aur 59,832 "tested"
+| Kya galat tha | Fix |
+|---|---|
+| Har URL ke cases alag `gather` — ek slow URL poore batch ko rokta tha | **flat queue** + N workers (40 default) |
+| Free proxies default ON (90% dead → har request timeout) | proxy **default OFF** (`/batch injproxy 1` se on), 25 fail par auto-direct |
+| "Tested 59,832" = requests, user ne URLs samjha | card ab **URLs 162/7,425** + **Requests 1,312/59,832** alag |
+| 40 vuln / 162 URL = 24% false positive | sirf **asli SQL error phrases**, baseline diff, **2nd request confirm** |
+| SSTI: "49" har page me | probe `{{1337*1337}}` → `1787569` |
+| LFI: "bin/bash" har docs page me | `root:x:0:0:` jaisa asli marker |
+- Local benchmark: **480 requests / 0.7s = 686 req/s**, 20/20 asli vuln, **0 false positive**
+
+### 4) Dumper — injector 5 bola, dumper 3
+- Karan: dumper apni alag detection dobara chalata tha
+- Ab dumper card: **💉 Injector confirmed · ✅ Dumped · ⏭ Needs sqlmap**
+- INJECTOR ke result me **📁 DUMP THESE N URL(s)** button (param bhi saath jata hai)
+- `df:vuln` pehle se tha, ab consistency line bhi
+
+### 5) Naya: URL REVERSE → **vulnerable URL se UHQ dorks** (bina keywords)
+```
+URL REVERSE → 💉 VULNERABLE URL → UHQ DORKS
+https://site.com/product.php?id=12
+```
+- same file + same param: `inurl:"product.php?id="`
+- same folder shape: `inurl:shop/product.php?id=`
+- same extension: `inurl:product.php ext:php`
+- sibling files: `inurl:item.php?id=` (16 common names)
+- country suffix sirf restricted (`site:.gov.in`), `.com` jaisa broad nahi
+- error-page dorks: `intext:"You have an error in your SQL syntax" inurl:product.php`
+- **koi keyword nahi** — sirf structure
+
+Tests: `test_core` **732/732** · `test_screens` **37 clean** · pyflakes 0
+
+---
 ## 🪄 v2.10.0 — naye menu emoji + Premium ANIMATED emoji
 
 ### Menu emoji (main screen)
