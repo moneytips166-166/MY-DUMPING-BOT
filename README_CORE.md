@@ -1,6 +1,43 @@
-# 🐍 PYTHON SNAKE CORE — v2.13.1
+# 🐍 PYTHON SNAKE CORE — v2.14.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🎯 v2.14.0 — "30-40 dork chale aur 10000/10000 dikha diya" (FIXED)
+
+### Asli bug
+Purane parser me engine ko **3 miss par permanently "dead"** mark kar diya jata tha.
+Uske baad har dork ka loop turant khatam ho jata tha — **koi request nahi**, par
+counter `scanned` badhta rehta tha. Isliye 30-40 asli dork ke baad baaki 9,960 dork
+milliseconds me "scan" ho jate the aur card **10000/10000 (100%)** dikha deta tha.
+
+### Ab (coverage mode)
+| Kya | Kaise |
+|---|---|
+| **Har dork ek asli request** | pass 1 = har dork par kam se kam 1 engine request (round-robin healthy engine) |
+| **Khaali dork chhoote nahi** | pass 2 = jis dork se kuch nahi mila, uspe 2 engine aur |
+| **Engine permanently dead nahi** | 4 block ke baad sirf **90s rest**, phir wapas (auto) |
+| **Block par rasta badalta hai** | proxy se block → **direct** try, direct se → **proxy** (auto-heal) |
+| **Jhooth nahi** | `scanned` = asli requests hui dorks, `skipped` = jo attempt hi nahi hua |
+| **Progress** | `1234 / 10000 dorks (pass 1/2)` + `Attempts: real requests` |
+| **CONTINUE** | jitne bhi dork bache (time up / engine block / stop) — button hamesha |
+
+### Card ab aisa dikhta hai
+```
+Scanned: 37/10000 dorks
+Not attempted: 9963  (engines blocked — CONTINUE dabao)
+Real requests: 74
+Raw URLs: …
+Unique URLs: …
+```
+`Finished ✅ all 10000 dorks scanned` **sirf tab** jab sach me sab ho gaya ho.
+
+### Speed
+10,000 dorks × 1 request, 12 parallel workers → ~10-15 min (pehle: ya to 3 dork/s
+burn karke 2 min me jhooth, ya ghante). Budget (60 min) ke andar poora scan.
+
+Tests: **842/842** · screens 37 clean · pyflakes 0
 
 ---
 

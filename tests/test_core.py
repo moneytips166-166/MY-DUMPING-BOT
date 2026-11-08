@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.13.1", "VERSION")
+    eq(core.VERSION, "v2.14.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.13.1"')
+    contains(btxt, 'VERSION = "v2.14.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.13.1", "shim se version")
+    eq(core.VERSION, "v2.14.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1781,7 +1781,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.13.1", "version")
+    eq(core.VERSION, "v2.14.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2237,6 +2237,80 @@ def test_v2131_update_proof():
         core.BOT_TOKEN = old_tok
         shutil.rmtree(tmp, ignore_errors=True)
 
+def test_v2140_no_dork_left():
+    """v2.14.0 — har dork ki asli request, jhoothi 10000/10000 nahi."""
+    group("v2.14.0 dork coverage")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    contains(src, "COVERAGE FIRST")
+    contains(src, "Not attempted:")
+    contains(src, "pass %s/2")
+    for bit in ("_retry", "_ready_list", "_REST_FOR", "engine_rest"):
+        contains(src, bit)
+
+    import asyncio as _aio
+    old_fetch = core.fetch_engine
+    old_rest = core.sget("engine_rest", 90)
+    old_budget = core.sget("parse_budget", 3600)
+    old_pages = core.sget("parse_pages", 2)
+    old_settings = dict(core.SETTINGS)
+    calls = {"n": 0}
+
+    async def fake_fetch(session, engine, dork, proxy=None, timeout=15.0,
+                         page=0, rot=None, miss=None):
+        calls["n"] += 1
+        if calls["n"] % 7 == 0:                 # kuchh block, kuchh result
+            core.ENGINE_LAST[engine] = ("blocked page (captcha/challenge)", 0)
+            core.engine_miss_add(engine, miss)
+            return []
+        return ["https://ex.com/%s/%d" % (engine, abs(hash(dork)) % 99999)]
+
+    try:
+        core.fetch_engine = fake_fetch
+        extra = {k: getattr(core, k, None) for k in ("gj_enabled", "gj_alive")}
+        core.gj_enabled = lambda: False                  # test me network nahi
+        core.gj_alive = lambda: True
+        core.SETTINGS["engine_rest"] = 0.2
+        core.SETTINGS["parse_pages"] = 1
+        dorks = ["inurl:test%d" % i for i in range(40)]
+        res = _aio.run(core.parse_deep(dorks, max_urls=100000, use_proxy=False,
+                                       mode="fast", budget=60))
+        st = res["stats"]
+        eq(st["scanned"], 40, "har dork attempt hua")
+        eq(st["skipped"], 0, "koi dork nahi chhoota")
+        ok(st["attempts"] >= 40, "requests >= dorks (%s)" % st["attempts"])
+        eq(st["total"], 40, "total")
+        ok(st.get("remaining_dorks") == [], "CONTINUE ke liye kuchh bacha nahi")
+        ok(st["unique"] > 0, "urls mile")
+
+        # ab poora block — scan jhooth na bole
+        async def dead_fetch(session, engine, dork, proxy=None, timeout=15.0,
+                             page=0, rot=None, miss=None):
+            calls["n"] += 1
+            core.ENGINE_LAST[engine] = ("blocked page (captcha/challenge)", 0)
+            core.engine_miss_add(engine, miss)
+            await _aio.sleep(0.05)
+            return []
+
+        core.fetch_engine = dead_fetch
+        res2 = _aio.run(core.parse_deep(["inurl:dead%d" % i for i in range(400)],
+                                        max_urls=1000, use_proxy=False,
+                                        mode="fast", budget=1.2))
+        st2 = res2["stats"]
+        ok(st2["scanned"] < st2["total"], "blocked me jhoothi 100%% nahi")
+        ok(st2["skipped"] > 0, "baaki dorks skipped gine")
+        ok(len(st2.get("remaining_dorks") or []) > 0, "CONTINUE possible")
+    finally:
+        core.fetch_engine = old_fetch
+        for _k, _v in extra.items():
+            if _v is not None:
+                setattr(core, _k, _v)
+        core.SETTINGS.clear()
+        core.SETTINGS.update(old_settings)
+        core.SETTINGS["engine_rest"] = old_rest
+        core.SETTINGS["parse_budget"] = old_budget
+        core.SETTINGS["parse_pages"] = old_pages
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -2261,7 +2335,8 @@ def main():
                test_config_persistence, test_menu_emoji,
                test_premium_emoji, test_v211_bugfixes,
                test_v212_engines, test_v2122_bing_quality,
-               test_v2130_token_repair, test_v2131_update_proof):
+               test_v2130_token_repair, test_v2131_update_proof,
+               test_v2140_no_dork_left):
         try:
             fn()
         except Exception as exc:
