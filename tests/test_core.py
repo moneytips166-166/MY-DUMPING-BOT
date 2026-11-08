@@ -50,7 +50,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.9.7", "VERSION")
+    eq(core.VERSION, "v2.9.8", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -465,10 +465,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.9.7"')
+    contains(btxt, 'VERSION = "v2.9.8"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.9.7", "shim se version")
+    eq(core.VERSION, "v2.9.8", "shim se version")
 
 
 def test_diagnostics():
@@ -1764,6 +1764,33 @@ def test_no_dead_buttons():
     alerts = [t for k, t, kw in upd.sink if k == "answer" and kw.get("show_alert")]
     ok(alerts, "help_noTut alert: %s" % alerts)
 
+def test_build_stamp():
+    """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
+    group("build-stamp")
+    eq(core.VERSION, "v2.9.8", "version")
+    ok(getattr(core, "BUILD", ""), "BUILD set")
+    ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
+    ctx = FakeContext({})
+    upd = FakeUpdate(uid=ADMIN, text="/ping")
+    asyncio.run(core.cmd_ping(upd, ctx))
+    txt = upd.last_text()
+    contains(txt, core.VERSION)
+    contains(txt, "Build")
+    contains(txt, core.BUILD)
+    contains(txt, "Silent-guard")
+    contains(txt, str(len(core.inj_probes_for("all"))))
+    contains(txt, "Loaded")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "bot.py"), encoding="utf-8").read()
+    contains(src, "BOT ALREADY RUNNING ELSEWHERE")
+    contains(src, "delete_webhook")
+    # update.sh self-updating hai
+    up = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "vps", "termux_update.sh"), encoding="utf-8").read()
+    contains(up, "SNAKE_UPDATER_V")
+    contains(up, "SNAKE_NO_SELF")
+    contains(up, "DBF copy skip")
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -1784,7 +1811,7 @@ def main():
                test_large_data_guard, test_large_guard_card,
                test_silent_kill_guard, test_injector_small_matrix, test_keywords_variety,
                test_parser_settings, test_paste_smart_fallback,
-               test_no_dead_buttons):
+               test_no_dead_buttons, test_build_stamp):
         try:
             fn()
         except Exception as exc:

@@ -68,7 +68,9 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.9.7"
+VERSION = "v2.9.8"
+BUILD = "guard+fast+kw+cfg"      # feature flags — /ping me dikhte hain
+BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -86,6 +88,7 @@ logging.getLogger("telegram").setLevel(logging.WARNING)
 logger = logging.getLogger("snake")
 
 START_TS = time.time()
+BUILD_TS = time.strftime("%d-%m %H:%M", time.localtime())
 
 TOKEN = BOT_TOKEN
 if (not TOKEN) or ("PUT_YOUR_BOT_TOKEN_HERE" in str(TOKEN)) or (":" not in str(TOKEN)):
@@ -4837,6 +4840,13 @@ def _patch_telegram_safe():
 
     Message.edit_text, Message.reply_text = edit_text, reply_text
     Message._snake_safe = True
+    globals()["SILENT_GUARD"] = True
+
+
+try:                              # hamesha ON — bot start hone se pehle hi
+    _patch_telegram_safe()
+except Exception as _exc:
+    logger.warning("telegram safe patch skip: %s", _exc)
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11968,12 +11978,19 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "🐦 Free Google: %s\n"
            "🌐 DNS: system resolver (Termux-safe)\n"
            "🔁 Rotating proxy: <code>%s</code>\n"
-           "📦 Core: <b>%s</b>")
+           "📦 Core: <b>%s</b>\n"
+           "🧩 Build: <code>%s</code>\n"
+           "🛡 Silent-guard: %s · 💉 payloads: <code>%d</code> · ⚙️ parser-cfg: %s\n"
+           "🕒 Loaded: <code>%s</code>")
     txt = txt % (selfcheck.get("username") or "?",
                  F(THEMES[theme_name()]["label"], T()["head"]),
                  up // 3600, (up % 3600) // 60, os.getpid(), len(USERS), gj,
                  ("%d set" % len(rot_proxies())) if rot_proxies() else "none",
-                 VERSION)
+                 VERSION, BUILD,
+                 "✅ ON" if globals().get("SILENT_GUARD") else "⚠️ OFF",
+                 len(INJ_PROBES),
+                 "✅ ON" if "cb_parse_cfg" in globals() else "⚠️ OFF",
+                 BUILD_TS)
     await msg.edit_text(txt, parse_mode=ParseMode.HTML)
 
 
@@ -12054,13 +12071,48 @@ async def _serve(app, stop_ev=None) -> None:
     _install_signals(stop_ev)
     await app.initialize()
     await _self_check(app)
+    # duplicate instance check — Telegram 409 Conflict sabse common "bot dead" karan
+    try:
+        import aiohttp as _aio
+        async with _aio.ClientSession(connector=mk_connector()) as _s:
+            async with _s.get("https://api.telegram.org/bot%s/getWebhookInfo" % TOKEN,
+                              timeout=_aio.ClientTimeout(total=8)) as _r:
+                _j = await _r.json(content_type=None)
+        _wh = (_j.get("result") or {}).get("url") or ""
+        _pend = (_j.get("result") or {}).get("pending_update_count") or 0
+        if _wh:
+            logger.warning("⚠️ Webhook is set (%s) — polling may conflict. Removing…", _wh[:60])
+            from telegram import Bot as _Bot
+            await _Bot(TOKEN).delete_webhook(drop_pending_updates=False)
+        elif _pend:
+            logger.info("📥 %d pending updates in queue (drop_pending_updates=True, "
+                        "purane messages skip honge)", _pend)
+    except Exception as _exc:
+        logger.info("webhook check skip: %s", str(_exc)[:90])
     await app.start()
-    await app.updater.start_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-        poll_interval=0.5,
-        timeout=30,
-    )
+    try:
+        await app.updater.start_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+            poll_interval=0.5,
+            timeout=30,
+        )
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "conflict" in msg or "terminated by other" in msg:
+            print("\n" + "=" * 62)
+            print("  ❌ BOT ALREADY RUNNING ELSEWHERE (Telegram 409)")
+            print("=" * 62)
+            print("  Ek hi token pe doosra instance chal raha hai.")
+            print("  Isi phone pe ho to:")
+            print("      screen -ls")
+            print("      screen -S snake -X quit")
+            print("      pgrep -af bot.py        # koi bacha ho to kill -9 <PID>")
+            print("      ./restart.sh")
+            print("  VPS pe bhi chal raha ho to wahan se band karo")
+            print("  (sudo systemctl stop snake) — sirf EK jagah chalna chahiye.")
+            print("=" * 62 + "\n")
+        raise
     logger.info("✅ Polling running — the bot is live. (Ctrl+C or ./stop.sh to stop)")
     try:
         await stop_ev.wait()

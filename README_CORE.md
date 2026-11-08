@@ -1,9 +1,22 @@
-# 🐍 PYTHON SNAKE CORE — v2.9.7
+# 🐍 PYTHON SNAKE CORE — v2.9.8
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
 ---
 
+## 🔎 v2.9.8 — build verify + 409 fix + one-command update
+
+| Cheez | Detail |
+|---|---|
+| `/ping` build proof | `🧩 Build: guard+fast+kw+cfg` · `🛡 Silent-guard: ✅ ON` · `💉 payloads: 8` · `⚙️ parser-cfg: ✅ ON` · `🕒 Loaded: <time>` — turant pata chal jata hai naya code chal raha hai ya purana |
+| 409 Conflict | Start pe webhook check + auto-delete; polling 409 pe saaf Hinglish message (doosra instance kahan chal raha hai, kaise band kare) |
+| Silent guard | Ab **import pe hi** patch hota hai — pehle start ke baad; /ping me sach dikhta hai |
+| `./update.sh` | **Self-updating** — script khud ko bhi latest karta hai, phir bot.py (Termux + `/storage/emulated/0/DBF`) + restart |
+| Restart | Purane process ko **SIGTERM** (graceful) → wait → SIGKILL; start ke 6s baad verify, fail par log |
+| Same-folder guard | `~/snake == DBF` ho to copy skip (same-file error nahi) |
+| Tests | `test_core` **634/634** · `test_screens` **37 clean** · pyflakes 0 |
+
+---
 ## 🩹 v2.9.7 — silent-kill fix, fast injector, better keywords, parser settings
 
 | Cheez | Detail |
