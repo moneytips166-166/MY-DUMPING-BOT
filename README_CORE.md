@@ -54,6 +54,33 @@ https://site.com/product.php?id=12
 Tests: `test_core` **732/732** · `test_screens` **37 clean** · pyflakes 0
 
 ---
+## 🧹 v2.12.1 — sirf proxy-safe engines (baaki hata diye)
+
+User rule: *"jo rotating proxy pe block na de aur achha results de, sirf wahi rakho."*
+
+**Rakhe (5):**
+
+| Engine | Kyun |
+|---|---|
+| **bingr** (Bing RSS) | Pure XML, koi captcha/JS nahi — sabse pakka |
+| **bing** (HTML) | Proxy ke saath results deta hai |
+| **mojeek** | Apna independent index, koi bot-protection nahi |
+| **ddgl** (DDG lite) | Plain HTML form, proxy-safe |
+| **yahoo** | Bing ka data, simple page |
+
+**Hata diye (7+):** google, yandex, brave, startpage, qwant, ecosia, marginalia,
+sxng (searx), ddg-html — ye free/rotating proxy IP par **captcha** dete hain.
+Yahi "sirf bing chalta hai" ka karan tha.
+
+**Aur bhi:**
+- `AUTO engine-proxy` = proxy ho to sab proxy se (naya IP = kam block), warna direct
+- Parser threads default **12** (max 24)
+- Engine Doctor ab sirf bache engines ke fix dikhata hai
+- Time budget default **60 min**
+
+Tests: **765/765** · screens 37 clean · pyflakes 0
+
+---
 ## 🌐 v2.12.0 — "sirf bing chalta hai" ka asli fix
 
 **Kya galat tha:** parser ke paas sirf 3-7 engine the aur unme se google/yandex

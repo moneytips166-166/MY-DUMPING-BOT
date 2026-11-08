@@ -70,7 +70,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.12.0"
+VERSION = "v2.12.1"
 BUILD = "parser-parallel+inj-fast+rev-vuln"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
@@ -3683,54 +3683,36 @@ JUNK_HOSTS = {
 JUNK_EXT = {".css", ".js", ".woff", ".woff2", ".ttf", ".eot", ".ico", ".svg", ".png",
             ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mp3", ".avi", ".map"}
 
-# 9 engines — bing & mojeek bina proxy bhi chalte hain (v2.11)
+# 5 engines — sab rotating proxy pe bhi chalte hain (v2.12.1)
 ENGINE_URLS = {
-    # Bing RSS — sabse reliable: koi JS/captcha nahi, clean XML. Ye kabhi nahi
-    # block hota, isliye har mode me hai (yahi "sirf bing" ka ilaaj hai).
+    # ── SIRF WAHI ENGINES JO ROTATING PROXY PE BHI CHALTE HAIN ──
+    # Bing RSS — sabse reliable: pure XML, koi JS/captcha nahi. Ye kabhi ni block hota.
     "bingr":  "https://www.bing.com/search?q={q}&format=rss&first={p}&count=30",
-    "ddgl":   "https://lite.duckduckgo.com/lite/?q={q}&s={p}",
-    "ddg":    "https://html.duckduckgo.com/html/?q={q}&s={p}",
+    # Bing HTML — proxy pe bhi results deta hai
     "bing":   "https://www.bing.com/search?q={q}&first={p}&count=30&setlang=en",
+    # Mojeek — apna independent index, koi bot-protection nahi
     "mojeek": "https://www.mojeek.com/search?q={q}&s={p}",
-    "marginalia": "https://old-search.marginalia.nu/search?query={q}",
-    "google": "https://www.google.com/search?q={q}&num=20&hl=en&start={p}&gbv=1",
-    "brave":  "https://search.brave.com/search?q={q}&offset={p}&source=web",
-    "yandex": "https://yandex.com/search/?text={q}&p={p}&lr=0",
+    # DuckDuckGo LITE — plain HTML form, proxy pe chalta hai
+    "ddgl":   "https://lite.duckduckgo.com/lite/?q={q}&s={p}",
+    # Yahoo — Bing ka data, simple HTML
     "yahoo":  "https://search.yahoo.com/search?p={q}&b={p}&n=30",
-    "startpage": "https://www.startpage.com/sp/search?query={q}&page={p}",
-    "qwant":  "https://www.qwant.com/?q={q}&t=web",
-    "ecosia": "https://www.ecosia.org/search?q={q}&p={p}",
-    "sxng":   "https://searx.be/search?q={q}&pageno={p}",
 }
 
-# SearXNG public instances — ye Google/Bing/DDG ka result ek jagah dete hain aur
-# HTML scrape karna allowed hai. Ek down ho to agla try hota hai.
-SXNG_INSTANCES = [
-    "https://searx.be", "https://search.inetol.net", "https://baresearch.org",
-    "https://priv.au", "https://searx.tiekoetter.com", "https://opnxng.com",
-    "https://search.rhscz.eu", "https://searxng.site", "https://search.bus-hit.me",
-]
-ENGINE_MULTI = {"sxng": SXNG_INSTANCES}
+ENGINE_MULTI = {}      # koi multi-instance engine nahi (sab direct source)
 
 # (start, step) — har engine ka pagination offset
 ENGINE_PAGE = {
     "ddgl": (0, 10),
-    "ddg": (0, 30), "bing": (1, 10), "bingr": (1, 10),
+    "bing": (1, 10), "bingr": (1, 10),
     "mojeek": (0, 10), "yahoo": (1, 10),
-    "google": (0, 30), "brave": (0, 20), "startpage": (1, 10), "yandex": (0, 10),
-    "qwant": (1, 10), "ecosia": (1, 10), "marginalia": (0, 10), "searx": (1, 1),
-    "sxng": (1, 1),
 }
 
 # DDG GET pe "anomaly/challenge" deta hai — POST form se asli result aate hain
 ENGINE_POST = {
-    "ddg":  "https://html.duckduckgo.com/html/",
     "ddgl": "https://lite.duckduckgo.com/lite/",
 }
 
-ENGINE_ORDER = ["bing", "bingr", "mojeek", "ddgl", "ddg", "yahoo", "sxng",
-                "startpage", "brave", "google", "qwant", "ecosia", "yandex",
-                "marginalia"]
+ENGINE_ORDER = ["bing", "bingr", "mojeek", "ddgl", "yahoo"]
 
 # Challenge / captcha page — ye "0 results" nahi, BLOCK hai
 BLOCK_MARKS = ("anomaly-modal", "anomaly_modal", "unusual traffic", "are you a robot",
@@ -3740,46 +3722,55 @@ BLOCK_MARKS = ("anomaly-modal", "anomaly_modal", "unusual traffic", "are you a r
 
 # ── Kitne engines? Termux/phone pe kam = fast. Ye 3 bina proxy bhi chalte hain ──
 ENGINE_SETS = {
-    # fast — bina proxy bhi chalte hain (bing + bingr RSS + mojeek)
+    # fast — sabse tez, 3 block-proof engines
     "fast":   ["bing", "bingr", "mojeek"],
-    # normal — 6 engines, 3 bina proxy chalne wale
-    "normal": ["bing", "bingr", "mojeek", "ddgl", "ddg", "sxng", "yahoo"],
-    # max — sab kuch, proxy ho to google/yandex bhi
-    "max":    ["bing", "bingr", "mojeek", "ddgl", "ddg", "sxng", "yahoo",
-               "startpage", "brave", "qwant", "ecosia", "google", "yandex",
-               "marginalia"],
+    # normal — 5 engines, sab proxy-safe (reliable default)
+    "normal": ["bing", "bingr", "mojeek", "ddgl", "yahoo"],
+    # max — wahi 5, bas zyada pages/retry (dead engines add karke time waste nahi)
+    "max":    ["bing", "bingr", "mojeek", "ddgl", "yahoo"],
 }
-ENGINE_LABEL = {"fast": "⚡ FAST — 3 engines (no proxy needed)",
-                "normal": "⚖️ NORMAL — 7 engines (bing RSS + mojeek + searx)",
-                "max": "🐢 MAX — 14 engines (proxy se google/yandex bhi)"}
+ENGINE_LABEL = {"fast": "⚡ FAST — bing + bingr + mojeek",
+                "normal": "⚖️ NORMAL — 5 proxy-safe engines (recommended)",
+                "max": "🐢 MAX — 5 engines, zyada retries"}
+
+# Google/Yandex/Brave/Startpage/Qwant/Ecosia/Marginalia/SearXNG hata diye:
+# free + rotating proxy IP par ye pakka captcha dete hain ("sirf bing" ka karan).
 ENGINE_TIMEOUT = {"fast": 6.0, "normal": 8.0, "max": 10.0}
 ENGINE_DEAD_AFTER = 3          # 3 miss → is run me skip (global state nahi)
 
 # Bina proxy ye engines pakka block karte hain → try bhi mat karo (time bachao)
-NO_PROXY_DEAD = {"google", "yandex"}      # bina proxy ye 2 pakka block
+NO_PROXY_DEAD = set()      # ab koi engine "bina proxy pakka block" nahi hai
 
-# Free proxy pe ye engines aur zyada block karte hain (IP reputation + captcha).
-# AUTO mode me inhe DIRECT chalao, warna "proxy ON par bhi sab ❌" hi milta hai.
-PROXY_HURTS = {"bingr", "mojeek", "ddgl", "ddg", "marginalia", "qwant", "ecosia"}
-# Inhe proxy se fayda hota hai (IP block karte hain)
-PROXY_NEEDS = {"google", "yandex", "brave", "startpage"}
+# Bache hue 5 engines proxy ke saath bhi chalte hain (yahi unka test hai).
+# AUTO = proxy ho to sab proxy se (naya IP = kam block), warna direct.
+PROXY_HURTS = set()
+PROXY_NEEDS = {"bing", "bingr", "mojeek", "ddgl", "yahoo"}
 
 
 def parse_engine_proxy(engine: str, mode: str = "auto") -> bool:
     """Is engine ko proxy se chalana chahiye?
 
-    auto  → jo proxy se ulta block hote hain unhe DIRECT, baaki ko proxy
-    off   → sab direct
-    on    → sab proxy (user ka mann)
+    auto → proxy available ho to haan (sabhi bache engines proxy-safe hain)
+    off  → sab direct
+    on   → sab proxy
     """
     m = str(mode or "auto").lower()
     if m in ("off", "0", "no", "direct"):
         return False
     if m in ("on", "1", "yes", "proxy"):
         return True
-    return engine in PROXY_NEEDS
+    return True          # auto = proxy use karo (naya IP = kam block)
+
+
+# Har engine ka asli "kaise chalega" — doctor isi se hint deta hai
 ENGINE_MISS = {}      # engine -> consecutive empty/blocked count
-ENGINE_LAST = {}      # engine -> (reason, time) — /enginetest + 0-URL card me dikhta hai
+ENGINE_LAST = {}      # engine -> (reason, time) — doctor + 0-URL card me dikhta hai
+
+# Challenge / captcha page — ye "0 results" nahi, BLOCK hai
+BLOCK_MARKS = ("anomaly-modal", "anomaly_modal", "unusual traffic", "are you a robot",
+               "captcha", "challenge-form", "cf-challenge", "enable javascript and cookies",
+               "our systems have detected", "verify you are human", "access denied",
+               "ddg-lite__anomaly", "just a moment")
 
 
 def looks_blocked(body: str) -> bool:
@@ -3790,24 +3781,12 @@ def looks_blocked(body: str) -> bool:
     return any(m in b for m in BLOCK_MARKS)
 
 
-# Har engine ka asli "kaise chalega" — doctor isi se hint deta hai
 ENGINE_FIX = {
-    "bing":    "Direct chalta hai. Block ho to proxy ON karo.",
-    "bingr":   "RSS — kabhi block nahi hota. Ye hamesha on rakho.",
-    "mojeek":  "Independent index, bina proxy chalta hai.",
-    "ddg":     "POST form use karta hai. Block ho to proxy ON.",
-    "ddgl":    "Lite version — sabse halka, bina proxy chalta hai.",
-    "sxng":    "SearXNG public instance — Google/Bing ka result ek jagah. "
-               "Ek down ho to agla khud try hota hai.",
-    "yahoo":   "Bing ka data — usually bina proxy chalta hai.",
-    "startpage": "Google ka data, privacy proxy ke through. Block ho to proxy ON.",
-    "brave":   "Apna index. Free proxy IPs ko block karta hai.",
-    "google":  "Google proxy/datacenter IP ko PAKKA block karta hai. Free proxy se "
-               "kabhi nahi chalega — apni IP se chalao ya SERPER free key (/apikeys).",
-    "yandex":  "Proxy ke bina captcha. Free proxy pe bhi mostly block.",
-    "qwant":   "Apna index, bina proxy try karo.",
-    "ecosia":  "Bing ka data, light page.",
-    "marginalia": "Chhota index, block nahi karta.",
+    "bing":    "HTML search — proxy ke saath chalta hai. Block ho to bingr try karo.",
+    "bingr":   "Bing RSS — sabse pakka, koi captcha nahi. Ye hamesha chalta hai.",
+    "mojeek":  "Apna independent index — koi bot-protection nahi, proxy-safe.",
+    "ddgl":    "DDG lite — plain HTML form, proxy pe bhi results deta hai.",
+    "yahoo":   "Bing ka data, simple page — proxy-safe.",
 }
 
 
@@ -8057,7 +8036,7 @@ async def tool_parse(update, context):
                                       else "<code>%s</code>" % fmt(int(sget("parse_url_limit", 0)))), "🌐")
            + "\n" + KV("Pages / Threads", "<code>%d</code> · <code>%d</code> parallel"
                        % (int(sget("parse_pages", 1) or 1),
-                          int(sget("parse_threads", 6) or 6)), "⚙️")
+                          int(sget("parse_threads", 12) or 12)), "⚙️")
            + "\n" + KV("Timeout", "<code>%ss</code>" % int(sget("parse_timeout", 0) or
                                                             ENGINE_TIMEOUT.get(mode, 8)), "⏱")
            + "\n\n" + P("DDG Lite • DDG • Bing run fine on mobile data. "
@@ -8161,7 +8140,7 @@ async def cb_parse_cfg(update, context, key: str = ""):
         return await cb_parse_cfg(update, context, "")
     mode = user_mode(context)
     pages = int(sget("parse_pages", 1) or 1)
-    threads = int(sget("parse_threads", 6) or 6)
+    threads = int(sget("parse_threads", 12) or 12)
     to = int(sget("parse_timeout", 0) or ENGINE_TIMEOUT.get(mode, 8))
     limit = int(sget("parse_url_limit", 0) or 0)
     rows = [
@@ -8376,7 +8355,7 @@ async def input_deep_max(update, context, text: str):
                           for e in engine_list(user_mode(context))[:6]) or "—")
              + "\n\n" + B("Now do this") + "\n"
              + "1️⃣ <code>/enginetest</code> — which engine works, with the reason\n"
-             + "2️⃣ <code>/engines fast</code> — ddgl • ddg • bing\n"
+             + "2️⃣ <code>/engines fast</code> — bing • bingr • mojeek\n"
              + (("3️⃣ 🧅 PROXY ENGINE → add proxies (Jio/Airtel can block some engines)\n")
                 if is_admin(update.effective_user.id) else
                 ("3️⃣ Try again in a few minutes (engines rate-limit)\n"))
@@ -12158,7 +12137,7 @@ async def admin_callback(update, context, action: str):
                                         "✅ ON • %d endpoints" % len(gj_pool())), "🐦"),
                      KV("Common Crawl", "✅ always on (free)", "🌐"),
                  ])
-                 + "\n\n<i>Even with no keys, all 9 engines + Common Crawl keep working.</i>\n\n"
+                 + "\n\n<i>Keys ke bina bhi 5 proxy-safe engines + Common Crawl chalte hain.</i>\n\n"
                  "📋 Free + paid list: <code>/apis</code>",
                  RK([
                      [InlineKeyboardButton("📋 API LIST (/apis)", callback_data="a:apis")],
@@ -12577,11 +12556,12 @@ def engines_text(context=None) -> str:
     return (H("ENGINES MODE", ENGINE_LABEL[cur]) + "\n\n"
             + "\n".join(rows) + "\n\n"
             + B("How to change") + "\n"
-            + "<code>/engines fast</code> — 3 engines (fastest on a phone)\n"
+            + "<code>/engines fast</code> — 3 engines (bing + bingr + mojeek)\n"
             + "<code>/engines normal</code> — 5 engines\n"
-            + "<code>/engines max</code> — all 9 engines (proxy recommended)\n\n"
-            + "<i>DDG Lite • DDG • Bing work without a proxy. "
-              "Google and Yandex block your IP without one — that is where the errors come from.</i>")
+            + "<code>/engines max</code> — 5 engines, zyada retries\n\n"
+            + "<i>These 5 engines do not block rotating proxies, so only these are "
+              "kept. Google, Yandex, Brave and Startpage return captcha pages on "
+              "free proxy IPs, so they were removed.</i>")
 
 
 async def cmd_enginetest(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.12.0", "VERSION")
+    eq(core.VERSION, "v2.12.1", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -379,7 +379,7 @@ def test_engines():
     group("engines")
     ok("fast" in core.ENGINE_SETS and "max" in core.ENGINE_SETS, "engine sets")
     eq(len(core.ENGINE_SETS["fast"]), 3, "fast 3")
-    ok(len(core.ENGINE_SETS["max"]) >= 12, "max 12+")
+    eq(len(core.ENGINE_SETS["max"]), 5, "max = 5 proxy-safe")
     eq(core.engine_list("fast"), ["bing", "bingr", "mojeek"], "fast list")
     ctx = FakeContext({})
     ctx.user_data["engines_mode"] = "max"
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.12.0"')
+    contains(btxt, 'VERSION = "v2.12.1"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.12.0", "shim se version")
+    eq(core.VERSION, "v2.12.1", "shim se version")
 
 
 def test_diagnostics():
@@ -498,9 +498,13 @@ def test_diagnostics():
     # abort setting
     ok("parse_abort_after" not in dir(core) or True, "abort config")
     # v2.12 — bingr RSS + searx + startpage/qwant/ecosia (bing-only bug ka fix)
-    for need in ("bing", "bingr", "mojeek", "ddg", "ddgl", "sxng", "yahoo",
-                 "google", "brave", "yandex", "startpage", "qwant", "ecosia"):
+    # v2.12.1 — sirf proxy-safe engines (google/yandex/brave/startpage/qwant/
+    # ecosia/sxng/ddg-html hata diye, wo free proxy par captcha dete the)
+    for need in ("bing", "bingr", "mojeek", "ddgl", "yahoo"):
         ok(need in core.ENGINE_URLS, "engine %s" % need)
+    for gone in ("google", "yandex", "brave", "startpage", "qwant", "ecosia",
+                 "marginalia", "sxng", "ddg"):
+        ok(gone not in core.ENGINE_URLS, "hata diya: %s" % gone)
     eq(sorted(core.ENGINE_SETS["max"]), sorted(core.ENGINE_URLS), "max = saare engines")
     ok("bingr" in core.ENGINE_SETS["fast"])
     import base64 as _b64
@@ -879,11 +883,9 @@ def test_v29_parser():
     # engines sirf 7
     eq(len(core.ENGINE_SETS["fast"]), 3, "fast 3")
     eq(core.ENGINE_SETS["fast"], ["bing", "bingr", "mojeek"], "fast = bing + RSS + mojeek")
-    ok(len(core.ENGINE_SETS["max"]) >= 12, "max 12+ (%d)" % len(core.ENGINE_SETS["max"]))
-    ok("sxng" in core.ENGINE_URLS, "searx engine")
-    ok(len(core.SXNG_INSTANCES) >= 5, "searx instances")
-    ok("startpage" in core.ENGINE_URLS, "startpage")
-    ok("qwant" in core.ENGINE_URLS, "qwant")
+    eq(sorted(core.ENGINE_URLS), ["bing", "bingr", "ddgl", "mojeek", "yahoo"],
+       "sirf 5 proxy-safe engines")
+    eq(sorted(core.ENGINE_SETS["max"]), sorted(core.ENGINE_URLS), "max = wahi 5")
     # reset_engine_miss + per-run miss
     core.ENGINE_MISS.update({"ddg": 9})
     core.reset_engine_miss()
@@ -1779,7 +1781,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.12.0", "version")
+    eq(core.VERSION, "v2.12.1", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2039,23 +2041,20 @@ def test_v212_engines():
     # bingr (RSS) hamesha available
     ok("bingr" in core.ENGINE_URLS, "bingr engine")
     ok("format=rss" in core.ENGINE_URLS["bingr"], "bingr RSS URL")
-    ok("sxng" in core.ENGINE_URLS, "searx engine")
-    ok(len(core.SXNG_INSTANCES) >= 5, "searx instances %d" % len(core.SXNG_INSTANCES))
-    for e in ("startpage", "qwant", "ecosia"):
+    for e in ("bing", "bingr", "mojeek", "ddgl", "yahoo"):
         ok(e in core.ENGINE_URLS, "engine %s" % e)
+    ok(not core.ENGINE_MULTI, "koi multi-instance nahi")
     # AUTO proxy: proxy se block hone wale direct, block karne wale proxy
-    eq(core.parse_engine_proxy("bingr", "auto"), False, "bingr direct in auto")
-    eq(core.parse_engine_proxy("mojeek", "auto"), False, "mojeek direct in auto")
-    eq(core.parse_engine_proxy("ddgl", "auto"), False, "ddgl direct in auto")
-    eq(core.parse_engine_proxy("google", "auto"), True, "google proxy in auto")
-    eq(core.parse_engine_proxy("brave", "auto"), True, "brave proxy in auto")
+    # ab saare bache engines proxy-safe hain → auto me proxy use hota hai
+    for e in core.ENGINE_URLS:
+        eq(core.parse_engine_proxy(e, "auto"), True, "%s proxy-safe (auto)" % e)
+        eq(core.parse_engine_proxy(e, "off"), False, "%s direct (off)" % e)
     eq(core.parse_engine_proxy("google", "off"), False, "off = sab direct")
     eq(core.parse_engine_proxy("bingr", "on"), True, "on = sab proxy")
     # har engine ka fix hint maujood
     for e in core.ENGINE_URLS:
         ok(core.engine_fix(e, "http 429"), "fix hint %s" % e)
-    _gf = core.engine_fix("google", "http 403")
-    ok("proxy" in _gf.lower() or "serper" in _gf.lower(), "google fix me sach")
+
     ok("proxy" in core.engine_fix("bing", "timeout").lower(), "timeout fix")
     # doctor button + route
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
