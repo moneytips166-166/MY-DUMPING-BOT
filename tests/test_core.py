@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.9.9", "VERSION")
+    eq(core.VERSION, "v2.10.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.9.9"')
+    contains(btxt, 'VERSION = "v2.10.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.9.9", "shim se version")
+    eq(core.VERSION, "v2.10.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1755,7 +1755,8 @@ def test_paste_smart_fallback():
 def test_no_dead_buttons():
     """/m:har literal button ka jawab aana chahiye (silent kill = 0)."""
     group("dead-buttons")
-    for data in ("m:help_noTut", "m:help", "m:kw", "m:parse", "m:inj", "m:dump"):
+    for data in ("m:help_noTut", "m:help", "m:kw", "m:parse", "m:inj", "m:dump",
+                 "a:emoji", "a:emojitest"):
         ctx = FakeContext({"last_dorks": ["inurl:login"]})
         upd = FakeUpdate(data=data)
         asyncio.run(asyncio.wait_for(core._on_callback_inner(upd, ctx), 8))
@@ -1771,7 +1772,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.9.9", "version")
+    eq(core.VERSION, "v2.10.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -1865,6 +1866,132 @@ def test_config_persistence():
     asyncio.run(core.cmd_ping(upd, ctx))
     contains(upd.last_text(), "Config")
 
+def test_menu_emoji():
+    """Main menu emoji — user ne jo maange wahi."""
+    group("menu-emoji")
+    eq(core.EMOJI["kw"], "🔑", "keywords emoji same")
+    eq(core.EMOJI["dork"], "🧬", "dorker 🧬")
+    eq(core.EMOJI["parse"], "🌐", "parser 🌐")
+    eq(core.EMOJI["rev"], "🔗", "url reverse 🔗")
+    eq(core.EMOJI["inj"], "💉", "injector same")
+    eq(core.EMOJI["dump"], "📁", "dumper 📁")
+    eq(core.EMOJI["qa"], "📊", "quality same")
+
+    kb = core.kb_main(ADMIN)
+    labels = [b.text for row in kb.inline_keyboard for b in row]
+    joined = " ".join(labels)
+    for want in ("🧬", "🌐", "🔗", "💉", "📁", "📊", "🔑"):
+        ok(want in joined, "menu me %s" % want)
+    # theme font text ko style karta hai — emoji se check karo
+    ok(any(x.startswith("🧬") for x in labels), "DORKER button")
+    ok(any(x.startswith("📁") for x in labels), "DUMPER button")
+
+
+def test_premium_emoji():
+    """Premium (animated) emoji: set → tag, off → normal, reject → fallback."""
+    group("premium-emoji")
+    import tempfile
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tmp = tempfile.mkdtemp(prefix="snakeemoji_")
+    old_base = core.BASE_DIR
+    old_prem = dict(core.PREMIUM_EMOJI)
+    try:
+        core.BASE_DIR = tmp
+        core.PREMIUM_EMOJI.clear()
+        core.EMOJI_OK[0] = True
+        # default: plain emoji
+        eq(core.emo("dork"), "🧬", "premium nahi → normal emoji")
+        eq(core.emo_btn("dork"), "🧬", "button emoji")
+        # set
+        good, err = core.set_premium("dork", "5368324170671202286")
+        ok(good, "set premium: %s" % err)
+        eq(core.premium_slots().get("dork"), "5368324170671202286", "id saved")
+        tag = core.emo("dork")
+        contains(tag, "<tg-emoji emoji-id=\"5368324170671202286\">")
+        contains(tag, "🧬")
+        eq(core.strip_premium(tag), "🧬", "strip → normal emoji")
+        # config me save hua?
+        cfg_file = os.path.join(tmp, "snake_config.json")
+        ok(os.path.exists(cfg_file), "config file bani")
+        with open(cfg_file, encoding="utf-8") as f:
+            saved = json.load(f)
+        eq(saved.get("premium_emoji", {}).get("dork"), "5368324170671202286", "config me id")
+        # invalid
+        bad, _e = core.set_premium("dork", "abc")
+        ok(not bad, "invalid id reject")
+        bad2, _e = core.set_premium("nope", "5368324170671202286")
+        ok(not bad2, "invalid slot reject")
+        # reject → auto fallback
+        core.EMOJI_OK[0] = False
+        eq(core.emo("dork"), "🧬", "reject ke baad normal")
+        core.EMOJI_OK[0] = True
+        # off
+        core.set_premium("dork", "off")
+        eq(core.premium_slots().get("dork"), None, "off → hat gaya")
+        eq(core.emo("dork"), "🧬", "normal wapas")
+        # error detect
+        from telegram.error import BadRequest
+        ok(core._is_premium_error(BadRequest(
+            "Bad Request: custom emoji can be used only by bots that purchased "
+            "additional usernames on Fragment")), "premium error detect")
+        ok(not core._is_premium_error(BadRequest("chat not found")), "normal error")
+        # /ping me premium line
+        ctx = FakeContext({})
+        upd = FakeUpdate(uid=ADMIN, text="/ping")
+        asyncio.run(core.cmd_ping(upd, ctx))
+        contains(upd.last_text(), "Premium emoji")
+    finally:
+        core.BASE_DIR = old_base
+        core.PREMIUM_EMOJI.clear()
+        core.PREMIUM_EMOJI.update(old_prem)
+        core.EMOJI_OK[0] = True
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # /se admin-only + list + usage
+    src = open(os.path.join(root, "bot.py"), encoding="utf-8").read()
+    contains(src, 'CommandHandler("se", cmd_se)')
+    ctx = FakeContext({})
+    u1 = FakeUpdate(uid=12345, text="/se")
+    asyncio.run(core.cmd_se(u1, ctx))
+    contains(u1.last_text(), "Admin only")
+    u2 = FakeUpdate(uid=ADMIN, text="/se")
+    asyncio.run(core.cmd_se(u2, ctx))
+    txt = u2.last_text()
+    contains(txt, "🛡")
+    contains(txt, "JsonDumpBot")
+    contains(txt, "custom_emoji_id")
+
+    # admin forward kare to ID auto-detect + slot button
+    tmp2 = tempfile.mkdtemp(prefix="snakeemoji2_")
+    core.BASE_DIR = tmp2
+    class _Ent:
+        type = "custom_emoji"
+        offset = 0
+        length = 1
+        custom_emoji_id = "5368324170671202286"
+
+    ctx4 = FakeContext({})
+    u4 = FakeUpdate(uid=ADMIN, text="🧬", entities=[_Ent()])
+    asyncio.run(core.on_text(u4, ctx4))
+    t4 = u4.last_text()
+    contains(t4, "5368324170671202286")
+    eq(ctx4.user_data.get("se_id"), "5368324170671202286", "se_id saved")
+    kb4 = u4.sink[-1][2].get("reply_markup")
+    datas = [b.callback_data for row in kb4.inline_keyboard for b in row]
+    ok("se:set:dork" in datas, "slot button se:set:dork")
+    # slot button dabao
+    u5 = FakeUpdate(uid=ADMIN, data="se:set:dork")
+    asyncio.run(core._on_callback_inner(u5, ctx4))
+    eq(core.premium_slots().get("dork"), "5368324170671202286", "button se set")
+    core.PREMIUM_EMOJI.pop("dork", None)
+    core.BASE_DIR = old_base
+    shutil.rmtree(tmp2, ignore_errors=True)
+
+    ctx3 = FakeContext({}, args=["dork", "abc"])
+    u3 = FakeUpdate(uid=ADMIN, text="/se")
+    asyncio.run(core.cmd_se(u3, ctx3))
+    contains(u3.last_text(), "numeric")
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -1886,7 +2013,8 @@ def main():
                test_silent_kill_guard, test_injector_small_matrix, test_keywords_variety,
                test_parser_settings, test_paste_smart_fallback,
                test_no_dead_buttons, test_build_stamp,
-               test_config_persistence):
+               test_config_persistence, test_menu_emoji,
+               test_premium_emoji):
         try:
             fn()
         except Exception as exc:

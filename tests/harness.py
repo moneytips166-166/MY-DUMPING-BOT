@@ -18,9 +18,10 @@ ADMIN = 8999053405
 
 
 class FakeMessage:
-    def __init__(self, text="", sink=None):
+    def __init__(self, text="", sink=None, entities=None):
         self.text = text
         self.sink = sink if sink is not None else []
+        self.entities = entities or []
         self.replies = self.sink
 
     async def reply_text(self, text, **kw):
@@ -96,14 +97,14 @@ class FakeChat:
 
 
 class FakeUpdate:
-    def __init__(self, uid=ADMIN, text=None, data=None, doc=None):
+    def __init__(self, uid=ADMIN, text=None, data=None, doc=None, entities=None):
         self.sink = []
         self.effective_user = FakeUser(uid)
         self.effective_chat = FakeChat(uid)
         self.callback_query = FakeQuery(data, self.sink) if data is not None else None
         self.message = None
         if text is not None or doc is not None:
-            self.message = FakeMessage(text or "", self.sink)
+            self.message = FakeMessage(text or "", self.sink, entities=entities)
             if doc is not None:
                 self.message.document = doc
             if text is not None:

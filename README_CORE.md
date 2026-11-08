@@ -1,9 +1,43 @@
-# 🐍 PYTHON SNAKE CORE — v2.9.9
+# 🐍 PYTHON SNAKE CORE — v2.10.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
 ---
 
+## 🪄 v2.10.0 — naye menu emoji + Premium ANIMATED emoji
+
+### Menu emoji (main screen)
+| Tool | Emoji |
+|---|---|
+| HQ KEYWORDS | 🔑 (same) |
+| DORKER | 🧬 |
+| PARSER | 🌐 |
+| URL REVERSE | 🔗 |
+| INJECTOR | 💉 (same) |
+| DUMPER | 📁 |
+| QUALITY CHECK | 📊 (same) |
+
+Baaki sab same — niches 🧩 (taaki DUMPER ke 📁 se mix na ho).
+
+### Premium (animated) emoji — REAL support
+- `snake_config.json` me `premium_emoji: {slot: custom_emoji_id}` — update-safe
+- Message text me `<tg-emoji emoji-id="...">🔑</tg-emoji>` ban jata hai → **animated**
+- **Bot API 9.4+:** bot owner ke paas **Telegram Premium** ho to allowed (Fragment username ki zarurat nahi)
+- Telegram reject kare to bot **khud normal emoji** pe switch — message kabhi fail/silent nahi
+- ⚠️ Button labels me custom emoji Telegram support **nahi** karta — wahan unicode emoji hi rahenge
+
+### Kaise set karo (do tarike)
+1. **Forward trick (easy):** koi bhi animated-emoji wala message bot ko forward karo → bot ID khud nikaal ke slot buttons deta hai → tap → done
+2. **Command:** `/se` (list) · `/se dork 5368324170671202286` · `/se dork off` · `/se test`
+- Admin panel me bhi: **🪄 PREMIUM EMOJI (animated)** → test animation
+- ID manually chahiye to: message ko **@JsonDumpBot** ko forward karo → `custom_emoji_id`
+
+### Safety
+- `/ping` me: `🎨 Premium emoji: N set · ON/OFF`
+- Premium fail → auto fallback (edit + reply + button screens teeno me)
+- Tests: `test_core` **704/704** · `test_screens` **37 clean** · pyflakes 0
+
+---
 ## 🔐 v2.9.9 — token/admin update me kabhi delete nahi
 
 **Asli bug:** `BOT_TOKEN` aur `ADMIN_IDS` `bot.py` ke andar the, aur `./update.sh` poori `bot.py` replace karta hai — isliye har update pe token ud jata tha.

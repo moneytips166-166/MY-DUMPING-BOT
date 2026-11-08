@@ -51,7 +51,7 @@ except ImportError:
 
 try:
     from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand,
-                          Message)
+                          Message, CallbackQuery)
     from telegram.constants import ParseMode
     from telegram.ext import (
         Application, ApplicationBuilder, CommandHandler, CallbackQueryHandler,
@@ -70,8 +70,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.9.9"
-BUILD = "cfg-safe+guard+fast+kw+cfg"   # feature flags — /ping me dikhte hain
+VERSION = "v2.10.0"
+BUILD = "premium+cfg-safe+guard"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -110,6 +110,82 @@ def _cfg_token():
     return tok
 
 
+# ── 🎨 MENU EMOJI ────────────────────────────────────────────────────────
+#  Ye unicode emoji hamesha dikhte hain (buttons me bhi).
+#  Premium (animated) emoji ke IDs config me rakh sakte ho — /se se.
+#  Button labels me Telegram custom emoji support NAHI karta — sirf message
+#  text me. Isliye buttons hamesha unicode wale dikhate hain.
+EMOJI = {
+    "kw": "🔑",      # HQ KEYWORDS — same
+    "dork": "🧬",    # DORKER
+    "parse": "🌐",   # PARSER
+    "rev": "🔗",     # URL REVERSE
+    "inj": "💉",     # INJECTOR — same
+    "dump": "📁",    # DUMPER
+    "qa": "📊",      # QUALITY CHECK — same
+    "rand": "🎲",
+    "help": "📖",
+    "proxy": "🧅",
+    "home": "🏠",
+    "key": "🎟",
+    "admin": "🛡",
+}
+
+PREMIUM_EMOJI = dict(_CONFIG.get("premium_emoji") or {})   # slot -> custom_emoji_id
+EMOJI_OK = [True]          # Telegram reject kare to khud OFF ho jata hai
+
+
+def emo(slot, fallback=""):
+    """Message text ke liye emoji — premium id set ho to ANIMATED ban jata hai.
+
+    <tg-emoji emoji-id="123">🔑</tg-emoji> — Telegram premium users ko
+    animation dikhti hai, baaki ko normal emoji.
+    """
+    base = fallback or EMOJI.get(slot, "")
+    cid = str(PREMIUM_EMOJI.get(slot) or "").strip()
+    if cid and EMOJI_OK[0] and base:
+        return '<tg-emoji emoji-id="%s">%s</tg-emoji>' % (cid, base)
+    return base
+
+
+def emo_btn(slot, fallback=""):
+    """Button label ke liye — yahan custom emoji kaam nahi karta."""
+    return fallback or EMOJI.get(slot, "")
+
+
+TG_EMOJI_RX = re.compile(r'<tg-emoji emoji-id="(\d+)">(.*?)</tg-emoji>', re.S)
+
+
+def strip_premium(text) -> str:
+    """Premium tags hata do — normal emoji bacha rehta hai."""
+    return TG_EMOJI_RX.sub(lambda m: m.group(2), str(text or ""))
+
+
+def premium_slots() -> dict:
+    """{slot: id} — sirf valid numeric ids."""
+    return {k: v for k, v in PREMIUM_EMOJI.items() if str(v).strip().isdigit()}
+
+
+def set_premium(slot, cid):
+    """Admin: ek slot ka premium emoji id set/remove karo (config me save)."""
+    slot = str(slot or "").strip().lower()
+    cid = str(cid or "").strip()
+    if slot not in EMOJI:
+        return False, "unknown slot: <code>%s</code>" % esc(slot)
+    if cid.lower() in ("0", "off", "no", "none", "remove", "-"):
+        PREMIUM_EMOJI.pop(slot, None)
+    else:
+        if not cid.isdigit() or len(cid) < 6:
+            return False, "emoji-id numeric honi chahiye (jaise <code>5368324170671202286</code>)"
+        PREMIUM_EMOJI[slot] = cid
+    try:
+        _save_config()
+    except Exception as exc:
+        return False, "save fail: %s" % exc
+    EMOJI_OK[0] = True       # naya id — dobara try karo
+    return True, ""
+
+
 def _cfg_admins(base):
     raw = _CONFIG.get("admin_ids")
     if raw is None:
@@ -134,6 +210,8 @@ def _save_config(*, token=None, admin_ids=None):
     if admin_ids is not None:
         cfg["admin_ids"] = [int(x) for x in admin_ids]
     cfg.setdefault("brand", BRAND)
+    if PREMIUM_EMOJI:
+        cfg["premium_emoji"] = dict(PREMIUM_EMOJI)
     cfg["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     targets = [os.path.join(BASE_DIR, CONFIG_NAME)]
     ext = os.path.join("/storage/emulated/0", "DBF")
@@ -741,11 +819,15 @@ def style(text: str, role: str = "btn") -> str:
     return pre + F(rest, font)
 
 
-def H(title: str, sub: str = "") -> str:
-    """Theme header — divider + icon + heading font."""
+def H(title: str, sub: str = "", slot: str = "") -> str:
+    """Theme header — divider + icon + heading font.
+
+    slot diya to us tool ka emoji lagta hai (premium ho to animated).
+    """
     th = T()
     d = th["div"]
-    body = "%s %s" % (th["icon"], F(title, th["head"]))
+    icon = emo(slot) if slot else th["icon"]
+    body = "%s %s" % (icon, F(title, th["head"]))
     if sub:
         body += "\n%s" % F(sub, th["sub"])
     return "%s\n%s\n%s" % (d, body, d)
@@ -4687,24 +4769,24 @@ async def send_file(update, path: str, caption: str = ""):
 # ═══════════════════════════════════════════════════════════════════════════════
 def kb_main(uid=0) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton("🔑 HQ KEYWORDS", callback_data="m:kw")],
+        [InlineKeyboardButton(emo_btn("kw") + " HQ KEYWORDS", callback_data="m:kw")],
     ]
     nch = niche_list()
     for i in range(0, len(nch), 2):
         row = []
         for nm in nch[i:i + 2]:
-            row.append(InlineKeyboardButton("📁 %s" % nm[:18],
+            row.append(InlineKeyboardButton("🧩 %s" % nm[:18],
                                             callback_data="nc:use:%d" % nch.index(nm)))
         rows.append(row)
     rows += [
-        [InlineKeyboardButton("🎯 DORKER", callback_data="m:dork"),
-         InlineKeyboardButton("🔍 PARSER", callback_data="m:parse")],
-        [InlineKeyboardButton("🔗 URL REVERSE", callback_data="m:rev"),
-         InlineKeyboardButton("💉 INJECTOR", callback_data="m:inj")],
-        [InlineKeyboardButton("📦 DUMPER", callback_data="m:dump"),
-         InlineKeyboardButton("📊 QUALITY CHECK", callback_data="m:qa")],
-        [InlineKeyboardButton("🎲 RANDOMIZER", callback_data="m:rand"),
-         InlineKeyboardButton("📖 HELP", callback_data="m:help")],
+        [InlineKeyboardButton(emo_btn("dork") + " DORKER", callback_data="m:dork"),
+         InlineKeyboardButton(emo_btn("parse") + " PARSER", callback_data="m:parse")],
+        [InlineKeyboardButton(emo_btn("rev") + " URL REVERSE", callback_data="m:rev"),
+         InlineKeyboardButton(emo_btn("inj") + " INJECTOR", callback_data="m:inj")],
+        [InlineKeyboardButton(emo_btn("dump") + " DUMPER", callback_data="m:dump"),
+         InlineKeyboardButton(emo_btn("qa") + " QUALITY CHECK", callback_data="m:qa")],
+        [InlineKeyboardButton(emo_btn("rand") + " RANDOMIZER", callback_data="m:rand"),
+         InlineKeyboardButton(emo_btn("help") + " HELP", callback_data="m:help")],
         [InlineKeyboardButton("🔑 REDEEM KEY", callback_data="m:redeem")],
     ]
     if is_admin(uid):
@@ -4721,7 +4803,7 @@ def main_text(name: str = "", context=None) -> str:
     niches = niche_list()
     nline = ("📁 <b>NICHES</b> : <code>%d</code> saved" % len(niches)) if niches else ""
     ud = getattr(context, "user_data", {}) or {}
-    return (H("PYTHON SNAKE", "%s • all systems go" % VERSION) + "\n"
+    return (H("PYTHON SNAKE", "%s • all systems go" % VERSION, slot="home") + "\n"
             + hi + "\n"
             + tag("WORKSPACE") + "\n"
             + "◆ %s : <code>%s</code>\n" % (style("KEYWORDS SAVED", "btn"),
@@ -4976,6 +5058,13 @@ def html_plain(text) -> str:
     return _html.unescape(t)
 
 
+def _is_premium_error(exc) -> bool:
+    """Telegram ne custom emoji reject kiya? (Premium/Fragment nahi hai)."""
+    msg = str(exc).lower()
+    return any(k in msg for k in ("custom emoji", "premium", "fragment", "emoji-id",
+                                  "customemoji"))
+
+
 def _is_parse_error(exc) -> bool:
     msg = str(exc).lower()
     return any(k in msg for k in ("parse entities", "can't parse", "unsupported start tag",
@@ -4996,6 +5085,13 @@ def _patch_telegram_safe():
             if "MessageNotModified" in name:
                 return self
             logger.warning("edit_text fail (%s): %s", name, str(exc)[:140])
+            if _is_premium_error(exc) and EMOJI_OK[0]:
+                EMOJI_OK[0] = False
+                logger.warning("🎨 Premium emoji not allowed — normal emoji pe switch")
+                try:
+                    return await orig_edit(self, strip_premium(text), **kw)
+                except Exception:
+                    pass
             kw.pop("parse_mode", None)
             try:
                 return await orig_edit(self, html_plain(text), **kw)
@@ -5008,9 +5104,40 @@ def _patch_telegram_safe():
         except Exception as exc:
             name = type(exc).__name__
             logger.warning("reply_text fail (%s): %s", name, str(exc)[:140])
+            if _is_premium_error(exc) and EMOJI_OK[0]:
+                EMOJI_OK[0] = False
+                logger.warning("🎨 Premium emoji not allowed — normal emoji pe switch")
+                try:
+                    return await orig_reply(self, strip_premium(text), **kw)
+                except Exception:
+                    pass
             kw.pop("parse_mode", None)
             return await orig_reply(self, html_plain(text), **kw)
 
+    # button-driven screens (q.edit_message_text) bhi isi tarah safe
+    orig_qedit = CallbackQuery.edit_message_text
+
+    async def q_edit(self, text=None, **kw):
+        try:
+            return await orig_qedit(self, text, **kw)
+        except Exception as exc:
+            if "MessageNotModified" in type(exc).__name__:
+                return self.message
+            logger.warning("query edit fail (%s): %s", type(exc).__name__, str(exc)[:140])
+            if _is_premium_error(exc) and EMOJI_OK[0]:
+                EMOJI_OK[0] = False
+                logger.warning("🎨 Premium emoji not allowed — normal emoji pe switch")
+                try:
+                    return await orig_qedit(self, strip_premium(text), **kw)
+                except Exception:
+                    pass
+            kw.pop("parse_mode", None)
+            try:
+                return await orig_qedit(self, html_plain(text), **kw)
+            except Exception:
+                raise exc
+
+    CallbackQuery.edit_message_text = q_edit
     Message.edit_text, Message.reply_text = edit_text, reply_text
     Message._snake_safe = True
     globals()["SILENT_GUARD"] = True
@@ -5204,6 +5331,12 @@ async def _on_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # ── theme ──
     if data.startswith("th:set:"):
         return await cb_theme_set(update, context, data[7:])
+
+    # ── premium emoji slot pick (admin) ──
+    if data.startswith("se:set:"):
+        if not is_admin(uid):
+            return await show_home(update, uid)
+        return await cb_premium_pick(update, context, data[7:])
 
     # ── admin ──
     if data.startswith("a:"):
@@ -5467,7 +5600,7 @@ def _demo(lst, n=6) -> str:
 # ── DORKER — main (2 options) ────────────────────────────────────────────────
 async def tool_dork(update, context):
     q = update.callback_query
-    txt = (H("DORKER", "dono tarike") + "\n\n"
+    txt = (H("DORKER", "dono tarike", slot="dork") + "\n\n"
            "⚡ <b>%s</b>\n   %s\n\n"
            "🚀 <b>%s</b>\n   %s\n\n"
            "%s\n\n"
@@ -6926,7 +7059,7 @@ async def cb_kw_action(update, context, action: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 async def tool_rev(update, context):
     q = update.callback_query
-    txt = (H("URL REVERSE") + "\n\n"
+    txt = (H("URL REVERSE", "", slot="rev") + "\n\n"
            "Paste URL(s) — one per line:\n\n"
            "<code>https://shop.example.com/product.php?id=12&cat=5</code>\n\n"
            "I will pull out host, path, extension and parameters, then build dorks from them.")
@@ -7213,7 +7346,7 @@ async def tool_parse(update, context):
                               callback_data="pr:cfg")],
         [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
     ])
-    txt = (H("PARSER", "fewer engines = faster") + "\n\n"
+    txt = (H("PARSER", "fewer engines = faster", slot="parse") + "\n\n"
            + KV("Mode", "<b>%s</b>" % ENGINE_LABEL[mode], "🎛")
            + "\n" + KV("Engines", "<code>%s</code>" % ", ".join(engine_list(mode)), "⚙️")
            + "\n" + KV("Free Google", "✅ ON (no key)" if gj_enabled() else "⚪ OFF", "🐦")
@@ -7781,7 +7914,7 @@ QA_META = {
 
 async def tool_qa(update, context):
     q = update.callback_query
-    txt = (H("QUALITY CHECKER", "3 types") + "\n\n"
+    txt = (H("QUALITY CHECKER", "3 types", slot="qa") + "\n\n"
            "%s\n\n"
            "🔑 <b>%s</b>\n   %s\n\n"
            "🎯 <b>%s</b>\n   %s\n\n"
@@ -8989,7 +9122,7 @@ async def tool_dump(update, context):
     rows.append([InlineKeyboardButton("📤 FULL EXPORT (kw/dork/urls)",
                                       callback_data="df:full")])
     rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
-    txt = (H("DUMPER", "full SQL data dump") + "\n\n"
+    txt = (H("DUMPER", "full SQL data dump", slot="dump") + "\n\n"
            + B("Send vulnerable URLs") + "\n"
            + P("paste URLs in the chat or send a .txt file — every URL is verified "
                "first, then its data is extracted.") + "\n\n"
@@ -10693,6 +10826,50 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(q, reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
+    # 🪄 Premium (animated) emoji detect — admin koi message forward kare to ID mil jati hai
+    if is_admin(uid):
+        try:
+            ents = list(getattr(update.message, "entities", None) or [])
+            found = []
+            for e in ents:
+                if str(getattr(e, "type", "")) != "custom_emoji":
+                    continue
+                cid = getattr(e, "custom_emoji_id", "")
+                if not cid:
+                    continue
+                # Telegram offset/length UTF-16 me hote hain (emoji 2 units)
+                try:
+                    _b = text.encode("utf-16-le")
+                    ce = _b[e.offset * 2:(e.offset + e.length) * 2].decode("utf-16-le", "ignore")
+                except Exception:
+                    ce = ""
+                found.append((str(cid), ce or "🎨"))
+        except Exception:
+            found = []
+        if found:
+            cid, ce = found[0]
+            context.user_data["se_id"] = str(cid)
+            context.user_data["se_emoji"] = ce
+            rows, row = [], []
+            for sl in SE_SLOTS:
+                row.append(InlineKeyboardButton(emo_btn(sl) + " " + SE_LABEL[sl].title(),
+                                               callback_data="se:set:" + sl))
+                if len(row) == 2:
+                    rows.append(row)
+                    row = []
+            if row:
+                rows.append(row)
+            rows.append([InlineKeyboardButton("🗑 REMOVE KARO", callback_data="se:set:off")])
+            more = ("\n<b>%d</b> emoji mile — pehla liya. Doosra chahiye to sirf wahi "
+                    "emoji wala message forward karo." % len(found)) if len(found) > 1 else ""
+            await update.message.reply_text(
+                (H("PREMIUM EMOJI DETECTED", "ID: %s" % cid, slot="admin") + "\n\n"
+                 + "◆ %s\n\n" % ce
+                 + P("Kis button me lagana hai? <b>Neeche tap karo</b> — animated ho jayega.")
+                 + more), parse_mode=ParseMode.HTML, reply_markup=RK(rows),
+                disable_web_page_preview=True)
+            return
+
     # 🔑 REDEEM pehle — access gate se PEHLE, warna key type hi nahi ho sakti
     wait = await_get(context)
     if wait == "key_redeem":
@@ -10865,6 +11042,7 @@ def kb_admin() -> InlineKeyboardMarkup:
          InlineKeyboardButton("📦 DUMPS", callback_data="a:dumps")],
         [InlineKeyboardButton("🎨 THEME / FONT", callback_data="a:theme"),
          InlineKeyboardButton("🔑 API KEYS", callback_data="a:keys_api")],
+        [InlineKeyboardButton("🪄 PREMIUM EMOJI (animated)", callback_data="a:emoji")],
         [InlineKeyboardButton("🚧 FEATURES ON/OFF", callback_data="a:features")],
         [InlineKeyboardButton("🎬 TUTORIAL VIDEO", callback_data="a:tutorial")],
         [InlineKeyboardButton("📣 BROADCAST", callback_data="a:bc"),
@@ -10936,6 +11114,104 @@ def kb_themes(cb_prefix: str = "th:set:") -> InlineKeyboardMarkup:
     return RK(rows)
 
 
+SE_SLOTS = ["kw", "dork", "parse", "rev", "inj", "dump", "qa",
+            "rand", "help", "home", "key", "admin", "proxy"]
+SE_LABEL = {
+    "kw": "HQ KEYWORDS", "dork": "DORKER", "parse": "PARSER", "rev": "URL REVERSE",
+    "inj": "INJECTOR", "dump": "DUMPER", "qa": "QUALITY CHECK", "rand": "RANDOMIZER",
+    "help": "HELP", "home": "HOME / START", "key": "KEYS", "admin": "ADMIN", "proxy": "PROXY",
+}
+
+
+def emoji_report() -> str:
+    """Premium emoji list — kaun sa slot set hai."""
+    got = premium_slots()
+    lines = []
+    for slot in SE_SLOTS:
+        cid = got.get(slot, "")
+        mark = "✅ <code>%s</code>" % cid if cid else "▫️ —"
+        lines.append("◆ %s %s : %s" % (emo_btn(slot), style(SE_LABEL.get(slot, slot), "btn"), mark))
+    state = "✅ ON" if EMOJI_OK[0] else "⚠️ OFF (Telegram ne reject kiya — normal emoji)"
+    how = (
+        "\n\n<b>ID kaise mile?</b>\n"
+        "1️⃣ Jis message me animated emoji hai use <b>@JsonDumpBot</b> ko forward karo\n"
+        "2️⃣ wahan <code>custom_emoji_id</code> ke saamne number copy karo\n"
+        "3️⃣ yahan bhejo: <code>/se dork 5368324170671202286</code>\n\n"
+        "<i>Note:</i> Telegram custom emoji sirf message text me allowed karta hai "
+        "(button labels me nahi), aur bot owner ke paas <b>Telegram Premium</b> hona "
+        "chahiye (Bot API 9.4+). Nahi hai to bot khud normal emoji pe switch ho jata hai."
+    )
+    return (H("PREMIUM EMOJI", "%d/%d set · %s" % (len(got), len(SE_SLOTS), state), slot="admin")
+            + "\n\n" + "\n".join(lines) + how)
+
+
+async def cmd_se(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ /se — premium animated emoji ids (admin)
+
+    /se                      → list
+    /se dork 5368...         → set
+    /se dork off             → remove
+    /se test                 → test message
+    """
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.effective_message.reply_text("🚫 Admin only.")
+        return
+    args = list(context.args or [])
+    kb = RK([[InlineKeyboardButton("🏠 MENU", callback_data="m:home")]])
+
+    if not args or args[0].lower() in ("list", "show", "help"):
+        await update.effective_message.reply_text(emoji_report(), parse_mode=ParseMode.HTML,
+                                                 reply_markup=kb, disable_web_page_preview=True)
+        return
+
+    if args[0].lower() == "test":
+        got = premium_slots()
+        if not got:
+            await update.effective_message.reply_text(
+                "🎨 Koi premium emoji set nahi hai.\n\n" + emoji_report(),
+                parse_mode=ParseMode.HTML, reply_markup=kb, disable_web_page_preview=True)
+            return
+        body = "\n".join("◆ %s %s" % (emo(sl), style(SE_LABEL.get(sl, sl), "btn"))
+                         for sl in SE_SLOTS if sl in got)
+        txt = (H("EMOJI TEST", "animated dikhna chahiye", slot="admin") + "\n\n" + body +
+               "\n\n<i>Agar animation nahi dikh rahi:</i> bot owner ka Telegram Premium "
+               "check karo, phir <code>/se</code>. Bot khud bhi detect karta hai — reject "
+               "hote hi normal emoji pe chala jata hai.")
+        await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
+                                                 reply_markup=kb, disable_web_page_preview=True)
+        return
+
+    slot = args[0].lower()
+    val = args[1] if len(args) > 1 else ""
+    if slot not in SE_SLOTS:
+        await update.effective_message.reply_text(
+            "❌ Unknown slot: <code>%s</code>\n\nValid: <code>%s</code>"
+            % (esc(slot), ", ".join(SE_SLOTS)), parse_mode=ParseMode.HTML, reply_markup=kb)
+        return
+    if not val:
+        await update.effective_message.reply_text(
+            "Usage: <code>/se %s 5368324170671202286</code>\n"
+            "Hatane ke liye: <code>/se %s off</code>" % (slot, slot),
+            parse_mode=ParseMode.HTML, reply_markup=kb)
+        return
+
+    good, err = set_premium(slot, val)
+    if not good:
+        await update.effective_message.reply_text("❌ " + err, parse_mode=ParseMode.HTML,
+                                                 reply_markup=kb)
+        return
+    cid = premium_slots().get(slot, "")
+    if cid:
+        msg = ("✅ <b>%s</b> → animated emoji set\n\n◆ %s\n<code>%s</code>\n\n"
+               "Dekhne ke liye: <code>/se test</code>" % (esc(SE_LABEL.get(slot, slot)),
+                                                           emo(slot), cid))
+    else:
+        msg = "🗑 <b>%s</b> → premium emoji hata diya (normal wala chalega)" %               esc(SE_LABEL.get(slot, slot))
+    await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML,
+                                             reply_markup=kb, disable_web_page_preview=True)
+
+
 async def cmd_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not is_admin(uid):
@@ -10980,6 +11256,50 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.effective_message.reply_text(admin_dash(), reply_markup=kb_admin(),
                                               parse_mode=ParseMode.HTML)
+
+
+async def cb_premium_pick(update, context, slot: str):
+    """Emoji forward ke baad slot button — premium id set karo."""
+    q = update.callback_query
+    cid = str(context.user_data.get("se_id") or "")
+    if slot == "off":
+        for sl in SE_SLOTS:
+            if sl in PREMIUM_EMOJI:
+                set_premium(sl, "off")
+        try:
+            await q.edit_message_text(
+                H("PREMIUM EMOJI", "saaf", slot="admin") + "\n\n" +
+                P("Saare premium emoji hata diye — normal wale chalenge."),
+                parse_mode=ParseMode.HTML,
+                reply_markup=RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:emoji")]]))
+        except Exception:
+            pass
+        return
+    if not cid.isdigit():
+        try:
+            await q.answer("Pehle emoji wala message forward karo", show_alert=True)
+        except Exception:
+            pass
+        return
+    good, err = set_premium(slot, cid)
+    try:
+        if good:
+            await q.edit_message_text(
+                (H("PREMIUM EMOJI", "set", slot="admin") + "\n\n"
+                 + "◆ %s <b>%s</b>\n<code>%s</code>\n\n" % (
+                     emo(slot), esc(SE_LABEL.get(slot, slot)), cid)
+                 + P("Dekhne ke liye <b>TEST</b> dabao.")),
+                parse_mode=ParseMode.HTML,
+                reply_markup=RK([
+                    [InlineKeyboardButton("🧪 TEST", callback_data="a:emojitest")],
+                    [InlineKeyboardButton("🪄 AUR EMOJI", callback_data="a:emoji")],
+                    [InlineKeyboardButton("🏠 MENU", callback_data="m:home")]]))
+        else:
+            await q.edit_message_text("❌ " + err, parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_back("a:emoji"))
+    except Exception:
+        pass
+    return
 
 
 async def admin_callback(update, context, action: str):
@@ -11284,6 +11604,34 @@ async def admin_callback(update, context, action: str):
             [InlineKeyboardButton("⬅️ API KEYS", callback_data="a:keys_api")],
             [InlineKeyboardButton("🏠 MAIN MENU", callback_data="m:home")],
         ]))
+        return
+
+    if action == "emoji":
+        try:
+            await q.edit_message_text(
+                emoji_report(), parse_mode=ParseMode.HTML,
+                reply_markup=RK([
+                    [InlineKeyboardButton("🧪 TEST ANIMATION", callback_data="a:emojitest")],
+                    [InlineKeyboardButton("⬅️ ADMIN", callback_data="a:home")],
+                ]), disable_web_page_preview=True)
+        except Exception:
+            pass
+        return
+
+    if action == "emojitest":
+        got = premium_slots()
+        body = ("\n".join("◆ %s %s" % (emo(sl), style(SE_LABEL.get(sl, sl), "btn"))
+                          for sl in SE_SLOTS if sl in got) if got else
+                "<i>Koi premium id set nahi hai.</i> Neeche se slot + id bhejo:\n"
+                "<code>/se dork 5368324170671202286</code>")
+        try:
+            await q.edit_message_text(
+                H("EMOJI TEST", "animated dikhna chahiye", slot="admin") + "\n\n" + body,
+                parse_mode=ParseMode.HTML,
+                reply_markup=RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:emoji")]]),
+                disable_web_page_preview=True)
+        except Exception:
+            pass
         return
 
     if action == "theme":
@@ -11598,6 +11946,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("enginetest", cmd_enginetest))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CommandHandler("theme", cmd_theme))
+    app.add_handler(CommandHandler("se", cmd_se))
     app.add_handler(CommandHandler("ban", cmd_ban))
     app.add_handler(CommandHandler("unban", cmd_unban))
     app.add_handler(CommandHandler("addkey", cmd_addkey))
@@ -12155,6 +12504,7 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "🧩 Build: <code>%s</code>\n"
            "🛡 Silent-guard: %s · 💉 payloads: <code>%d</code> · ⚙️ parser-cfg: %s\n"
            "🔐 Config: %s\n"
+           "🎨 Premium emoji: <code>%d</code> set · %s\n"
            "🕒 Loaded: <code>%s</code>")
     txt = txt % (selfcheck.get("username") or "?",
                  F(THEMES[theme_name()]["label"], T()["head"]),
@@ -12167,6 +12517,8 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  ("<code>%s</code> · admins %d" %
                   (os.path.basename(CONFIG_PATH) if CONFIG_PATH else "⚠️ none (bot.py se)",
                    len(ADMIN_IDS))),
+                 len(premium_slots()),
+                 "ON" if EMOJI_OK[0] else "OFF (normal emoji)",
                  BUILD_TS)
     await msg.edit_text(txt, parse_mode=ParseMode.HTML)
 
