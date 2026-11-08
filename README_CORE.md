@@ -1,6 +1,41 @@
-# 🐍 PYTHON SNAKE CORE — v2.15.0
+# 🐍 PYTHON SNAKE CORE — v2.16.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🧅 v2.16.0 — proxy sirf PARSER me (injector/dumper direct)
+
+### Pehle kya tha
+| Tool | Proxy | Problem |
+|---|---|---|
+| PARSER | ON (auto/off/on) | ✅ sahi — engines ko naya IP chahiye |
+| INJECTOR | `inj_proxy` (default 0 = off) | ✅ theek, par card me dikhta nahi tha |
+| **DUMPER** | **auto ON jitni proxy pool me thi** | ❌ **bug** — dump toot raha tha |
+
+### Dumper me proxy kyun galat tha
+SQL dump (union/blind extraction) me **har request ka jawab pichhle request pe**
+depend karta hai — same session, same IP, same cookies. Free rotating proxy
+**har request naya IP** deta hai → columns/tables ka jawab aadha-aadha aata hai,
+dump fail. Isliye:
+
+- **Dumper ab DIRECT** (`ProxyRotator(enabled=False)` by default)
+- chahiye to admin: `/batch dumpproxy 1`
+- PAGE HARVEST bhi direct
+- DUMPER card me saaf likha: `🧅 Proxy: OFF — direct (dump me session same rehna zaroori hai)`
+
+### Injector
+- proxy default **OFF** (`/batch injproxy 1` se on)
+- INJECTOR card me dikhta hai: `🧅 Proxy: OFF — direct (fast + blocks nahi)`
+- result card me bhi: `🧅 Proxy: OFF — direct`
+- 25 proxy fail par khud direct ho jata hai (pehle se tha)
+
+### Fark
+- Dump pehli baar poora aata hai (rows/tables adhoora nahi)
+- Injector tez + false positive kam (2nd-request confirm same IP par hota hai)
+- Parser waise hi proxy use karta hai (wahan zaroori hai)
+
+Tests: **894/894** · screens 37 clean · pyflakes 0
 
 ---
 

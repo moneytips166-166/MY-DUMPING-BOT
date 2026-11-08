@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.15.0", "VERSION")
+    eq(core.VERSION, "v2.16.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.15.0"')
+    contains(btxt, 'VERSION = "v2.16.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.15.0", "shim se version")
+    eq(core.VERSION, "v2.16.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1781,7 +1781,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.15.0", "version")
+    eq(core.VERSION, "v2.16.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2379,6 +2379,37 @@ def test_v2150_yield_mode():
         core.SETTINGS.clear()
         core.SETTINGS.update(old_settings)
 
+def test_v2160_proxy_scope():
+    """v2.16.0 — injector/dumper me rotating proxy DEFAULT OFF (sirf parser me)."""
+    group("v2.16.0 proxy scope")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    contains(src, "def inj_proxy_on")
+    contains(src, "def dump_proxy_on")
+    contains(src, 'ProxyRotator(enabled=bool(dump_proxy_on() and proxy_available()))')
+    contains(src, "rot = ProxyRotator(enabled=_use_proxy)")
+    contains(src, '"dumpproxy": ("dump_proxy", 0, 1')
+
+    old_settings = dict(core.SETTINGS)
+    try:
+        core.SETTINGS.pop("inj_proxy", None)
+        core.SETTINGS.pop("dump_proxy", None)
+        eq(core.inj_proxy_on(), False, "injector proxy default OFF")
+        eq(core.dump_proxy_on(), False, "dumper proxy default OFF")
+        for bad in ("0", 0, "off", "", None, "no"):
+            core.SETTINGS["inj_proxy"] = bad
+            eq(core.inj_proxy_on(), False, "inj_proxy=%r OFF" % (bad,))
+            core.SETTINGS["dump_proxy"] = bad
+            eq(core.dump_proxy_on(), False, "dump_proxy=%r OFF" % (bad,))
+        for good in ("1", 1, "on", "yes", "true"):
+            core.SETTINGS["inj_proxy"] = good
+            eq(core.inj_proxy_on(), True, "inj_proxy=%r ON" % (good,))
+            core.SETTINGS["dump_proxy"] = good
+            eq(core.dump_proxy_on(), True, "dump_proxy=%r ON" % (good,))
+    finally:
+        core.SETTINGS.clear()
+        core.SETTINGS.update(old_settings)
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -2404,7 +2435,8 @@ def main():
                test_premium_emoji, test_v211_bugfixes,
                test_v212_engines, test_v2122_bing_quality,
                test_v2130_token_repair, test_v2131_update_proof,
-               test_v2140_no_dork_left, test_v2150_yield_mode):
+               test_v2140_no_dork_left, test_v2150_yield_mode,
+               test_v2160_proxy_scope):
         try:
             fn()
         except Exception as exc:

