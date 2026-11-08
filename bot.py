@@ -9056,7 +9056,8 @@ def _inj_progress_card(st: dict, spin: int) -> str:
         return (H("SCANNING", "%s • checking sites" % CAT_LABEL.get(st.get("cat"), "ALL"))
                 + "\n\n" + bar2(_pp, 14, spin) + "\n\n"
                 + "◆ URLs       : <code>%s</code>\n" % fmt(total)
-                + "◆ Sites check: <code>%s / %s</code>\n" % (fmt(_hd), fmt(_ht) or "—")
+                + "◆ Sites check: <code>%s</code>\n" % (
+                    ("%s / %s" % (fmt(_hd), fmt(_ht))) if _ht else "counting…")
                 + "\n<i>Dead sites hata rahe hain — phir testing shuru.</i>")
 
     return (H("SCANNING", "%s • testing now" % CAT_LABEL.get(st.get("cat"), "ALL"))
