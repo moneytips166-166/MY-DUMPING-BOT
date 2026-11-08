@@ -45,7 +45,8 @@
 
 ### 🔍 Parser UI (naya)
 - Live: **Raw URLs · Unique URLs · Target · Speed dork/s · Time left** — attempts / blocked / engines / proxies hata diye.
-- End: **`raw_*.txt`** (har raw hit, 2 lakh line cap) + **`deep_*.txt`** (unique) + stats.
+- End card: sirf **Dorks scanned · Raw URLs · Unique URLs · Yield · Time · Files** — engine health / proxy / filtered counters backend me (diagnostics sirf 0-URL case me).
+- End files: **`raw_*.txt`** (har raw hit, duplicate ke saath, 2 lakh line cap) + **`deep_*.txt`** (unique) + stats.
 - `parse_raw_cap` = 200,000 (phone RAM safe), `raw_truncated` flag stats me.
 
 ### 🧪 Engine audit (asli local HTTP app par, mock nahi)

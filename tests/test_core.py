@@ -2257,8 +2257,8 @@ def test_v2140_no_dork_left():
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
     contains(src, "YIELD MODE")
-    contains(src, "Not attempted:")
-    contains(src, "Yield:")
+    contains(src, "Not attempted :")
+    contains(src, "Yield       :")
     for bit in ("_again", "_ready_list", "_REST_FOR", "engine_rest",
                 "url_goal", "yield_target", "goal_hit", "avg_req"):
         contains(src, bit)

@@ -9076,9 +9076,8 @@ async def input_deep_max(update, context, text: str):
                 (F("PARSER — RUNNING", "%s" % ENGINE_LABEL.get(st.get("mode", "fast"), "")
                    .split("—")[0].strip()) + "\n" + T()["div"][:22] + "\n\n"
                  + bar_pct(pct, 16) + "\n"
-                 + "<code>%s / %s dorks</code>  <i>(source %s/%s)</i>\n\n"
-                   % (fmt(st["scanned"]), fmt(st["total"]),
-                      st.get("pass", 1), st.get("max_req", 1))
+                 + "<code>%s / %s dorks</code>\n\n"
+                   % (fmt(st["scanned"]), fmt(st["total"]))
                  + "◆ Raw URLs    : <code>%s</code>\n" % fmt(st["raw"])
                  + "◆ Unique URLs : <code>%s</code>  <b>(%.1fx)</b>\n"
                    % (fmt(st["unique"]),
@@ -9101,72 +9100,29 @@ async def input_deep_max(update, context, text: str):
     context.user_data["last_urls"] = urls
     _rest = st.get("remaining_dorks") or []          # koi dork chhoota → CONTINUE
     context.user_data["parse_rest"] = _rest
-    eng = ", ".join("%s:%d" % (a, b) for a, b in
-                    sorted(st["engine_hits"].items(), key=lambda z: -z[1])[:4]) or "—"
-    _health = []
-    for _e in engine_list(st.get("mode") or "normal"):
-        _h = int(st["engine_hits"].get(_e, 0))
-        if _h:
-            _health.append("✅ %s <code>%s</code>" % (_e, fmt(_h)))
-        else:
-            _why = engine_reason((ENGINE_LAST.get(_e) or ("", 0))[0]) or "no results"
-            _health.append("❌ %s <i>%s</i>" % (_e, esc(_why[:28])))
-    health_line = " · ".join(_health[:6])
+    #  v2.18.0: parser UI sirf Raw + Unique dikhata hai — engine health backend me
     _skip = int(st.get("skipped", 0) or 0)
     _uniq = int(st.get("unique", 0) or 0)
     _ratio = _uniq / max(1, st.get("total", 1))
     _tgt = float(st.get("yield_target", 5) or 5)
-    _goal = int(st.get("url_goal", 0) or 0)
-    _head = ("Dorks scanned: <code>%d/%d</code>\n" % (st["scanned"], st["total"])
-             + ("Not attempted: <code>%s</code>  <i>(engines blocked — CONTINUE dabao)</i>\n"
-                % fmt(_skip) if _skip else "")
-             + "🏆 Yield: <b>%.1fx</b>  ·  target <code>%gx</code> = <code>%s</code> URLs\n"
-               % (_ratio, _tgt, fmt(_goal))
-             + ("✅ <b>Target reached</b>\n" if st.get("goal_hit")
-                else "🟡 <b>SERPs saturated</b> — engines se jitne naye URLs "
-                     "mil sakte the mil gaye\n" if st.get("saturated")
-                else "⚠️ Target se kam — budget badhao ya CONTINUE dabao "
-                     "(har dork ko aur sources milenge)\n"))
-    card = (H("DEEP PARSER — COMPLETE", "%.1fs" % took) + "\n\n" + _head
-            + "Raw URLs: <code>%s</code>\n"
-            "Unique URLs: <code>%s</code>\n\n"
-            "🌐 Common Crawl: <code>%s</code>\n"
-            "🐦 Google (free): <code>%s</code>\n"
-            "🔑 API: <code>%s</code>\n"
-            "⚙️ Engines: <code>%s</code>\n"
-            "🧵 Parallel dorks: <code>%s</code>\n"
-            "🔎 %s\n\n"
-            "%s\n%s\n%s\n%s\n%s\n%s\n\n"
-            "[%s] <b>100%%</b>\n\n"
-            "📦 <b>Files ready</b>"
-            % (fmt(st["raw"]), fmt(st["unique"]),
-               fmt(st["cc"]), fmt(st.get("gj", 0)), fmt(st["api"]), esc(eng),
-               fmt(st.get("workers", 0)), health_line,
-               KV("Engine block", "that is what the 'errors' were — <code>%s</code> (IP/proxy block)"
-                  " · resting now: <code>%s</code>" % (fmt(st["errors"]),
-                                                       fmt(st.get("engines_resting", 0))), "⚠️"),
-               KV("Relaxed", "<code>%s</code> strict attempts returned 0, so it took unfiltered" % fmt(st.get("relaxed", 0)), "⚖️"),
-               KV("Filtered", "<code>%s</code> (junk %s • mismatch %s)"
-                  % (fmt(st["filtered"]), fmt(st["junk"]), fmt(st["mismatch"])), "🚫"),
-               KV("Engines mode", "<b>%s</b> — change it with <code>/engines</code>" % engines_mode(), "🎛"),
-               KV("Engine proxy", "<b>%s</b> — <code>%s</code> requests via proxy, "
-                  "pool <code>%s</code> alive · fail <code>%s</code>\n<i>auto = jo proxy se "
-                  "block hote hain wo direct</i>"
-                  % (str(st.get("px_mode", "auto")).upper(),
-                     fmt((st.get("proxy") or {}).get("used", 0)),
-                     fmt((st.get("proxy") or {}).get("alive", 0)),
-                     fmt((st.get("proxy") or {}).get("fail", 0))), "🧅"),
-               (KV("Stopped", "⛔ you pressed STOP — %s dorks baaki hain" % fmt(_skip), "⛔")
-                if st.get("stop") else
-                KV("Stopped", "⏱ time budget khatam — %s dorks baaki (CONTINUE)" % fmt(_skip), "⏱")
-                if st.get("time_up") else
-                (KV("Stopped", "🛑 engines blocked — %s dorks ki request hi nahi hui" % fmt(_skip), "🛑")
-                 if st.get("aborted") else
-                 KV("Finished", ("✅ all %d dorks scanned · %.1fx yield"
-                                 % (st["scanned"], _ratio)) if not _skip
-                    else "⚠️ %d scanned, %s baaki (CONTINUE)"
-                         % (st["scanned"], fmt(_skip)), "✅"))),
-               bar(int(100 * st["scanned"] / max(1, st["total"])), 22)))
+    _head = ("Dorks scanned : <code>%d / %d</code>\n" % (st["scanned"], st["total"])
+             + (("Not attempted : <code>%s</code>  <i>(engines blocked — CONTINUE dabao)</i>\n"
+                 % fmt(_skip)) if _skip else "")
+             + "🏆 Yield       : <b>%.1fx</b>  ·  target <code>%gx</code>\n"
+               % (_ratio, _tgt)
+             + (("✅ <b>Target reached</b>\n") if st.get("goal_hit")
+                else ("🟡 <b>SERPs saturated</b> — engines se jitne naye URLs mil sakte "
+                      "the mil gaye\n") if st.get("saturated")
+                else ("⚠️ Target se kam — budget badhao ya CONTINUE dabao\n"))
+             + (("⛔ <b>Stopped</b> — %s dorks baaki\n" % fmt(_skip))
+                if (st.get("stop") or st.get("aborted")) else ""))
+    card = (H("DEEP PARSER — COMPLETE", "%.1fs" % took) + "\n\n" + _head + "\n"
+            + "📥 Raw URLs    : <code>%s</code>\n" % fmt(st["raw"])
+            + "🌐 Unique URLs : <code>%s</code>\n" % fmt(st["unique"])
+            + "⏱ Time        : <code>%s</code>\n\n" % fmt_eta(took)
+            + "📦 <b>Files</b>\n"
+            + "• <code>deep_*.txt</code> — unique URLs\n"
+            + "• <code>raw_*.txt</code> — raw hits (before dedupe)")
     try:
         await msg.delete()
     except Exception:
@@ -9194,7 +9150,7 @@ async def input_deep_max(update, context, text: str):
         except Exception:
             pass
     if _raw:
-        rpath, rcnt = dump_text(_uniq(_raw), "raw", "PYTHON SNAKE — raw URLs (before dedupe)")
+        rpath, rcnt = dump_text(_raw, "raw", "PYTHON SNAKE — raw URLs (before dedupe)")
         await send_file(update, rpath, "🧾 %d raw URLs" % rcnt)
     else:
         await update.effective_message.reply_text(
