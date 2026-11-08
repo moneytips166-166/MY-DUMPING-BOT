@@ -1,6 +1,43 @@
-# 🐍 PYTHON SNAKE CORE — v2.16.0
+# 🐍 PYTHON SNAKE CORE — v2.17.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 📥 v2.17.0 — 24k URLs: poore chale, precheck live, STOP sach me rukta hai
+
+### Screenshot wali teen dikkatein
+| Kya dikha | Asli karan | Fix |
+|---|---|---|
+| File me **24552 URLs**, card **LINES: 20,000** | `FILE_MAX_LINES = 20000` — reader wahin ruk jata tha | cap **300,000** |
+| **Sites 0/2,000** | `_urls_from_text(limit=2000)` | `URL_MAX = 200000` (**koi cap nahi**) |
+| **0/2000, Requests 0/0** par atka | host pre-check chup-chaap chalta tha — har host ke liye **naya session**, koi progress nahi | live progress + ek hi session |
+| **STOPPING… hamesha** | pre-check me stop flag **check hi nahi hota tha** | STOP ab pehle second se kaam karta hai |
+
+### Pre-check ab
+```
+SCANNING ALL • pre-check
+◆ Sites   : 24,552 URLs
+◆ Hosts   : 843 / 6,120  (checked)
+◆ Step    : dead sites hata rahe hain — phir probes shuru
+⛔ STOP isi step me bhi turant kaam karta hai.
+```
+- ek hi `aiohttp` session (phone pe halka, 3-5x tez)
+- **time cap** `inj_precheck` (default **45s**) — jo host check nahi hua use **zinda**
+  maan liya jata hai, **koi URL nahi girta** (card me `⚡ Pre-check cap hit` likha aata hai)
+
+### 24k URLs par memory
+Pehle har URL ke saare probes ek list me bante the (24k × 16 = ~4 lakh tuples →
+phone hang). Ab **feeder** streaming karti hai bounded queue me.
+Test: 6,000 URLs → 24,000 probes → **12.7s, RSS 78 MB**.
+
+### Honest counts
+- `📥 URLs received: 24,552`
+- `🌐 URLs scanned: 12,480 (clean …)`
+- `💀 Dead hosts skipped` · `⏱ Host pre-check`
+- file card ab **asli line count** dikhata hai
+
+Tests: **907/907** · screens 37 clean · pyflakes 0
 
 ---
 

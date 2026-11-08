@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.16.0", "VERSION")
+    eq(core.VERSION, "v2.17.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.16.0"')
+    contains(btxt, 'VERSION = "v2.17.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.16.0", "shim se version")
+    eq(core.VERSION, "v2.17.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1781,7 +1781,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.16.0", "version")
+    eq(core.VERSION, "v2.17.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2410,6 +2410,43 @@ def test_v2160_proxy_scope():
         core.SETTINGS.clear()
         core.SETTINGS.update(old_settings)
 
+def test_v2170_big_lists():
+    """v2.17.0 — 24k URLs ka cap khatam, precheck live + STOP, memory-safe."""
+    group("v2.17.0 big lists")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    for bit in ("URL_MAX = 200000", "def _urls_from_text(text: str, limit: int = 0)",
+                "hosts_done", "precheck_capped", "inj_precheck",
+                "async def feeder", "asyncio.Queue(maxsize", "STOP isi step me bhi"):
+        contains(src, bit)
+    ok(core.FILE_MAX_LINES >= 200000,
+       "file lines cap (%d)" % core.FILE_MAX_LINES)
+
+    # 24,552 URLs — koi 2000/20000 cap nahi
+    text = "\n".join("https://s%d.example.com/p.php?id=%d" % (i % 5000, i)
+                      for i in range(24552))
+    urls = core._urls_from_text(text)
+    eq(len(urls), 24552, "saare URLs liye")
+    eq(len(core._urls_from_text(text, 50)), 50, "explicit limit kaam karta hai")
+
+    # STOP pre-set → inj_scan turant rukta hai
+    import asyncio as _aio
+    core.STOP_FLAGS["777"] = {"tok": "1", "stop": True}
+    old_pre = core.sget("inj_precheck", 45)
+    try:
+        core.SETTINGS["inj_precheck"] = 1
+        t0 = time.time()
+        st = _aio.run(core.inj_scan(
+            ["https://dead%d.invalid/x.php?id=1" % i for i in range(60)],
+            "all", timeout=2, conc=10, max_targets=2, uid="777"))
+        took = time.time() - t0
+        eq(st.get("stopped"), 1, "stopped flag")
+        ok(took < 15, "STOP turant (%.1fs)" % took)
+    finally:
+        core.SETTINGS.pop("inj_precheck", None)
+        core.SETTINGS["inj_precheck"] = old_pre
+        core.STOP_FLAGS.pop("777", None)
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -2436,7 +2473,7 @@ def main():
                test_v212_engines, test_v2122_bing_quality,
                test_v2130_token_repair, test_v2131_update_proof,
                test_v2140_no_dork_left, test_v2150_yield_mode,
-               test_v2160_proxy_scope):
+               test_v2160_proxy_scope, test_v2170_big_lists):
         try:
             fn()
         except Exception as exc:
