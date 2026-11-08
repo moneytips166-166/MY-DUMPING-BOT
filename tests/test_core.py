@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.11.0", "VERSION")
+    eq(core.VERSION, "v2.12.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -379,8 +379,8 @@ def test_engines():
     group("engines")
     ok("fast" in core.ENGINE_SETS and "max" in core.ENGINE_SETS, "engine sets")
     eq(len(core.ENGINE_SETS["fast"]), 3, "fast 3")
-    eq(len(core.ENGINE_SETS["max"]), len(core.ENGINE_ORDER), "max all")
-    eq(core.engine_list("fast"), ["bing", "mojeek", "ddgl"], "fast list")
+    ok(len(core.ENGINE_SETS["max"]) >= 12, "max 12+")
+    eq(core.engine_list("fast"), ["bing", "bingr", "mojeek"], "fast list")
     ctx = FakeContext({})
     ctx.user_data["engines_mode"] = "max"
     eq(core.user_mode(ctx), "max", "user mode")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.11.0"')
+    contains(btxt, 'VERSION = "v2.12.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.11.0", "shim se version")
+    eq(core.VERSION, "v2.12.0", "shim se version")
 
 
 def test_diagnostics():
@@ -486,7 +486,9 @@ def test_diagnostics():
     ok(isinstance(core.ENGINE_LAST, dict), "ENGINE_LAST dict")
     # ddg lite engine maujood hai aur fast/normal me hai
     contains(core.ENGINE_URLS["ddgl"], "lite.duckduckgo.com")
-    ok("ddgl" in core.ENGINE_SETS["fast"], "ddgl in fast")
+    ok("bingr" in core.ENGINE_SETS["fast"], "bingr (RSS) fast me")
+    ok("bingr" in core.ENGINE_SETS["normal"], "bingr normal me")
+    eq(core.ENGINE_URLS.get("bingr", "").count("{q}"), 1, "bingr URL set")
     ok("ddgl" in core.ENGINE_SETS["normal"], "ddgl in normal")
     # lite page se links nikalte hain
     html = ('<a class="result-link" href="https://a.com/x">A</a>'
@@ -495,12 +497,12 @@ def test_diagnostics():
     ok(any("a.com/x" in u for u in urls), "result-link")
     # abort setting
     ok("parse_abort_after" not in dir(core) or True, "abort config")
-    # v2.11 — 9 engines (mojeek + marginalia; bing-only bug ka fix)
-    eq(sorted(core.ENGINE_URLS), ["bing", "brave", "ddg", "ddgl", "google",
-                                  "marginalia", "mojeek", "yahoo", "yandex"],
-       "9 engines only")
-    eq(sorted(core.ENGINE_SETS["max"]), sorted(core.ENGINE_URLS), "max = saare 9")
-    ok("ddgl" in core.ENGINE_SETS["fast"])
+    # v2.12 — bingr RSS + searx + startpage/qwant/ecosia (bing-only bug ka fix)
+    for need in ("bing", "bingr", "mojeek", "ddg", "ddgl", "sxng", "yahoo",
+                 "google", "brave", "yandex", "startpage", "qwant", "ecosia"):
+        ok(need in core.ENGINE_URLS, "engine %s" % need)
+    eq(sorted(core.ENGINE_SETS["max"]), sorted(core.ENGINE_URLS), "max = saare engines")
+    ok("bingr" in core.ENGINE_SETS["fast"])
     import base64 as _b64
     enc = _b64.urlsafe_b64encode(b"https://x.example.com/p?q=1").decode().rstrip("=")
     ck = "https://www.bing.com/ck/a?!&&p=1&u=a1" + enc + "&ntb=1"
@@ -875,9 +877,13 @@ def test_rot_test_card():
 def test_v29_parser():
     group("v2.9 parser")
     # engines sirf 7
-    eq(len(core.ENGINE_URLS), 9, "9 engines")
-    eq(core.ENGINE_SETS["fast"], ["bing", "mojeek", "ddgl"], "fast 3")
-    eq(len(core.ENGINE_SETS["max"]), 9, "max 9")
+    eq(len(core.ENGINE_SETS["fast"]), 3, "fast 3")
+    eq(core.ENGINE_SETS["fast"], ["bing", "bingr", "mojeek"], "fast = bing + RSS + mojeek")
+    ok(len(core.ENGINE_SETS["max"]) >= 12, "max 12+ (%d)" % len(core.ENGINE_SETS["max"]))
+    ok("sxng" in core.ENGINE_URLS, "searx engine")
+    ok(len(core.SXNG_INSTANCES) >= 5, "searx instances")
+    ok("startpage" in core.ENGINE_URLS, "startpage")
+    ok("qwant" in core.ENGINE_URLS, "qwant")
     # reset_engine_miss + per-run miss
     core.ENGINE_MISS.update({"ddg": 9})
     core.reset_engine_miss()
@@ -1773,7 +1779,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.11.0", "version")
+    eq(core.VERSION, "v2.12.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -1889,109 +1895,23 @@ def test_menu_emoji():
 
 
 def test_premium_emoji():
-    """Premium (animated) emoji: set → tag, off → normal, reject → fallback."""
+    """Premium (animated) emoji feature OFF — sirf normal emoji."""
     group("premium-emoji")
-    import tempfile
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    tmp = tempfile.mkdtemp(prefix="snakeemoji_")
-    old_base = core.BASE_DIR
-    old_prem = dict(core.PREMIUM_EMOJI)
-    try:
-        core.BASE_DIR = tmp
-        core.PREMIUM_EMOJI.clear()
-        core.EMOJI_OK[0] = True
-        # default: plain emoji
-        eq(core.emo("dork"), "🧬", "premium nahi → normal emoji")
-        eq(core.emo_btn("dork"), "🧬", "button emoji")
-        # set
-        good, err = core.set_premium("dork", "5368324170671202286")
-        ok(good, "set premium: %s" % err)
-        eq(core.premium_slots().get("dork"), "5368324170671202286", "id saved")
-        tag = core.emo("dork")
-        contains(tag, "<tg-emoji emoji-id=\"5368324170671202286\">")
-        contains(tag, "🧬")
-        eq(core.strip_premium(tag), "🧬", "strip → normal emoji")
-        # config me save hua?
-        cfg_file = os.path.join(tmp, "snake_config.json")
-        ok(os.path.exists(cfg_file), "config file bani")
-        with open(cfg_file, encoding="utf-8") as f:
-            saved = json.load(f)
-        eq(saved.get("premium_emoji", {}).get("dork"), "5368324170671202286", "config me id")
-        # invalid
-        bad, _e = core.set_premium("dork", "abc")
-        ok(not bad, "invalid id reject")
-        bad2, _e = core.set_premium("nope", "5368324170671202286")
-        ok(not bad2, "invalid slot reject")
-        # reject → auto fallback
-        core.EMOJI_OK[0] = False
-        eq(core.emo("dork"), "🧬", "reject ke baad normal")
-        core.EMOJI_OK[0] = True
-        # off
-        core.set_premium("dork", "off")
-        eq(core.premium_slots().get("dork"), None, "off → hat gaya")
-        eq(core.emo("dork"), "🧬", "normal wapas")
-        # error detect
-        from telegram.error import BadRequest
-        ok(core._is_premium_error(BadRequest(
-            "Bad Request: custom emoji can be used only by bots that purchased "
-            "additional usernames on Fragment")), "premium error detect")
-        ok(not core._is_premium_error(BadRequest("chat not found")), "normal error")
-        # /ping me premium line
-        ctx = FakeContext({})
-        upd = FakeUpdate(uid=ADMIN, text="/ping")
-        asyncio.run(core.cmd_ping(upd, ctx))
-        contains(upd.last_text(), "Premium emoji")
-    finally:
-        core.BASE_DIR = old_base
-        core.PREMIUM_EMOJI.clear()
-        core.PREMIUM_EMOJI.update(old_prem)
-        core.EMOJI_OK[0] = True
-        shutil.rmtree(tmp, ignore_errors=True)
-
-    # /se admin-only + list + usage
     src = open(os.path.join(root, "bot.py"), encoding="utf-8").read()
-    contains(src, 'CommandHandler("se", cmd_se)')
+    ok('CommandHandler("se", cmd_se)' not in src, "koi /se command nahi")
+    ok('callback_data="a:emoji"' not in src, "koi premium emoji button nahi")
+    for slot, want in (("kw", "🔑"), ("dork", "🧬"), ("parse", "🌐"),
+                       ("rev", "🔗"), ("inj", "💉"), ("dump", "📁"), ("qa", "📊")):
+        eq(core.emo(slot), want, "emo %s plain" % slot)
+    eq(core.emo_btn("dump"), "📁", "button emoji plain")
     ctx = FakeContext({})
-    u1 = FakeUpdate(uid=12345, text="/se")
-    asyncio.run(core.cmd_se(u1, ctx))
-    contains(u1.last_text(), "Admin only")
-    u2 = FakeUpdate(uid=ADMIN, text="/se")
-    asyncio.run(core.cmd_se(u2, ctx))
-    txt = u2.last_text()
-    contains(txt, "🛡")
-    contains(txt, "JsonDumpBot")
-    contains(txt, "custom_emoji_id")
+    upd = FakeUpdate(uid=ADMIN, text="/ping")
+    asyncio.run(core.cmd_ping(upd, ctx))
+    txt = upd.last_text()
+    ok("Premium emoji" not in txt, "ping me premium line nahi")
+    contains(txt, core.VERSION)
 
-    # admin forward kare to ID auto-detect + slot button
-    tmp2 = tempfile.mkdtemp(prefix="snakeemoji2_")
-    core.BASE_DIR = tmp2
-    class _Ent:
-        type = "custom_emoji"
-        offset = 0
-        length = 1
-        custom_emoji_id = "5368324170671202286"
-
-    ctx4 = FakeContext({})
-    u4 = FakeUpdate(uid=ADMIN, text="🧬", entities=[_Ent()])
-    asyncio.run(core.on_text(u4, ctx4))
-    t4 = u4.last_text()
-    contains(t4, "5368324170671202286")
-    eq(ctx4.user_data.get("se_id"), "5368324170671202286", "se_id saved")
-    kb4 = u4.sink[-1][2].get("reply_markup")
-    datas = [b.callback_data for row in kb4.inline_keyboard for b in row]
-    ok("se:set:dork" in datas, "slot button se:set:dork")
-    # slot button dabao
-    u5 = FakeUpdate(uid=ADMIN, data="se:set:dork")
-    asyncio.run(core._on_callback_inner(u5, ctx4))
-    eq(core.premium_slots().get("dork"), "5368324170671202286", "button se set")
-    core.PREMIUM_EMOJI.pop("dork", None)
-    core.BASE_DIR = old_base
-    shutil.rmtree(tmp2, ignore_errors=True)
-
-    ctx3 = FakeContext({}, args=["dork", "abc"])
-    u3 = FakeUpdate(uid=ADMIN, text="/se")
-    asyncio.run(core.cmd_se(u3, ctx3))
-    contains(u3.last_text(), "numeric")
 
 def test_v211_bugfixes():
     """v2.11 — parser parallel, injector accuracy/speed, dumper sync, vuln→dorks."""
@@ -2113,6 +2033,46 @@ def test_v211_bugfixes():
     contains(src, "INJ_CONFIRM")
     contains(src, "1787569")
 
+def test_v212_engines():
+    """v2.12 — bing-only fix, engine doctor, AUTO engine-proxy."""
+    group("v2.12 engines")
+    # bingr (RSS) hamesha available
+    ok("bingr" in core.ENGINE_URLS, "bingr engine")
+    ok("format=rss" in core.ENGINE_URLS["bingr"], "bingr RSS URL")
+    ok("sxng" in core.ENGINE_URLS, "searx engine")
+    ok(len(core.SXNG_INSTANCES) >= 5, "searx instances %d" % len(core.SXNG_INSTANCES))
+    for e in ("startpage", "qwant", "ecosia"):
+        ok(e in core.ENGINE_URLS, "engine %s" % e)
+    # AUTO proxy: proxy se block hone wale direct, block karne wale proxy
+    eq(core.parse_engine_proxy("bingr", "auto"), False, "bingr direct in auto")
+    eq(core.parse_engine_proxy("mojeek", "auto"), False, "mojeek direct in auto")
+    eq(core.parse_engine_proxy("ddgl", "auto"), False, "ddgl direct in auto")
+    eq(core.parse_engine_proxy("google", "auto"), True, "google proxy in auto")
+    eq(core.parse_engine_proxy("brave", "auto"), True, "brave proxy in auto")
+    eq(core.parse_engine_proxy("google", "off"), False, "off = sab direct")
+    eq(core.parse_engine_proxy("bingr", "on"), True, "on = sab proxy")
+    # har engine ka fix hint maujood
+    for e in core.ENGINE_URLS:
+        ok(core.engine_fix(e, "http 429"), "fix hint %s" % e)
+    _gf = core.engine_fix("google", "http 403")
+    ok("proxy" in _gf.lower() or "serper" in _gf.lower(), "google fix me sach")
+    ok("proxy" in core.engine_fix("bing", "timeout").lower(), "timeout fix")
+    # doctor button + route
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "bot.py"), encoding="utf-8").read()
+    contains(src, 'callback_data="pr:doctor"')
+    contains(src, 'rest == "doctor"')
+    # parser settings me proxy mode
+    ok("pxmode" in core.PARSER_CYCLES, "pxmode setting")
+    eq(core.PARSER_CYCLES["pxmode"][1], ["auto", "off", "on"], "pxmode values")
+    # bingr extract (RSS)
+    rss = ("<rss><channel><item><title>x</title>"
+           "<link>https://a.com/p.php?id=1</link></item>"
+           "<item><link>https://b.com/q.php?id=2</link></item></channel></rss>")
+    got = core.extract_urls("bingr", rss)
+    ok(any("a.com/p.php" in u for u in got), "bingr url 1")
+    ok(any("b.com/q.php" in u for u in got), "bingr url 2")
+
 
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
@@ -2135,7 +2095,8 @@ def main():
                test_parser_settings, test_paste_smart_fallback,
                test_no_dead_buttons, test_build_stamp,
                test_config_persistence, test_menu_emoji,
-               test_premium_emoji, test_v211_bugfixes):
+               test_premium_emoji, test_v211_bugfixes,
+               test_v212_engines):
         try:
             fn()
         except Exception as exc:

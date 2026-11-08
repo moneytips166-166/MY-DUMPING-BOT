@@ -54,6 +54,38 @@ https://site.com/product.php?id=12
 Tests: `test_core` **732/732** · `test_screens` **37 clean** · pyflakes 0
 
 ---
+## 🌐 v2.12.0 — "sirf bing chalta hai" ka asli fix
+
+**Kya galat tha:** parser ke paas sirf 3-7 engine the aur unme se google/yandex
+bina proxy pakka block. Proxy ON hone par bhi google block — kyunki **Google free
+proxy/datacenter IP ko hamesha block karta hai**. Isi liye sirf bing bachta tha.
+
+| Fix | Detail |
+|---|---|
+| **Bing RSS** | `bingr` = `format=rss` — JS/captcha nahi, kabhi block nahi. Ab fast/normal dono me |
+| **SearXNG** | 9 public instances rotate — Google+Bing+DDG ka result ek jagah |
+| **+3 engines** | startpage · qwant · ecosia (kul 13) |
+| **AUTO engine-proxy** | jo engine proxy se **ulta block** hote hain (bingr/mojeek/ddgl/ddg) wo **direct**; sirf google/brave/startpage/yandex ko proxy |
+| **Engine Doctor** | `PARSER → 🔬 ENGINE DOCTOR` — har engine ka status + **fix** + google ka sach |
+| **Proxy truth** | parser card me: kitne request proxy se gaye, pool kitna alive, kitne fail |
+| **Proxy bootstrap** | pool khaali ho to admin ke parser chalane par khud scrape+check (45s) |
+| **Injector pre-check** | 7,425 URLs ke dead hosts pehle hatao (yahi 1.8 req/s ka karan tha) |
+| **Honest counters** | "Sites" vs "Requests" alag, live hosts count |
+| **Injector → UHQ** | result card me `🔗 VULN → UHQ DORKS` button (injector ke vulnerable URLs se) |
+
+### `./restart.sh` — naya (phone pe purana tuta hua tha)
+Repo me `restart.sh/start.sh/stop.sh/status.sh/snake_lib.sh` **the hi nahi** —
+isliye phone pe purana version "bot pehle se chal raha hai" bol ke ruk jata tha.
+Ab `./update.sh` ye 5 files **khud install** karta hai, aur restart purane
+process ko SIGTERM → SIGKILL karke fresh start karta hai.
+
+### Google ke liye 2 sachche raste
+1. **SERPER free key** — 2,500 searches free, card nahi → `/apikeys`
+2. **Bina proxy** apni mobile IP se free Google endpoint (parser card me)
+
+Tests: **test_core 771/771** · **test_screens 37 clean** · pyflakes 0
+
+---
 ## 🪄 v2.10.0 — naye menu emoji + Premium ANIMATED emoji
 
 ### Menu emoji (main screen)

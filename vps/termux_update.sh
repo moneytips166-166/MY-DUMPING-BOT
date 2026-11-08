@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=3)
+# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=4)
 #   ./update.sh   →  khud ko latest karta hai, phir bot.py (Termux + DBF) + restart
 #   ./update.sh --no-self   →  self-update skip
 # NOTE: Termux me /tmp writable nahi — log script folder ke logs/ me jata hai.
@@ -17,6 +17,10 @@ SELF_URL="https://raw.githubusercontent.com/$REPO/$BRANCH/vps/termux_update.sh"
 SELF_FB="https://github.com/$REPO/raw/$BRANCH/vps/termux_update.sh"
 SELFC_URL="https://raw.githubusercontent.com/$REPO/$BRANCH/setconfig.sh"
 SELFC_FB="https://github.com/$REPO/raw/$BRANCH/setconfig.sh"
+RAW="https://raw.githubusercontent.com/$REPO/$BRANCH"
+GH="https://github.com/$REPO/raw/$BRANCH"
+# jo helper scripts har update pe refresh honge (phone pe purane tuten nahi chalenge)
+HELPERS="snake_lib.sh start.sh stop.sh restart.sh status.sh"
 LOGDIR="$DIR/logs"
 mkdir -p "$DIR/backups" "$LOGDIR" 2>/dev/null
 LOG="$LOGDIR/compile_$$.txt"
@@ -183,7 +187,33 @@ if [ -f "$CFG" ] && [ -d "$EXT" ] && \
     fi
 fi
 
-# ══════════════ 3) RESTART ══════════════
+# ══════════════ 3) SCRIPTS REFRESH ══════════════
+# Ye scripts hi phone pe "restart kaam nahi karta" ka karan thi — repo me hi
+# nahi thi. Ab har update pe nayi install hoti hain.
+_install_script() {                       # $1 = filename, $2 = marker (sanity)
+    if DL "$RAW/$1" "$DIR/$1.new" 2>/dev/null || DL "$GH/$1" "$DIR/$1.new" 2>/dev/null; then
+        if [ -s "$DIR/$1.new" ] && grep -q "$2" "$DIR/$1.new" 2>/dev/null \
+           && bash -n "$DIR/$1.new" 2>/dev/null; then
+            mv -f "$DIR/$1.new" "$DIR/$1"
+            chmod +x "$DIR/$1" 2>/dev/null
+            return 0
+        fi
+        rm -f "$DIR/$1.new"
+    fi
+    return 1
+}
+_install_script snake_lib.sh "snake_alive" && echo "✅ snake_lib.sh" \
+    || echo "⚠️ snake_lib.sh download fail (purana chalega)"
+for _s in start.sh stop.sh restart.sh status.sh; do
+    case "$_s" in
+        start.sh)   _m="snake_start" ;;
+        stop.sh)    _m="snake_kill_all" ;;
+        restart.sh) _m="PYTHON SNAKE restart" ;;
+        *)          _m="PYTHON SNAKE" ;;
+    esac
+    _install_script "$_s" "$_m" && echo "✅ $_s" || echo "⚠️ $_s fail"
+done
+
 # setconfig.sh bhi install/refresh (token badalne ka official tarika)
 if DL "$SELFC_URL" "$DIR/setconfig.sh.new" 2>/dev/null \
    || DL "$SELFC_FB" "$DIR/setconfig.sh.new" 2>/dev/null; then
@@ -217,20 +247,29 @@ fi
 
 RLOG="$LOGDIR/bot_$STAMP.log"
 START_OK=0
-if [ -x "./restart.sh" ]; then
-    ./restart.sh >/dev/null 2>&1 && START_OK=1
+# naya restart.sh (jo abhi install hua) — ye khud screen/nohup handle karta hai.
+# NOTE: `setsid` Termux me hota hi nahi — isliye fallback sirf nohup.
+if [ -f "./restart.sh" ]; then
+    bash ./restart.sh > "$LOGDIR/restart_$STAMP.log" 2>&1 && START_OK=1
+    tail -n 4 "$LOGDIR/restart_$STAMP.log" 2>/dev/null
 fi
 if [ "$START_OK" != "1" ] && command -v screen >/dev/null 2>&1; then
-    screen -dmS snake bash -c "cd '$DIR' && exec '$PY' bot.py > '$RLOG' 2>&1"
+    echo "→ screen se start…"
+    screen -dmS snake bash -c "cd '$DIR' && exec '$PY' bot.py >> '$RLOG' 2>&1"
     START_OK=1
 fi
 if [ "$START_OK" != "1" ]; then
-    setsid nohup "$PY" bot.py >"$RLOG" 2>&1 &
+    echo "→ nohup se start…"
+    ( cd "$DIR" && nohup "$PY" bot.py >>"$RLOG" 2>&1 & )
     START_OK=1
 fi
 
-sleep 6
+sleep 7
 PIDS="$(BOT_PIDS)"
+if [ -z "$PIDS" ]; then            # ek aur mauka — slow phone
+    sleep 6
+    PIDS="$(BOT_PIDS)"
+fi
 if [ -n "$PIDS" ]; then
     echo "🚀 bot chalu hai (pid $(echo "$PIDS" | tr '\n' ' '))"
     command -v screen >/dev/null 2>&1 && screen -ls 2>/dev/null | grep -q snake \
@@ -245,7 +284,10 @@ if [ -n "$PIDS" ]; then
     fi
 else
     echo "❌ bot start hote hi band ho gaya — log:"
-    tail -n 20 "$RLOG" 2>/dev/null || echo "   (log khaali)"
-    echo "   wapas: cp backups/bot_$STAMP.py bot.py && ./restart.sh"
+    _lastlog="$(cat "$DIR/.last_log" 2>/dev/null || echo "$RLOG")"
+    tail -n 25 "$_lastlog" 2>/dev/null || echo "   (log khaali)"
+    [ -s "$RLOG" ] && tail -n 25 "$RLOG" 2>/dev/null
+    echo ""
+    echo "   wapas purana version: cp backups/bot_$STAMP.py bot.py && ./restart.sh"
     exit 1
 fi

