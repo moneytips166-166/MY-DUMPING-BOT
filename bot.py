@@ -216,8 +216,10 @@ def _migrate_config():
     try:
         if CONFIG_PATH and os.path.isfile(CONFIG_PATH):
             return
-        if __name__ != "__main__":
-            return                      # tests/import pe kabhi file na likhe
+        if os.environ.get("SNAKE_NO_MIGRATE") == "1":
+            return                      # tests me kabhi file na likhe
+        if __name__ not in ("__main__", "snake_core"):
+            return                      # sirf real start (shim included) pe
         tok = str(BOT_TOKEN or "").strip()
         good = _token_ok(tok)
         if not good:

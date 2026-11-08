@@ -11,6 +11,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# config file kabhi repo me na likhe (tests ke liye)
+os.environ["SNAKE_NO_MIGRATE"] = "1"
+
 ADMIN = 8999053405
 
 
