@@ -2611,6 +2611,82 @@ def test_v2180_live_injector():
     eq(st["urls_tested"], 6, "saare 6 tested")
 
 
+def test_v2180_tsp_engine():
+    """v2.18.0 — Gorker TSP Edition ke saare 14 dork types + 3 TLD presets, real generation."""
+    group("v2.18.0 TSP engine")
+
+    eq(len(core.TSP_DORK_TYPES), 14, "14 templates (dorktypes.txt)")
+    eq(len(core.TSP_TLD_PRESETS["country"][1]), 263, "country TLD preset")
+    ok(len(core.TSP_TLD_PRESETS["all"][1]) > 1000, "all TLD preset")
+    eq(core.TSP_TLD_PRESETS["common"][1], ["com", "net", "org", "co", "us"], "common")
+
+    eq(core.tsp_render(core.TSP_DORK_TYPES[0], "shopify", "com", "?id", "php", "inurl:", 7),
+       "shopify.php?id=", "type 1 render")
+    eq(core.tsp_render(core.TSP_DORK_TYPES[1], "shopify", "com", "?id", "php", "inurl:", 7),
+       "shopify.php?id= site:.com", "type 2 render")
+    eq(core.tsp_render(core.TSP_DORK_TYPES[8], "shopify", "com", "?id", "php", "inurl:", 7),
+       "inurl:shopify.php?id=7", "type 9 render")
+    eq(core.tsp_render(core.TSP_DORK_TYPES[12], "shopify", "com", "?id", "", "inurl:", 7),
+       "?id= \"shopify\"", "type 13 render (no format)")
+
+    d = core.tsp_dorks(["shopify store", "crypto wallet"], n=3000, preset="country")
+    eq(len(d), 3000, "3000 generated")
+    eq(len(set(d)), 3000, "all unique")
+    ok(all(len(x) <= 400 for x in d), "length sane")
+    ok(all("(KW)" not in x and "(PT)" not in x and "(NB)" not in x for x in d),
+       "koi placeholder baaki nahi")
+    ok(any("site:." in x for x in d), "TLD site: dorks")
+    ok(any(x.startswith("inurl:") for x in d), "search-function dorks")
+
+    only = core.tsp_dorks(["shopify"], n=300, types=[0], preset="common")
+    ok(only and all(x.endswith("=") and "site:" not in x for x in only), "type filter")
+
+    ctx = FakeContext({"tsp_preset": "all", "tsp_types": [0, 1, 2]})
+    _card = core.tsp_card(ctx)
+    contains(_card, "3 / 14")
+    contains(_card, "extensions")
+    eq(len(core.tsp_types_of(ctx)), 3, "types of")
+    kb = core.tsp_kb(ctx)
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    for need in ("dk:tspg", "dk:tspp:country", "dk:tspp:all", "dk:tspp:common", "dk:tspt"):
+        ok(need in cbs, "button %s" % need)
+    tkb = core.tsp_types_kb(ctx)
+    tcbs = [b.callback_data for row in tkb.inline_keyboard for b in row]
+    eq(len([c for c in tcbs if c.startswith("dk:tsptg:") and c[9:].isdigit()]), 14,
+       "14 type toggles")
+
+    # real generation flow (file + card)
+    real_send, real_settings = core.send_file, dict(core.SETTINGS)
+    sent = []
+
+    async def fake_send(update, path, caption=""):
+        sent.append((path, caption))
+        return True
+
+    core.send_file = fake_send
+    core.SETTINGS["tsp_count"] = 400
+    try:
+        upd = FakeUpdate(data="dk:tspg")
+        ctx2 = FakeContext({"tsp_kw_text": "shopify\ncrypto wallet"})
+        asyncio.run(core.cb_tsp_gen(upd, ctx2))
+        body = "\n".join(upd.texts())
+        contains(body, "14 / 14")
+        contains(body, "400")
+        eq(len(ctx2.user_data.get("last_dorks") or []), 400, "last_dorks set")
+        eq(len(sent), 1, "file bheji")
+        ok("tsp" in sent[0][0], "tsp file")
+    finally:
+        core.send_file = real_send
+        core.SETTINGS.clear()
+        core.SETTINGS.update(real_settings)
+
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    for bit in ("TSP_DORK_TYPES", "TSP_TLD_COUNTRY", "TSP_TLD_ALL", "TSP_TLD_COMMON",
+                'callback_data="dk:tsp"', '"tsp_kw": input_tsp_kw'):
+        contains(src, bit)
+
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -2638,7 +2714,8 @@ def main():
                test_v2140_no_dork_left, test_v2150_yield_mode,
                test_v2160_proxy_scope, test_v2170_big_lists,
                test_v2180_url_truth,
-               test_v2180_live_injector):
+               test_v2180_live_injector,
+               test_v2180_tsp_engine):
         try:
             fn()
         except Exception as exc:

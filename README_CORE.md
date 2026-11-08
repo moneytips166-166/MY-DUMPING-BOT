@@ -65,12 +65,49 @@
 5. **GraphQL/NoSQL probes** default `all` me hain — normal dork lists pe 95% waste. Category mode me rakho.
 
 ### ➕ Kaam ki missing cheezein (priority order)
-1. **TSP dorking tool ka zip (`tsp_exctrated`)** — repo/upload dono me nahi mila. Bhejo to uske templates/variables/keywords 1:1 merge kar dunga.
+1. ~~TSP dorking tool ka zip~~ — **git history se mil gaya aur poora merge ho gaya** (upar TSP ENGINE).
 2. **Resume/checkpoint** — 100k list beech me ruk jaye to dobara 0 se na chale (`done_urls` ab save kar sakte hain).
 3. **Per-host throttle** — ek hi host par 24 probes bhejne se WAF block; 2 req/s/host cap.
 4. **`/batch` me probe-per-URL** (`inj_targets`) ka button — abhi admin command se.
 5. **SERP key pool** — 3-4 free keys rotate → parser yield 3x.
 6. **Vuln URL dedupe by (host, param, type)** — file me same site ke 40 rows aate hain.
+
+---
+
+### 🧰 TSP ENGINE — Gorker TSP Edition poora bot me (naya)
+
+TSP zip repo ke **git history (commit `86f7ed1`)** me mila — 251 files. Uska
+`dorktypes.txt`, `preset1/2/3_domainextensions.txt` aur `.il` (VB.NET IL) padh ke
+saara logic port kiya:
+
+| TSP feature | Bot me |
+|---|---|
+| **14 dork types** (KW/PF/PT/NB/DE/SF combos) | `TSP_DORK_TYPES` — 1:1, wahi 14 templates |
+| **Preset 1** country TLDs | `TSP_TLD_COUNTRY` — **263** extensions |
+| **Preset 2** all TLDs | `TSP_TLD_ALL` — **1,037** extensions |
+| **Preset 3** common | `.com .net .org .co .us` |
+| Keywords import / manual | `DORKS GEN` / niche / direct text (one per line) |
+| Page types (query starters) | `?id ?page ?cat ?p ?q ?s ?item ?product ?view ?file ?url ?search ?keyword ?pid ?lang ?cmd ?dir ?path ?type ?name` |
+| Page formats (file types) | `php asp aspx jsp html htm cfm pl cgi shtml do action xml json txt` |
+| Search functions | `inurl: intitle: intext: site: allinurl: allintitle: allintext: filetype: ext:` |
+| Numbers | `1 – 99` (`tsp_numbers` setting) |
+| Dork amount cap | `tsp_count` (default 2,000, max 100,000) |
+| "Select all" checkboxes | `dk:tspt…` — 14 toggles + SELECT ALL / NONE |
+| Generated file numbering | `dump_text` — har run nayi `tsp_*.txt` |
+| Extractor (URLs from text) | pehle se hai — `_urls_from_text` (TSP se zyada smart) |
+| Delay (ms) | TSP me file-write slow karne ke liye tha — bot async hai, zaroorat nahi |
+| Multi-language UI | skip — bot English only (user rule) |
+
+**Use:** `DORKER → 🧰 TSP ENGINE (14 types)` → preset chuno → TYPES toggle →
+**GENERATE**. Keywords pehle `DORKS GEN` se bana lo, warna bot khud maangega.
+Card par Top 6 + file, phir seedha **DEEP SCAN**.
+
+```python
+TSP_DORK_TYPES[0]   →  shopify.php?id=
+TSP_DORK_TYPES[1]   →  shopify.php?id= site:.com
+TSP_DORK_TYPES[8]   →  inurl:shopify.php?id=7
+TSP_DORK_TYPES[12]  →  ?id= "shopify"
+```
 
 ---
 

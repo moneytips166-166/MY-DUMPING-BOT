@@ -72,7 +72,7 @@ ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
 VERSION = "v2.18.0"
-BUILD = "url-truth"   # feature flags — /ping me dikhte hain
+BUILD = "url-truth-tsp"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -6713,6 +6713,16 @@ async def _route_tool_cb(update, context, data: str):
         if rest == "pro":
             return await cb_pro_menu(update, context)
     elif head == "dk":
+        if rest == "tsp":
+            return await cb_tsp(update, context)
+        if rest.startswith("tspp:"):
+            return await cb_tsp_preset(update, context, rest[5:])
+        if rest.startswith("tsptg:"):
+            return await cb_tsp_types(update, context, rest[6:])
+        if rest == "tspt":
+            return await cb_tsp_types(update, context, "")
+        if rest == "tspg":
+            return await cb_tsp_gen(update, context)
         if rest.startswith("cms:"):
             return await cb_dk_cms(update, context, rest[4:])
         if rest == "cms":
@@ -6893,6 +6903,389 @@ def _demo(lst, n=6) -> str:
     return " ".join(str(x) for x in (lst or [])[:n])
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🧰 TSP DORK ENGINE — Gorker TSP Edition ka poora logic bot ke andar
+#  Source: TSP zip → dorktypes.txt (14 templates) + preset1/2/3 domain lists
+#  (Settings/default_*.txt TSP me khaali the — keywords user ke, baaki lists yahan)
+# ═══════════════════════════════════════════════════════════════════════════════
+TSP_DORK_TYPES = [
+    "(KW).(PF)?(PT)=",
+    "(KW).(PF)?(PT)= site:(DE)",
+    "(KW).(PF)?(PT)=(NB)",
+    "(KW).(PF)?(PT)=(NB) site:(DE)",
+    '(SF) ".(DE)" + "(KW)"',
+    "(SF)(KW).(PF)?(PT)=",
+    "(SF)(KW).(PF)?(PT)= site:(DE)",
+    "(SF)(PT)=(KW).(PF)? site:(DE)",
+    "(SF)(KW).(PF)?(PT)=(NB)",
+    "(SF)(KW).(PF)?(PT)=(NB) site:(DE)",
+    '(SF)"(KW)" + "(DE)".(PF)?(PT)=',
+    '(SF)"(KW)" + "(DE)".(PF)?(PT)=(NB)',
+    '.(PF)?(PT)= "(KW)"',
+    '(PT)= "(KW)" + ".(DE)"',
+]
+
+TSP_PAGE_TYPES = ["?id", "?page", "?cat", "?p", "?q", "?s", "?item", "?product",
+                  "?view", "?file", "?url", "?search", "?keyword", "?pid",
+                  "?lang", "?cmd", "?dir", "?path", "?type", "?name"]
+TSP_PAGE_FORMATS = ["php", "asp", "aspx", "jsp", "html", "htm", "cfm", "pl",
+                    "cgi", "shtml", "do", "action", "xml", "json", "txt"]
+TSP_SEARCH_FUNCTIONS = ["inurl:", "intitle:", "intext:", "site:", "allinurl:",
+                        "allintitle:", "allintext:", "filetype:", "ext:", ""]
+
+# TSP presets (source: preset1/2/3 domain extensions)
+# TSP presets (source: Gorker TSP Edition preset1/2/3 domain extensions)
+TSP_TLD_COUNTRY = (
+    "ac ad ae af ag ai al am an ao aq ar arpa as at au aw ax az ba bb bd be bf bg bh bi bj bl bm bn "
+    "bo bq br bs bt bv bw by bz ca cc cd cf cg ch ci ck cl cm cn co com cr cu cv cw cx cy cz de dj dk "
+    "dm do dz ec edu ee eg eh er es et eu fi fj fk fm fo fr ga gb gd ge gf gg gh gi gl gm gn gov gp "
+    "gq gr gs gt gu gw gy hk hm hn hr ht hu id ie il im in int io iq ir is it je jm jo jp ke kg kh ki "
+    "km kn kp kr kw ky kz la lb lc li lk lr ls lt lu lv ly ma mc md me mf mg mh mil mk ml mm mn mo mp "
+    "mq mr ms mt mu mv mw mx my mz na nc ne net nf ng ni nl no np nr nu nz om org pa pe pf pg ph pk "
+    "pl pm pn pr ps pt pw py qa re ro rs ru rw sa sb sc sd se sg sh si sj sk sl sm sn so sr ss st su "
+    "sv sx sy sz tc td tf tg th tj tk tl tm tn to tp tr tt tv tw tz ua ug uk um us uy uz va vc ve vg "
+    "vi vn vu wf ws ye yt za zm zw"
+).split()
+
+TSP_TLD_ALL = (
+    "aaa aarp abarth abb abbott abbvie abc abogado abudhabi academy accenture accountant accountants "
+    "aco active actor ads adult aeg aero aetna afl africa agakhan agency aig aigo airbus airforce "
+    "airtel akdn alfaromeo alibaba alipay allfinanz allstate ally alsace alstom amex amica amsterdam "
+    "analytics android anz aol apartments app apple aquarelle arab aramco archi army art arte asia "
+    "associates attorney auction audi audible audio auspost author auto autos aws axa azure baby "
+    "baidu bananarepublic band bank bar barcelona barclaycard barclays barefoot bargains baseball "
+    "basketball bauhaus bayern bbc bbt bbva bcg bcn beauty beer bentley berlin best bestbuy bet "
+    "bharti bible bid bike bing bingo bio biz black blackfriday blanco blockbuster blog bloomberg "
+    "blue bms bmw bnl bnpparibas boehringer bom bond boo book booking boots bosch bostik boston bot "
+    "boutique box bradesco bridgestone broadway broker brother brussels budapest bugatti build "
+    "builders business buy buzz bzh cab cafe cal call calvinklein cam camera camp cancerresearch "
+    "canon capetown capital capitalone car caravan cards care career careers cars cartier casa case "
+    "cash casino cat catering catholic cba cbn cbre cbs center ceo cern cfa cfd chanel channel chase "
+    "chat cheap chintai christmas chrome chrysler church cipriani circle cisco citadel citi citic "
+    "city claims cleaning click clinic clinique clothing cloud club clubmed coach codes coffee "
+    "college cologne comcast commbank community company compare computer condos construction "
+    "consulting contact contractors cooking cool coop corsica country coupon coupons courses credit "
+    "creditcard creditunion cricket crown crs cruise cruises csc cuisinella cymru dabur dad dance "
+    "data date dating datsun day deal dealer deals degree delivery dell deloitte delta democrat "
+    "dental dentist desi design dev dhl diamonds diet digital direct directory discount discover dish "
+    "diy dnp docs doctor dodge dog doha domains dot download drive dubai duck dunlop dupont durban "
+    "dvag earth eat eco edeka education email emerck energy engineer engineering enterprises epost "
+    "epson equipment ericsson erni esq estate esurance etisalat eurovision eus events everbank "
+    "example exchange expert exposed express extraspace fage fail fairwinds faith family fan fans "
+    "farm farmers fashion fast feedback ferrari ferrero fiat fidelity film final finance financial "
+    "fire firestone firmdale fish fishing fit fitness flickr flights flir florist flowers flsmidth "
+    "fly foo food foodnetwork football ford forex forsale forum foundation fox free fresenius frl "
+    "frogans frontdoor frontier fujitsu fujixerox fun fund furniture futbol fyi gal gallery gallo "
+    "gallup game games gap garden gbiz gea gent genting gift gifts gives giving glass gle global "
+    "globo gmail gmbh gmo gmx godaddy gold goldpoint golf goodyear google gop grainger graphics "
+    "gratis green gripe grocery group guardian gucci guide guitars guru hair hamburg hangout haus hbo "
+    "hdfc hdfcbank health healthcare help helsinki here hermes hiphop hisamitsu hitachi hiv hkt "
+    "hockey holdings holiday homegoods homes homesense honda honeywell horse hospital host hosting "
+    "hot hoteles hotels hotmail house how hsbc htc hughes hyatt hyundai ibm ice ieee ifm ikano imdb "
+    "immo immobilien industries infiniti info ing ink institute insurance insure intel international "
+    "intuit invalid investments ipiranga irish iselect ist istanbul itau itv iveco jaguar java jcb "
+    "jcp jeep jetzt jewelry jobs joburg joy jpmorgan juegos juniper kaufen kddi kerryhotels "
+    "kerrylogistics kfh kia kim kinder kindle kitchen kiwi koeln komatsu kpmg krd kred kuokgroup "
+    "kyoto lacaixa ladbrokes lamborghini lancaster lancia lancome land landrover lanxess lasalle lat "
+    "latino latrobe law lawyer lds lease legal lego lexus lgbt liaison lidl life lifeinsurance "
+    "lifestyle lighting like lilly limited limo lincoln linde link lipsy live living lixil loan loans "
+    "local localhost locker locus lol london lotte lotto love lpl lplfinancial ltda lundbeck lupin "
+    "luxe luxury macys madrid maif maison makeup man management mango map market marketing markets "
+    "marriott maserati mattel mba mcd mcdonalds mckinsey med media meet melbourne meme memorial men "
+    "menu meo metlife miami microsoft mini mint mit mitsubishi mlb mma mobi mobile mobily moda moe "
+    "moi mom monash money mormon mortgage moto motorcycles mov movie movistar msd mtn mtpc mtr museum "
+    "mutual mutuelle nadex nagoya name nationwide natura navy nba nec netflix network neustar new "
+    "newholland news nexus nfl ngo nhk nico nike nikon ninja nissan nissay nokia norton now nra nrw "
+    "ntt nyc obi observer off office okinawa omega one ong onion onl online ooo open oracle orange "
+    "organic orientexpress origins osaka otsuka ovh page pamperedchef panasonic paris partners parts "
+    "party passagens pay pccw pet pfizer pharmacy philips phone photo photography photos physio "
+    "piaget pics pictet pictures pid pin ping pink pioneer pizza place play playstation plumbing plus "
+    "pohl poker politie porn post praxi press prime pro prod productions prof progressive promo "
+    "properties property protection pru prudential pub pwc qpon quebec quest qvc racing radio read "
+    "realestate realtor realty recipes red redstone rehab reise reisen reit reliance ren rent rentals "
+    "repair report republican rest restaurant review reviews rexroth rich ricoh rio rip rmit rocher "
+    "rocks rodeo rogers room rsvp rugby ruhr run rwe ryukyu saarland safe safety sakura sale samsung "
+    "sandvik sanofi sap sarl save saxo sbi sbs sca scb schaeffler schmidt scholarships school schule "
+    "schwarz science scjohnson scor scot search seat secure security seek select sener services ses "
+    "seven sew sex sexy sfr shangrila sharp shaw shell shiksha shoes shop shopping shouji show "
+    "showtime shriram silk sina singles site ski skin sky skype sling smart smile sncf soccer social "
+    "softbank software sohu solar solutions song soy space spiegel spot spreadbetting stada staples "
+    "star starhub statebank statefarm statoil stc stcgroup stockholm storage store stream studio "
+    "study style sucks supplies supply support surf surgery suzuki swatch swiftcover swiss sydney "
+    "symantec systems taipei talk taobao target tatamotors tatar tattoo tax taxi tdk team tech "
+    "technology tel telecity telefonica temasek tennis test teva theater theatre tickets tienda "
+    "tiffany tips tires tirol tjx today tokyo tools top toray toshiba total tours town toyota toys "
+    "trade trading training travel travelchannel travelers trust tube tui tunes tushu tvs ubs "
+    "uconnect unicom university uno uol ups vacations vanguard vegas ventures verisign versicherung "
+    "vet viajes video vig viking villas vip virgin visa vision vista vistaprint vivo vlaanderen vodka "
+    "volkswagen volvo vote voting voto voyage vuelos wales walmart walter wang wanggou watch watches "
+    "weather weatherchannel webcam weber website wed wedding weibo weir whoswho wien wiki williamhill "
+    "win windows wine winners wme wolterskluwer woodside work works world wow wtc wtf xbox xerox "
+    "xfinity xihuan xperia xxx xyz yachts yahoo yamaxun yandex yodobashi yoga yokohama you youtube "
+    "zappos zara zero zip zippo zone zuerich"
+).split()
+
+TSP_TLD_COMMON = (
+    "com net org co us"
+).split()
+
+TSP_TLD_PRESETS = {
+    "country": ("🌍 COUNTRY TLDs", TSP_TLD_COUNTRY),
+    "all": ("🌐 ALL TLDs", TSP_TLD_ALL),
+    "common": ("🏆 COMMON TLDs", TSP_TLD_COMMON),
+}
+
+
+def tsp_render(tmpl: str, kw: str, de: str, pt: str, pf: str, sf: str, nb) -> str:
+    """Ek TSP template ko asli dork me badlo (placeholders replace + cleanup)."""
+    s = str(tmpl)
+    s = s.replace("site:(DE)", "site:.%s" % de)
+    s = s.replace('"(DE)"', '".%s"' % de)
+    s = s.replace("(DE)", de)
+    s = s.replace('"(KW)"', '"%s"' % kw)
+    s = s.replace("(KW)", kw)
+    s = s.replace("(SF)", sf)
+    s = s.replace("(PT)", pt)
+    s = s.replace("(NB)", str(nb))
+    s = s.replace("(PF)?", pf)
+    s = s.replace(".?", "?").replace(".=", "=")
+    while ".." in s:
+        s = s.replace("..", ".")
+    s = re.sub(r"\s+", " ", s).strip()
+    if s.startswith(".") and (len(s) < 2 or s[1] in "?="):
+        s = s[1:]
+    return s
+
+
+def tsp_dorks(keywords, n: int = 1000, preset: str = "country", types=None,
+              numbers: int = 99, seed: int = 0) -> list:
+    """TSP ka generator — chuni hui types + preset TLD se n unique dorks."""
+    kws = _uniq([str(k).strip() for k in (keywords or []) if str(k).strip()])
+    if not kws:
+        kws = ["test"]
+    preset = preset if preset in TSP_TLD_PRESETS else "country"
+    des = TSP_TLD_PRESETS[preset][1] or TSP_TLD_COMMON
+    if types is None:
+        sel = list(range(len(TSP_DORK_TYPES)))
+    else:
+        sel = [int(t) for t in types if 0 <= int(t) < len(TSP_DORK_TYPES)]
+    if not sel:
+        sel = list(range(len(TSP_DORK_TYPES)))
+    numbers = max(1, min(9999, int(numbers or 99)))
+    rnd = random.Random(int(seed) or int(time.time() * 1000))
+    out, seen = [], set()
+    tries, cap = 0, max(500, int(n) * 40)
+    while len(out) < int(n) and tries < cap:
+        t = sel[tries % len(sel)]
+        pf = rnd.choice(TSP_PAGE_FORMATS) if (tries % 3) else ""
+        d = tsp_render(TSP_DORK_TYPES[t], rnd.choice(kws), rnd.choice(des),
+                       rnd.choice(TSP_PAGE_TYPES), pf,
+                       rnd.choice(TSP_SEARCH_FUNCTIONS),
+                       rnd.randint(1, numbers))
+        tries += 1
+        if d and len(d) <= 400 and d not in seen:
+            seen.add(d)
+            out.append(d)
+    return out
+
+
+def tsp_preset_of(context) -> str:
+    p = str(context.user_data.get("tsp_preset")
+            or sget("tsp_preset", "country") or "country")
+    return p if p in TSP_TLD_PRESETS else "country"
+
+
+def tsp_types_of(context) -> list:
+    v = context.user_data.get("tsp_types")
+    if v is None:
+        return list(range(len(TSP_DORK_TYPES)))
+    return [int(x) for x in v if str(x).isdigit() and 0 <= int(x) < len(TSP_DORK_TYPES)]
+
+
+def tsp_card(context) -> str:
+    p = tsp_preset_of(context)
+    sel = tsp_types_of(context)
+    pname, plist = TSP_TLD_PRESETS[p]
+    return (H("TSP DORK ENGINE", "%d/%d templates" % (len(sel), len(TSP_DORK_TYPES)))
+            + "\n\n"
+            + KV("Templates", "<b>%d / 14</b> ON" % len(sel), "🧬") + "\n"
+            + KV("TLD preset", "%s — <code>%s</code> extensions" % (pname, fmt(len(plist))), "🌍") + "\n"
+            + KV("Page types", "<code>%s</code> query starters" % fmt(len(TSP_PAGE_TYPES)), "📄") + "\n"
+            + KV("Formats", "<code>%s</code> file types" % fmt(len(TSP_PAGE_FORMATS)), "🧾") + "\n"
+            + KV("Search funcs", "<code>%s</code>" % fmt(len(TSP_SEARCH_FUNCTIONS)), "🔍") + "\n"
+            + KV("Numbers", "<code>1 – %s</code>" % fmt(int(sget("tsp_numbers", 99) or 99)), "🔢") + "\n\n"
+            + P("Gorker TSP Edition ke saare 14 dork types, 3 TLD presets aur poori "
+                "page-type / format / search-function lists — sab bot ke andar."))
+
+
+def tsp_kb(context):
+    p = tsp_preset_of(context)
+    sel = tsp_types_of(context)
+
+    def mark(k):
+        return "✅ " if p == k else ""
+    return RK([
+        [InlineKeyboardButton("🚀 GENERATE %s DORKS" % fmt(int(sget("tsp_count", 2000) or 2000)),
+                              callback_data="dk:tspg")],
+        [InlineKeyboardButton(mark("country") + "🌍 COUNTRY", callback_data="dk:tspp:country"),
+         InlineKeyboardButton(mark("all") + "🌐 ALL TLD", callback_data="dk:tspp:all"),
+         InlineKeyboardButton(mark("common") + "🏆 COMMON", callback_data="dk:tspp:common")],
+        [InlineKeyboardButton("🧬 TYPES (%d/14)" % len(sel), callback_data="dk:tspt")],
+        [InlineKeyboardButton("⬅️ BACK", callback_data="m:dork")],
+    ])
+
+
+def tsp_types_kb(context):
+    rows, row = [], []
+    sel = set(tsp_types_of(context))
+    for i, tmpl in enumerate(TSP_DORK_TYPES):
+        row.append(InlineKeyboardButton(("✅ " if i in sel else "▫️ ") + "%d" % (i + 1),
+                                        callback_data="dk:tsptg:%d" % i))
+        if len(row) == 7:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("✅ SELECT ALL", callback_data="dk:tsptg:a"),
+                 InlineKeyboardButton("🚫 NONE", callback_data="dk:tsptg:n")])
+    rows.append([InlineKeyboardButton("🚀 GENERATE", callback_data="dk:tspg")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="dk:tsp")])
+    return RK(rows)
+
+
+def tsp_types_card(context) -> str:
+    sel = set(tsp_types_of(context))
+    lines = []
+    for i, tmpl in enumerate(TSP_DORK_TYPES):
+        lines.append("%s <code>%2d</code> · %s" % ("✅" if i in sel else "▫️", i + 1,
+                                                   esc(tmpl)))
+    return (H("TSP TYPES", "%d / 14 ON" % len(sel)) + "\n\n" + "\n".join(lines)
+            + "\n\n" + P("Tap a number to toggle. SELECT ALL = poore 14."))
+
+
+def _tsp_keywords(context) -> list:
+    for key in ("tsp_kw_text", "gen_kw_text", "last_keywords", "last_niche_seeds"):
+        v = context.user_data.get(key)
+        if isinstance(v, str) and v.strip():
+            return _uniq([x.strip() for x in re.split(r"[\\n,;|]+", v) if x.strip()])
+        if isinstance(v, (list, tuple)) and v:
+            return _uniq([str(x).strip() for x in v if str(x).strip()])
+    return []
+
+
+async def cb_tsp(update, context):
+    q = update.callback_query
+    try:
+        await q.edit_message_text(tsp_card(context), parse_mode=ParseMode.HTML,
+                                  reply_markup=tsp_kb(context))
+    except Exception:
+        pass
+
+
+async def cb_tsp_preset(update, context, name: str):
+    q = update.callback_query
+    if name in TSP_TLD_PRESETS:
+        context.user_data["tsp_preset"] = name
+    try:
+        await q.edit_message_text(tsp_card(context), parse_mode=ParseMode.HTML,
+                                  reply_markup=tsp_kb(context))
+    except Exception:
+        pass
+
+
+async def cb_tsp_types(update, context, rest: str = ""):
+    q = update.callback_query
+    sel = tsp_types_of(context)
+    if rest in ("a", "n"):
+        context.user_data["tsp_types"] = (list(range(len(TSP_DORK_TYPES)))
+                                          if rest == "a" else [])
+    elif str(rest).isdigit():
+        i = int(rest)
+        if 0 <= i < len(TSP_DORK_TYPES):
+            if i in sel:
+                sel.remove(i)
+            else:
+                sel.append(i)
+            context.user_data["tsp_types"] = sorted(sel)
+    try:
+        await q.edit_message_text(tsp_types_card(context), parse_mode=ParseMode.HTML,
+                                  reply_markup=tsp_types_kb(context))
+    except Exception:
+        pass
+
+
+async def _tsp_generate(update, context, kws):
+    sel = tsp_types_of(context)
+    preset = tsp_preset_of(context)
+    numbers = int(sget("tsp_numbers", 99) or 99)
+    n = max(1, min(DORK_MAX, int(sget("tsp_count", 2000) or 2000)))
+    dorks = tsp_dorks(kws, n=n, preset=preset, types=sel, numbers=numbers)
+    if not dorks:
+        txt = ("❌ <b>TSP: kuch nahi bana</b>\n\n"
+               + P("Templates select karo ya keywords dobara bhejo."))
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                txt, parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
+        else:
+            await reply_msg(update).reply_text(
+                txt, parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
+        return
+    context.user_data["last_dorks"] = dorks
+    dork_seen_add(dorks)
+    path, cnt = dump_text(dorks, "tsp", "PYTHON SNAKE — TSP dorks (14 types)")
+    body = (H("TSP DORKS READY", "%s dorks" % fmt(cnt)) + "\n\n"
+            + "🧬 Templates : <code>%d / 14</code>\n" % len(sel)
+            + "🌍 TLD preset: <code>%s</code>\n" % TSP_TLD_PRESETS[preset][0]
+            + "🔑 Keywords  : <code>%s</code>\n" % fmt(len(kws))
+            + "📚 History   : <code>%s</code>\n\n" % fmt(dork_seen_count())
+            + B("Top 6") + "\n" + short_list(dorks[:6], 6))
+    kb = RK([
+        [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep")],
+        [InlineKeyboardButton("🆕 MORE TSP", callback_data="dk:tspg"),
+         InlineKeyboardButton("🧬 TYPES", callback_data="dk:tspt")],
+        [InlineKeyboardButton("⬅️ DORKER", callback_data="m:dork")],
+    ])
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(body, parse_mode=ParseMode.HTML,
+                                                          reply_markup=kb)
+        except Exception:
+            await reply_msg(update).reply_text(body, parse_mode=ParseMode.HTML,
+                                               reply_markup=kb)
+    else:
+        await reply_msg(update).reply_text(body, parse_mode=ParseMode.HTML, reply_markup=kb)
+    await send_file(update, path, "🧰 %s TSP dorks" % fmt(cnt))
+
+
+async def cb_tsp_gen(update, context):
+    kws = _tsp_keywords(context)
+    if not kws:
+        txt = (H("TSP DORK ENGINE", "keywords chahiye") + "\n\n"
+               + P("Send keywords (one per line or comma separated) — "
+                   "TSP unhi se 14 types ke dorks banayega."))
+        try:
+            await update.callback_query.edit_message_text(
+                txt, parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
+        except Exception:
+            await reply_msg(update).reply_text(txt, parse_mode=ParseMode.HTML,
+                                               reply_markup=kb_back("m:dork"))
+        await_set(context, "tsp_kw")
+        return
+    await _tsp_generate(update, context, kws)
+
+
+async def input_tsp_kw(update, context, text: str):
+    kws = _uniq([x.strip() for x in re.split(r"[\\n,;|]+", str(text or "")) if x.strip()])
+    if not kws:
+        await reply_msg(update).reply_text(
+            "❌ Keywords nahi mile — ek line me ek keyword bhejo.",
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dork"))
+        await_set(context, "tsp_kw")
+        return
+    context.user_data["tsp_kw_text"] = "\n".join(kws)
+    await _tsp_generate(update, context, kws)
+
+
 # ── DORKER — main (2 options) ────────────────────────────────────────────────
 async def tool_dork(update, context):
     q = update.callback_query
@@ -6912,6 +7305,7 @@ async def tool_dork(update, context):
             [InlineKeyboardButton("🏗 CMS DORKS", callback_data="dk:cms"),
              InlineKeyboardButton("📂 EXPOSED FILES", callback_data="dk:exp")],
             [InlineKeyboardButton("🌍 COUNTRY DORKS", callback_data="dp:country")],
+            [InlineKeyboardButton("🧰 TSP ENGINE (14 types)", callback_data="dk:tsp")],
             [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
         ]))
     except Exception:
@@ -12379,6 +12773,7 @@ AWAIT_HANDLERS = {
     "key_redeem": None,
     "bc_text": None,
     "deep_max": None,
+    "tsp_kw": input_tsp_kw,
 }
 
 
