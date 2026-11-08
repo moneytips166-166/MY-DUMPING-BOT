@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.19.0", "VERSION")
+    eq(core.VERSION, "v2.20.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.19.0"')
+    contains(btxt, 'VERSION = "v2.20.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.19.0", "shim se version")
+    eq(core.VERSION, "v2.20.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1795,7 +1795,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.19.0", "version")
+    eq(core.VERSION, "v2.20.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2845,6 +2845,156 @@ def test_v2190_resume_pool_gap():
         core.inj_resume_clear()
 
 
+def test_v2200_key_pool_dedupe():
+    """v2.20.0 — SERP key pool (429 → agli key) + vuln dedupe (host,param,type)."""
+    group("v2.20.0 key pool + dedupe")
+
+    old_settings = dict(core.SETTINGS)
+    core.API_KEY_STATE["idx"].clear()
+    core.API_KEY_STATE["dead"].clear()
+    try:
+        # ── key list parsing ──
+        core.SETTINGS["serper"] = "K1,K2 K3\nK4"
+        eq(core.api_key_list("serper"), ["K1", "K2", "K3", "K4"], "keys parse")
+        eq(core.api_key_list("brave"), [], "no keys")
+
+        # ── round robin + cooldown ──
+        core.API_KEY_STATE["idx"]["serper"] = 0
+        k1 = core.api_key_pick("serper")
+        eq(k1, "K1", "pehli key")
+        core.api_key_dead("serper", k1, 600)
+        k2 = core.api_key_pick("serper")
+        ok(k2 in ("K2", "K3", "K4"), "dead key skip → %s" % k2)
+        st = core.api_key_status()["serper"]
+        eq(st[0], 4, "total keys")
+        eq(st[2], 1, "ek cooldown")
+        # saari dead → koi key nahi
+        for k in ("K1", "K2", "K3", "K4"):
+            core.api_key_dead("serper", k, 600)
+        eq(core.api_key_pick("serper"), "", "sab cooldown → khaali")
+        core.API_KEY_STATE["dead"].clear()
+
+        # ── 429 → agli key (asli function, fake transport) ──
+        class _Resp:
+            def __init__(self, status, payload=None):
+                self.status = status
+                self._p = payload or {}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def json(self, **kw):
+                return self._p
+
+        class _Sess:
+            def __init__(self):
+                self.used = []
+
+            def post(self, url, headers=None, **kw):
+                key = (headers or {}).get("X-API-KEY", "")
+                self.used.append(key)
+                if key == "K1":
+                    return _Resp(429)
+                return _Resp(200, {"organic": [{"link": "https://a.com/x?id=1"},
+                                               {"link": "https://a.com/x?id=1"},
+                                               {"link": "https://b.com/y?id=2"}]})
+
+        core.SETTINGS["serper"] = "K1,K2"
+        core.API_KEY_STATE["idx"]["serper"] = 0
+        core.API_KEY_STATE["dead"].clear()
+        sess = _Sess()
+        got = asyncio.run(core.serper_search(sess, "site:gov.in inurl:login"))
+        eq(got, ["https://a.com/x?id=1", "https://b.com/y?id=2"], "serper results dedupe")
+        eq(sess.used, ["K1", "K2"], "429 ke baad agli key")
+        eq(core.api_key_status()["serper"][2], 1, "K1 cooldown me")
+
+        # ── vuln dedupe ──
+        vulns = [
+            {"base": "https://shop.com/p?id=1", "param": "id", "type": "SQLi"},
+            {"base": "https://shop.com/p?id=9", "param": "id", "type": "SQLi"},
+            {"base": "https://shop.com/p?id=9", "param": "cat", "type": "SQLi"},
+            {"base": "https://shop.com/p?id=9", "param": "id", "type": "XSS"},
+            {"base": "https://other.com/p?id=1", "param": "id", "type": "SQLi"},
+        ]
+        u = core.inj_unique_vulns(vulns)
+        eq(len(u), 4, "5 → 4 unique (host,param,type)")
+        eq(core.inj_vuln_key(vulns[1]), core.inj_vuln_key(vulns[0]), "same key")
+        ok(core.inj_vuln_key(vulns[2]) != core.inj_vuln_key(vulns[0]), "param alag")
+        eq(core.inj_unique_vulns([]), [], "khaali")
+
+        # inj_scan ke andar dedupe lagu (network stub)
+        class _Cont:
+            def __init__(self, body, status):
+                self.body, self.status = body, status
+
+            async def read(self, n=-1):
+                return self.body
+
+        class _R:
+            def __init__(self, body, status):
+                self.status = status
+                self.headers = {"Content-Type": "text/html"}
+                self.content = _Cont(body, status)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+        class _S:
+            def __init__(self, connector=None, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def get(self, url, **kw):
+                import urllib.parse as _up
+                raw = _up.unquote(str(url))
+                if "'" in raw:            # payload → SQL error (vulnerable)
+                    return _R(b"<html>You have an error in your SQL syntax near "
+                              b"MySQL server version</html>", 500)
+                return _R(b"<html>normal product page, nothing wrong</html>", 200)
+
+        real_sess = core.aiohttp.ClientSession
+        old_gap = core.SETTINGS.get("inj_host_gap_ms")
+        core.aiohttp.ClientSession = _S
+        core.SETTINGS["inj_host_gap_ms"] = 0
+        try:
+            st2 = asyncio.run(core.inj_scan(
+                ["https://shop.com/p?id=1", "https://shop.com/p?id=2"],
+                "sqli", timeout=3, conc=8, max_targets=6))
+        finally:
+            core.aiohttp.ClientSession = real_sess
+            if old_gap is None:
+                core.SETTINGS.pop("inj_host_gap_ms", None)
+            else:
+                core.SETTINGS["inj_host_gap_ms"] = old_gap
+        ok(st2["vuln_items"] and len(st2["vuln_items"]) <= len(st2["vulns"]),
+           "vuln_items set")
+        eq(len(st2["vuln_urls"]), 1, "ek hi host+param = ek line")
+        ok(st2.get("vuln_dupes", 0) >= 1, "dupes count")
+        eq(sum(st2["by_type"].values()), len(st2["vuln_items"]), "by_type unique se")
+
+        src = open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+        for bit in ("API_KEY_STATE", "api_key_pick", "api_key_dead", "api_key_ok",
+                    "api_key_status", "inj_unique_vulns", "vuln_items", "vuln_dupes"):
+            contains(src, bit)
+    finally:
+        core.SETTINGS.clear()
+        core.SETTINGS.update(old_settings)
+        core.API_KEY_STATE["idx"].clear()
+        core.API_KEY_STATE["dead"].clear()
+
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -2874,7 +3024,8 @@ def main():
                test_v2180_url_truth,
                test_v2180_live_injector,
                test_v2180_tsp_engine,
-               test_v2190_resume_pool_gap):
+               test_v2190_resume_pool_gap,
+               test_v2200_key_pool_dedupe):
         try:
             fn()
         except Exception as exc:

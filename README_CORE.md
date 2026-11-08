@@ -1,6 +1,56 @@
-# 🐍 PYTHON SNAKE CORE — v2.19.0
+# 🐍 PYTHON SNAKE CORE — v2.20.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 📥 v2.20.0 — SERP key pool (3–4 keys rotate) + vuln dedupe
+
+### 🔑 1) Key pool — free quota 3–4x
+Pehle ek key khatam = provider band (Serper 2,500 one-time, SerpApi 250/mo,
+Brave $5 credit, CSE 100/day). Ab ek hi line me keys ki pool:
+
+```
+/setkey serper KEY1,KEY2,KEY3
+/setkey cse KEY1,KEY2 CX_ID
+```
+
+- **Round-robin** — har call agli key.
+- **429 / 402** (quota) → key **5 min** cooldown, agli turant chalti hai.
+- **401 / 403** (invalid/blocked) → key **30–60 min** cooldown.
+- Sab keys cooldown me → provider skip (bot crash nahi, baaki engines chalte hain).
+- `/setkey` card par live haalat: `✅ 3 key(s) alive` ya `✅ 3 key(s) · ⏸ 1 cooldown`.
+
+| Keys | Serper total | SerpApi | CSE/day |
+|---|---|---|---|
+| 1 | 2,500 | 250/mo | 100 |
+| 3 | **7,500** | **750/mo** | **300** |
+| 4 | **10,000** | **1,000/mo** | **400** |
+
+### 🧹 2) Vuln dedupe — `(host, param, type)`
+Pehle ek hi host ke **40 rows** file me aa jate the (same param, same type).
+Ab pehla result rakha jata hai, baaki collapse:
+
+```
+💉 Vulnerable     : 12
+🔁 Dup collapsed   : 87   (same host+param+type)
+```
+
+Card, `vuln_*.txt`, `vuln_report_*.csv`, aur by-type counters — sab **unique**
+numbers par. `last_vulns` (dumper ko bhejne wali list) bhi unique.
+
+### ✅ Test proof
+```
+K1,K2 K3\nK4        → 4 keys parse
+K1 dead             → K2 (cooldown skip)
+K1..K4 dead         → "" (provider skip, crash nahi)
+429 (K1) → 200 (K2) → results aaye, K1 cooldown me
+5 vulns → 4 unique (host,param,type)
+2 URLs same host+param → 1 line (dupes = 1)
+by_type sum == unique count
+```
+
+`1031 / 1031` tests pass · screens clean · pyflakes 0.
 
 ---
 
@@ -118,8 +168,8 @@ par ~20 req/s cap.
 2. ~~Resume/checkpoint~~ — **ho gaya (v2.19.0)**, restart-proof bhi.
 3. ~~Per-host throttle~~ — **ho gaya (v2.19.0)**, `/batch hostgap` se tune.
 4. **`/batch` me probe-per-URL** (`inj_targets`) ka button — abhi admin command se.
-5. **SERP key pool** — 3-4 free keys rotate → parser yield 3x.
-6. **Vuln URL dedupe by (host, param, type)** — file me same site ke 40 rows aate hain.
+5. ~~SERP key pool~~ — **ho gaya (v2.20.0)**, `/setkey serper K1,K2,K3`.
+6. ~~Vuln dedupe (host, param, type)~~ — **ho gaya (v2.20.0)**.
 
 ---
 

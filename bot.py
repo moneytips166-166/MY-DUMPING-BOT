@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.19.0"
-BUILD = "resume-pool"   # feature flags — /ping me dikhte hain
+VERSION = "v2.20.0"
+BUILD = "keypool-dedupe"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -3204,6 +3204,31 @@ def inj_proxy_on() -> bool:
         return False
 
 
+def inj_vuln_key(v: dict) -> tuple:
+    """Ek vulnerability ki asli identity — (host, param, type)."""
+    try:
+        host = urlparse(str(v.get("base") or v.get("url") or "")).hostname or ""
+    except Exception:
+        host = ""
+    return (host, str(v.get("param") or ""), str(v.get("type") or ""))
+
+
+def inj_unique_vulns(vulns) -> list:
+    """Same site + same param + same type = ek hi line (v2.20.0).
+
+    Pehle ek hi host ke 40 rows file me aa jate the. Ab pehla (sabse detailed)
+    result rakha jata hai aur baaki sirf counter me.
+    """
+    out, seen = [], set()
+    for v in (vulns or []):
+        k = inj_vuln_key(v)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(v)
+    return out
+
+
 async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                    timeout: float = 8.0, conc: int = 40,
                    max_targets: int = 0) -> dict:
@@ -3646,11 +3671,14 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
         st["stopped"] = 1
     st["took"] = time.time() - st["start"]
     st["by_type"] = {}
-    for v in st["vulns"]:
+    for v in inj_unique_vulns(st["vulns"]):
         st["by_type"][v["type"]] = st["by_type"].get(v["type"], 0) + 1
     # ── vulnerable / safe URL lists (user ko yahi dikhta hai) ──────────
+    _uniq_v = inj_unique_vulns(st["vulns"])
+    st["vuln_dupes"] = max(0, len(st["vulns"]) - len(_uniq_v))
+    st["vuln_items"] = _uniq_v
     _vb = []
-    for v in st["vulns"]:
+    for v in _uniq_v:
         if v["base"] not in _vb:
             _vb.append(v["base"])
     st["vuln_urls"] = _vb
@@ -5002,67 +5030,162 @@ def api_keys() -> dict:
     }
 
 
+# ── 🔑 KEY POOL (v2.20.0) — ek hi provider ki 3-4 keys rotate ──────────────
+#  Free tiers chhote hain (Serper 2,500 one-time, SerpApi 250/mo…). Pehle ek key
+#  khatam = provider band. Ab `/setkey serper K1,K2,K3` — 429/401/403 par agli
+#  key, aur kharab key 15–60 min ke liye side me.
+API_KEY_STATE = {"idx": {}, "dead": {}, "ok": 0, "fail": 0}
+
+
+def api_key_list(name: str) -> list:
+    """Settings me keys comma / space / newline se alag ho sakti hain."""
+    raw = str(sget(name) or "")
+    return _uniq([x.strip() for x in re.split(r"[\s,;]+", raw) if x.strip()])
+
+
+def api_key_pick(name: str) -> str:
+    """Round-robin — jo key cooldown me hai use chhodo."""
+    keys = api_key_list(name)
+    if not keys:
+        return ""
+    now = time.time()
+    start = int(API_KEY_STATE["idx"].get(name, 0) or 0)
+    for i in range(len(keys)):
+        key = keys[(start + i) % len(keys)]
+        if float(API_KEY_STATE["dead"].get((name, key), 0) or 0) <= now:
+            return key
+    return ""                                  # saari keys cooldown me
+
+
+def api_key_move(name: str, key: str = "") -> None:
+    """Agli key par shift (round-robin)."""
+    keys = api_key_list(name)
+    if not keys:
+        return
+    try:
+        pos = keys.index(key) + 1 if key else 0
+    except ValueError:
+        pos = 0
+    API_KEY_STATE["idx"][name] = pos % len(keys)
+
+
+def api_key_ok(name: str, key: str = "") -> None:
+    API_KEY_STATE["ok"] += 1
+    API_KEY_STATE["dead"].pop((name, key), None)
+    api_key_move(name, key)
+
+
+def api_key_dead(name: str, key: str = "", seconds: float = 900) -> None:
+    """Quota/block mila — is key ko thodi der ke liye hatao."""
+    API_KEY_STATE["fail"] += 1
+    if key:
+        API_KEY_STATE["dead"][(name, key)] = time.time() + max(30.0, float(seconds))
+    api_key_move(name, key)
+
+
+def api_key_status() -> dict:
+    """{provider: (total, alive, cooldown)} — admin card ke liye."""
+    now = time.time()
+    out = {}
+    for name in ("serper", "serpapi", "brave", "cse_key"):
+        keys = api_key_list(name)
+        dead = sum(1 for k in keys
+                   if float(API_KEY_STATE["dead"].get((name, k), 0) or 0) > now)
+        out[name] = (len(keys), len(keys) - dead, dead)
+    return out
+
+
 # ── SERPER (google.serper.dev) — 2,500 free queries, no card ────────────────
 async def serper_search(session, dork: str, num: int = 20, page: int = 1) -> list:
-    """Google results JSON — dork (inurl:/site:) support karta hai."""
-    k = api_keys()
-    if not k["serper"]:
-        return []
-    try:
-        async with session.post(
-                "https://google.serper.dev/search",
-                headers={"X-API-KEY": k["serper"], "Content-Type": "application/json"},
-                json={"q": dork, "num": min(100, max(1, num)), "page": max(1, page)},
-                ssl=False, timeout=aiohttp.ClientTimeout(total=25)) as r:
-            if r.status != 200:
-                return []
-            j = await r.json(content_type=None)
-        out = [str(it.get("link") or "") for it in (j.get("organic") or [])]
-        return _uniq([u for u in (_clean_url(x) for x in out) if u])
-    except Exception:
-        return []
+    """Google results JSON — dork (inurl:/site:) support karta hai.
+
+    v2.20.0: key pool — 429/401/403 par agli key (quota khatam = provider band nahi).
+    """
+    for _try in range(max(1, len(api_key_list("serper")))):
+        key = api_key_pick("serper")
+        if not key:
+            return []
+        try:
+            async with session.post(
+                    "https://google.serper.dev/search",
+                    headers={"X-API-KEY": key, "Content-Type": "application/json"},
+                    json={"q": dork, "num": min(100, max(1, num)), "page": max(1, page)},
+                    ssl=False, timeout=aiohttp.ClientTimeout(total=25)) as r:
+                if r.status in (401, 402, 403, 429):
+                    api_key_dead("serper", key,
+                                 1800 if r.status in (401, 403) else 300)
+                    continue
+                if r.status != 200:
+                    return []
+                j = await r.json(content_type=None)
+            api_key_ok("serper", key)
+            out = [str(it.get("link") or "") for it in (j.get("organic") or [])]
+            return _uniq([u for u in (_clean_url(x) for x in out) if u])
+        except Exception:
+            return []
+    return []
 
 
 # ── BRAVE SEARCH API (api.search.brave.com) — $5 free credit/month ──────────
 async def brave_search(session, dork: str, count: int = 20) -> list:
-    k = api_keys()
-    if not k["brave"]:
-        return []
-    try:
-        async with session.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                params={"q": dork, "count": min(20, max(1, count))},
-                headers={"X-Subscription-Token": k["brave"],
-                         "Accept": "application/json"},
-                ssl=False, timeout=aiohttp.ClientTimeout(total=25)) as r:
-            if r.status != 200:
-                return []
-            j = await r.json(content_type=None)
-        out = [str(it.get("url") or "") for it in ((j.get("web") or {}).get("results") or [])]
-        return _uniq([u for u in (_clean_url(x) for x in out) if u])
-    except Exception:
-        return []
+    for _try in range(max(1, len(api_key_list("brave")))):
+        key = api_key_pick("brave")
+        if not key:
+            return []
+        try:
+            async with session.get(
+                    "https://api.search.brave.com/res/v1/web/search",
+                    params={"q": dork, "count": min(20, max(1, count))},
+                    headers={"X-Subscription-Token": key,
+                             "Accept": "application/json"},
+                    ssl=False, timeout=aiohttp.ClientTimeout(total=25)) as r:
+                if r.status in (401, 403, 429):
+                    api_key_dead("brave", key, 3600 if r.status == 401 else 300)
+                    continue
+                if r.status != 200:
+                    return []
+                j = await r.json(content_type=None)
+            api_key_ok("brave", key)
+            out = [str(it.get("url") or "")
+                   for it in ((j.get("web") or {}).get("results") or [])]
+            return _uniq([u for u in (_clean_url(x) for x in out) if u])
+        except Exception:
+            return []
+    return []
 
 
 async def cse_search(session, dork: str, num: int = 10, start: int = 1) -> list:
-    """Google Custom Search JSON API — 100 queries/day FREE (key + cx chahiye)."""
-    k = api_keys()
-    if not (k["cse_key"] and k["cse_cx"]):
+    """Google Custom Search JSON API — 100 queries/day FREE (key + cx chahiye).
+
+    v2.20.0: `/setkey cse K1,K2 CX` — 100/din per key, ab key pool bhi.
+    """
+    cx = str(sget("cse_cx") or "").strip()
+    if not cx:
         return []
-    try:
-        async with session.get(
-                "https://www.googleapis.com/customsearch/v1",
-                params={"key": k["cse_key"], "cx": k["cse_cx"], "q": dork,
-                        "num": min(10, num), "start": start},
-                headers=UA, ssl=False,
-                timeout=aiohttp.ClientTimeout(total=20)) as r:
-            if r.status != 200:
-                return []
-            j = await r.json(content_type=None)
-        out = [str(it.get("link") or "") for it in (j.get("items") or [])]
-        return _uniq([u for u in (_clean_url(x) for x in out) if u])
-    except Exception:
-        return []
+    for _try in range(max(1, len(api_key_list("cse_key")))):
+        key = api_key_pick("cse_key")
+        if not key:
+            return []
+        try:
+            async with session.get(
+                    "https://www.googleapis.com/customsearch/v1",
+                    params={"key": key, "cx": cx, "q": dork,
+                            "num": min(10, num), "start": start},
+                    headers=UA, ssl=False,
+                    timeout=aiohttp.ClientTimeout(total=20)) as r:
+                if r.status in (400, 401, 403, 429):
+                    # 400 = is key ka daily limit / invalid key
+                    api_key_dead("cse_key", key, 3600)
+                    continue
+                if r.status != 200:
+                    return []
+                j = await r.json(content_type=None)
+            api_key_ok("cse_key", key)
+            out = [str(it.get("link") or "") for it in (j.get("items") or [])]
+            return _uniq([u for u in (_clean_url(x) for x in out) if u])
+        except Exception:
+            return []
+    return []
 
 
 # ── GOOGLE via ijerm (koi API key nahi, free) ────────────────────────────────
@@ -5186,24 +5309,33 @@ async def gjerm_search(session, dork: str, pages: int = 1) -> list:
 
 
 async def serpapi_search(session, dork: str, num: int = 20, start: int = 0) -> list:
-    """SerpAPI — 100 searches/month free (real Google results + dorks)."""
-    k = api_keys()
-    if not k["serpapi"]:
-        return []
-    try:
-        async with session.get(
-                "https://serpapi.com/search.json",
-                params={"engine": "google", "q": dork, "num": min(100, num),
-                        "start": start, "api_key": k["serpapi"]},
-                headers=UA, ssl=False,
-                timeout=aiohttp.ClientTimeout(total=25)) as r:
-            if r.status != 200:
-                return []
-            j = await r.json(content_type=None)
-        out = [str(it.get("link") or "") for it in (j.get("organic_results") or [])]
-        return _uniq([u for u in (_clean_url(x) for x in out) if u])
-    except Exception:
-        return []
+    """SerpAPI — 250/month free (real Google results + dorks).
+
+    v2.20.0: key pool — quota khatam hone par agli key.
+    """
+    for _try in range(max(1, len(api_key_list("serpapi")))):
+        key = api_key_pick("serpapi")
+        if not key:
+            return []
+        try:
+            async with session.get(
+                    "https://serpapi.com/search.json",
+                    params={"engine": "google", "q": dork, "num": min(100, num),
+                            "start": start, "api_key": key},
+                    headers=UA, ssl=False,
+                    timeout=aiohttp.ClientTimeout(total=25)) as r:
+                if r.status in (401, 403, 429):
+                    api_key_dead("serpapi", key, 3600 if r.status == 401 else 300)
+                    continue
+                if r.status != 200:
+                    return []
+                j = await r.json(content_type=None)
+            api_key_ok("serpapi", key)
+            out = [str(it.get("link") or "") for it in (j.get("organic_results") or [])]
+            return _uniq([u for u in (_clean_url(x) for x in out) if u])
+        except Exception:
+            return []
+    return []
 
 
 def _pick_proxy() -> str:
@@ -9224,9 +9356,10 @@ async def _run_inject(update, context, urls):
                         timeout=float(sget("inj_timeout", 6) or 6),
                         conc=int(sget("inj_conc", 40) or 40),
                         max_targets=int(sget("inj_targets", 24) or 24))
-    vulns = st["vulns"]
+    vulns = st.get("vuln_items") or inj_unique_vulns(st["vulns"])
     took = max(0.001, st.get("took", 0))
     vuln_urls = st.get("vuln_urls") or []
+    _dupes = int(st.get("vuln_dupes", 0) or 0)
     safe_urls = st.get("safe_urls") or []
     n_v = len(vuln_urls)
     _dead_n = int(st.get("dead_urls", 0) or 0) + int(st.get("urls_skipped", 0) or 0)
@@ -9239,6 +9372,8 @@ async def _run_inject(update, context, urls):
             + "🌐 Unique URLs    : <code>%s</code>\n" % fmt(st.get("urls_unique", len(urls)))
             + "🌐 URLs tested    : <code>%s</code>\n" % fmt(st.get("urls_tested", st["urls_done"]))
             + "💉 Vulnerable     : <code>%s</code>\n" % fmt(n_v)
+            + (("🔁 Dup collapsed   : <code>%s</code> <i>(same host+param+type)</i>\n"
+                % fmt(_dupes)) if _dupes else "")
             + "✅ Safe           : <code>%s</code>\n" % fmt(len(safe_urls))
             + "⚡ Speed          : <code>%.1f URLs/s</code>\n" % st.get("speed_urls", 0)
             + "⏱ Time           : <code>%s</code>\n" % fmt_eta(took)
@@ -14268,6 +14403,16 @@ def _mask_proxy(url: str) -> str:
     return "%s%s:***@%s" % (m.group(1) or "", m.group(2), m.group(4))
 
 
+def _keys_line(name: str) -> str:
+    """`/setkey` card me key pool ki asli haalat."""
+    total, alive, dead = api_key_status().get(name, (0, 0, 0))
+    if not total:
+        return "⚪ not set"
+    if dead:
+        return "✅ <b>%d key(s)</b> · ⏸ %d cooldown" % (total, dead)
+    return "✅ <b>%d key(s)</b> alive" % alive
+
+
 async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: optional API keys (Google CSE / SerpAPI). Free tiers."""
     uid = update.effective_user.id
@@ -14282,7 +14427,8 @@ async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
                "(7 engines + Common Crawl + Wayback + free Google).\n\n"
                "🔑 <b>Serper</b> — <b>2,500 FREE</b> queries (no card)\n"
                "   google.serper.dev → signup → key\n"
-               "   <code>/setkey serper KEY</code>\n\n"
+               "   <code>/setkey serper KEY1,KEY2,KEY3</code>\n"
+               "   <i>Multiple keys rotate — ek khatam, agli chalu.</i>\n\n"
                "🔑 <b>SerpApi</b> — 250 searches/mahina free\n"
                "   <code>/setkey serpapi KEY</code>\n\n"
                "🔑 <b>Brave Search</b> — $5 credit/mahina (~1,000)\n"
@@ -14295,10 +14441,11 @@ async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
                "📋 Poori list: <code>/apis</code>\n\n"
                "%s"
                % ("\n".join([
-                   KV("Serper", "✅ set" if k["serper"] else "⚪ not set", "🔵"),
-                   KV("SerpApi", "✅ set" if k["serpapi"] else "⚪ not set", "🟢"),
-                   KV("Brave", "✅ set" if k["brave"] else "⚪ not set", "🦁"),
-                   KV("CSE", "✅ set" if (k["cse_key"] and k["cse_cx"]) else "⚪ not set", "🔴"),
+                   KV("Serper", _keys_line("serper"), "🔵"),
+                   KV("SerpApi", _keys_line("serpapi"), "🟢"),
+                   KV("Brave", _keys_line("brave"), "🦁"),
+                   KV("CSE", (_keys_line("cse_key") if k["cse_cx"]
+                              else "⚪ not set (cx missing)"), "🔴"),
                    KV("Free Google", ("⚪ OFF" if not gj_enabled() else
                                       "✅ ON • %d ok / %d fail • %d endpoints"
                                       % (GJ_STATE["ok"], GJ_STATE["fail"], len(gj_pool()))), "🐦"),
@@ -14329,15 +14476,24 @@ async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if what in ("serper", "brave", "serpapi"):
         if len(args) < 2:
-            await update.effective_message.reply_text("Usage: /setkey %s YOUR_KEY" % what)
+            await update.effective_message.reply_text(
+                "Usage: <code>/setkey %s KEY1,KEY2,KEY3</code>\n"
+                "<i>Ek se zyada key = quota khatam hone par agli apne aap chalti hai.</i>"
+                % what, parse_mode=ParseMode.HTML)
             return
-        val = args[1].strip()
+        val = " ".join(a.strip() for a in args[1:] if a.strip()).strip()
         sset(what, "" if val == "-" else val)
+        keys = api_key_list(what)
+        API_KEY_STATE["idx"][what] = 0
+        for (nm, kk) in list(API_KEY_STATE["dead"].keys()):
+            if nm == what:
+                API_KEY_STATE["dead"].pop((nm, kk), None)
         note = {"serper": "2,500 free queries", "brave": "$5 credit/month",
                 "serpapi": "250/month free"}[what]
         await update.effective_message.reply_text(
-            "✅ %s %s" % (what.title(),
-                          "hata diya" if val == "-" else "set ho gaya (%s)" % note))
+            ("✅ %s %s" % (what.title(), "hata diya" if val == "-" else
+                           "set ho gaya — <b>%d key(s)</b> (%s)" % (len(keys), note))),
+            parse_mode=ParseMode.HTML)
         return
     if what in ("gapi", "gpool"):
         val = (args[1].strip() if len(args) > 1 else "")
@@ -14369,11 +14525,20 @@ async def cmd_setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if what == "cse":
         if len(args) < 3:
-            await update.effective_message.reply_text("Usage: /setkey cse API_KEY CX_ID")
+            await update.effective_message.reply_text(
+                "Usage: <code>/setkey cse KEY1,KEY2 CX_ID</code>\n"
+                "<i>Har key 100 queries/din free — 3 keys = 300/din.</i>",
+                parse_mode=ParseMode.HTML)
             return
         sset("cse_key", "" if args[1] == "-" else args[1].strip())
         sset("cse_cx", "" if args[1] == "-" else args[2].strip())
-        await update.effective_message.reply_text("✅ Google CSE set (100/day free)")
+        API_KEY_STATE["idx"]["cse_key"] = 0
+        for (nm, kk) in list(API_KEY_STATE["dead"].keys()):
+            if nm == "cse_key":
+                API_KEY_STATE["dead"].pop((nm, kk), None)
+        await update.effective_message.reply_text(
+            "✅ Google CSE set — <b>%d key(s)</b> (100/day each)"
+            % max(1, len(api_key_list("cse_key"))), parse_mode=ParseMode.HTML)
         return
     await update.effective_message.reply_text(
         "❓ Options: <code>serper</code>, <code>serpapi</code>, <code>brave</code>, "
