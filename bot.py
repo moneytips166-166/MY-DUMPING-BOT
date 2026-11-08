@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.17.0"
-BUILD = "big-lists"   # feature flags — /ping me dikhte hain
+VERSION = "v2.18.0"
+BUILD = "url-truth"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -3092,7 +3092,9 @@ def inj_probes_for(cat: str, limit: int = 0) -> list:
     """Selected category ke hisaab se probes. all = poori matrix (19)."""
     if cat and cat in PAYLOAD_CATS and cat != "all":
         base = [pl for pl in (PAYLOAD_CATS.get(cat) or [])]
-        return [(cat, pl) for pl in (base[:limit] if limit else base[:14])]
+        #  v2.18.0: pehle `base[:14]` tha — sqli ke 63 me se 49 payloads kabhi
+        #  chalte hi nahi the. Ab POORI list; per-URL cap + rotation se coverage.
+        return [(cat, pl) for pl in (base[:limit] if limit else base)]
     return INJ_PROBES[:limit] if limit else list(INJ_PROBES)
 
 
@@ -3140,12 +3142,13 @@ def inj_verdict(family: str, payload: str, status: int, headers: dict, body: str
     if family == "graphql":
         for sig in ("Cannot query field", "FieldUndefined", "Expected type",
                     "__schema", "GRAPHQL_VALIDATION_FAILED", "must not have a selection"):
-            if sig.lower() in low:
+            if sig.lower() in low and sig.lower() not in base_low:
                 return {"type": "GraphQL", "dbms": "", "evidence": sig}
         return {}
     if family in ("sqli", "blind", "union", "waf"):
         for sig in SQL_GENERIC:
-            if sig in low and status in (200, 500, 502):
+            #  v2.18.0: baseline me pehle se maujood error text = vulnerable NAHI
+            if sig in low and sig not in base_low and status in (200, 500, 502):
                 db = hits[0][0] if hits else ""
                 return {"type": "SQLi", "dbms": db or "unknown", "evidence": sig}
         return {}
@@ -3173,15 +3176,13 @@ def inj_verdict(family: str, payload: str, status: int, headers: dict, body: str
         return {}
     if family == "ssrf":
         for m in SSRF_MARKS:
-            if m in low:
+            if m in low and m not in base_low:
                 return {"type": "SSRF", "dbms": "", "evidence": "internal data: %s" % m}
         return {}
     if family == "redirect":
         if loc and ("example.com" in loc or "//evil" in loc):
             if host and host not in loc:
                 return {"type": "OPEN REDIRECT", "dbms": "", "evidence": "Location: %s" % loc[:60]}
-        return {}
-    if family == "ssti":
         return {}
     return {}
 
@@ -3212,15 +3213,25 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
     poore batch ko rok deta tha, isliye 1.8 req/s. Ab flat queue hai.
     Proxy default OFF (free proxies 90% dead → har request timeout khaati thi).
     """
-    urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
+    _raw_in = [u for u in (urls or []) if str(u).startswith("http")]
+    urls = _uniq(_raw_in)
     probes = inj_probes_for(cat)
     per_url = int(max_targets or sget("inj_targets", 24) or 24)
-    st = {"urls": len(urls), "urls_done": 0, "tested": 0, "total": 0,
+    #  v2.18.0 — COUNT TRUTH: input lines / duplicates / unique / dead-drop
+    #  User ki shikayat: "20000 diye, alag amount test hua". Ab har URL ka
+    #  hisaab card par dikhta hai — koi URL chup-chaap nahi girta.
+    st = {"urls": len(urls), "urls_input": len(_raw_in),
+          "dup_removed": max(0, len(_raw_in) - len(urls)),
+          "urls_unique": len(urls), "urls_done": 0, "urls_skipped": 0,
+          "urls_tested": 0, "dead_urls": 0, "dead_url_list": [],
+          "precheck_valve": 0, "tested": 0, "total": 0,
           "vulns": [], "blocked": 0, "errors": 0, "start": time.time(),
           "cat": cat, "stopped": 0, "suspected": 0, "skipped": 0,
           "dead_hosts": [], "proxy": {}, "workers": 0,
           "hosts": 0, "hosts_live": 0, "hosts_dead": 0, "precheck": 0.0,
-          "req_ok": 0, "req_fail": 0, "stage": "precheck"}
+          "req_ok": 0, "req_fail": 0, "stage": "precheck",
+          "done_urls": [], "skipped_urls": [], "safe_urls": [], "vuln_urls": [],
+          "speed_urls": 0.0, "eta": 0.0}
 
     # ── PRE-CHECK: har host ek baar ping (dead host = 8 probes × timeout waste) ──
     #  v2.17.0: pehle ye block chup-chaap minutes tak chalta tha (0/2000 dikhta tha)
@@ -3260,26 +3271,46 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                        (_pre_deadline and time.time() > _pre_deadline):
                         _cut[0] = 1
                         return
-                    try:
-                        async with sess.get(
-                                _sample,
-                                headers=dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
-                                timeout=aiohttp.ClientTimeout(
-                                    total=min(4.0, max(2.0, float(timeout)))),
-                                ssl=False, allow_redirects=False) as _r0:
-                            _ = _r0.status            # koi bhi status = host zinda
-                    except Exception:
+                    _hard = False
+                    for _attempt in (1, 2, 3):
+                        try:
+                            async with sess.get(
+                                    _sample,
+                                    headers=dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
+                                    timeout=aiohttp.ClientTimeout(
+                                        total=min(5.0, max(2.5, float(timeout)))),
+                                    ssl=False, allow_redirects=False) as _r0:
+                                _ = _r0.status        # koi bhi status = host zinda
+                            _hard = False
+                            break
+                        except Exception as _exc:
+                            _msg = str(_exc).lower()
+                            #  v2.18.0: "Temporary failure in name resolution" =
+                            #  phone ka resolver load me hai — host DEAD nahi.
+                            #  Isi ek line se 20k lists ka bada hissa gir raha tha.
+                            if "temporary failure" in _msg:
+                                _hard = False
+                                break
+                            # sirf PAKKA dead — NXDOMAIN / refused / no route
+                            _hard = any(k in _msg for k in (
+                                "name or service not known", "nodename nor servname",
+                                "connection refused", "no route to host",
+                                "cannot connect to host", "getaddrinfo failed"))
+                            if not _hard:
+                                break                 # timeout/slow = zinda
+                            if _attempt < 3:
+                                await asyncio.sleep(0.35 * _attempt)
+                    if _hard:
                         _dead.add(_h)
-                    finally:
-                        _checked.add(_h)
-                        st["hosts_done"] = len(_checked)
-                        if progress and time.time() - _last_pre[0] > 1.5:
-                            _last_pre[0] = time.time()
-                            st["stage"] = "precheck"
-                            try:
-                                await progress(st)
-                            except Exception:
-                                pass
+                    _checked.add(_h)
+                    st["hosts_done"] = len(_checked)
+                    if progress and time.time() - _last_pre[0] > 1.5:
+                        _last_pre[0] = time.time()
+                        st["stage"] = "precheck"
+                        try:
+                            await progress(st)
+                        except Exception:
+                            pass
 
             try:
                 async with aiohttp.ClientSession(connector=_pc) as _s0:
@@ -3288,8 +3319,25 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
             except Exception:
                 pass
             if _dead:
-                urls = [u for u in urls if (urlparse(u).hostname or "") not in _dead]
-                st["dead_hosts"] = sorted(_dead)[:200]
+                _lost = sum(1 for u in urls
+                            if (urlparse(u).hostname or "") in _dead)
+                _lost_pct = (100.0 * _lost / max(1, len(urls)))
+                if _lost > 0 and _lost_pct > 35.0:
+                    #  VALVE: agar 35% se zyada URL "dead" lag rahe hain to
+                    #  precheck galat hai (resolver/network load) — kuch bhi
+                    #  mat girao. Scan khud dead hosts ko 4 fails par skip karta hai.
+                    st["precheck_valve"] = 1
+                    logger.warning("inj: precheck ne %.0f%% URLs dead bataya — "
+                                   "valve ON, kuch nahi gira (dead hosts=%d)",
+                                   _lost_pct, len(_dead))
+                else:
+                    urls = [u for u in urls
+                            if (urlparse(u).hostname or "") not in _dead]
+                    st["dead_urls"] = _lost
+                    st["dead_url_list"] = sorted(
+                        {u for u in _raw_in
+                         if (urlparse(u).hostname or "") in _dead})[:500]
+                    st["dead_hosts"] = sorted(_dead)[:200]
             if _pre_deadline and time.time() > _pre_deadline:
                 st["precheck_capped"] = 1
                 logger.info("inj: precheck cap %.0fs — %d/%d hosts check hue, "
@@ -3297,7 +3345,7 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                             len(_by_host))
         st["hosts_dead"] = len(_dead)
         st["hosts_live"] = max(0, st["hosts"] - len(_dead))
-        st["urls"] = len(urls)
+        st["urls"] = st["urls_unique"]     # total = unique (dead-drop alag count)
     st["precheck"] = round(time.time() - _pre_t, 1)
     st["stage"] = "scan"
     if uid and stop_requested(uid):
@@ -3314,6 +3362,9 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
     #  tuples → phone ki memory khatam. Ab plan sirf COUNT rakhta hai aur
     #  feeder stream karta hai (bounded queue).
     pending = {}
+    planned_of = {}
+    host_urls = {}
+    skip_of = defaultdict(int)
     plan = []                       # (raw, params, planned_cases)
     for raw in urls:
         try:
@@ -3324,6 +3375,9 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
         if n <= 0:
             continue
         pending[raw] = n
+        planned_of[raw] = n
+        host_urls[urlparse(raw).hostname or ""] = \
+            host_urls.get(urlparse(raw).hostname or "", 0) + 1
         st["total"] += n
         plan.append((raw, params, n))
 
@@ -3381,17 +3435,24 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
             baselines[raw] = body
             return body
 
-    async def _finish(raw):
+    async def _finish(raw, skip=False):
         pending[raw] = pending.get(raw, 0) - 1
+        if skip:
+            skip_of[raw] += 1
         if pending[raw] <= 0:
             st["urls_done"] += 1
+            st["done_urls"].append(raw)
+            #  poora URL skip hua (host dead) → "tested" me mat gino
+            if skip_of[raw] >= planned_of.get(raw, 1):
+                st["urls_skipped"] += 1
+                st["skipped_urls"].append(raw)
 
     async def one(session, raw, u, fam, pl, pn):
         host = urlparse(raw).hostname or ""
         if host in dead_hosts:
             async with lock:
                 st["skipped"] += 1
-                await _finish(raw)
+                await _finish(raw, skip=True)
             return
         async with sem:
             px = rot.next() if rot.enabled else None
@@ -3404,7 +3465,7 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                         rot.ok(px)
                 async with lock:
                     st["req_ok"] += 1
-            except Exception:
+            except Exception as _exc:
                 if px:
                     px_stat["fail"] += 1
                     if rot.enabled:
@@ -3415,18 +3476,33 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                         st["proxy_on"] = False
                         logger.warning("inj: proxies dead (%d fail) → direct mode",
                                        px_stat["fail"])
+                _msg = str(_exc).lower()
+                #  v2.18.0: timeout / "temporary failure in name resolution" =
+                #  phone net slow — host DEAD nahi. Sirf hard errors ginenge.
+                _transient = any(k in _msg for k in (
+                    "temporary failure", "timeout", "timed out",
+                    "server disconnected", "connection reset"))
                 async with lock:
                     st["tested"] += 1
                     st["errors"] += 1
                     st["req_fail"] += 1
-                    host_fail[host] += 1
-                    if host_fail[host] >= 4 and host not in dead_hosts:
-                        dead_hosts.add(host)
-                        st["dead_hosts"].append(host)
+                    if not _transient:
+                        host_fail[host] += 1
+                    if (not _transient) and host_fail[host] >= 6 \
+                            and host not in dead_hosts:
+                        _would = host_urls.get(host, 0) + sum(
+                            host_urls.get(h, 0) for h in dead_hosts)
+                        if _would * 100.0 <= 35.0 * max(1, st["urls_unique"]):
+                            dead_hosts.add(host)
+                            st["dead_hosts"].append(host)
+                        else:
+                            #  VALVE: itne saare URL dead nahi maan sakte
+                            st["dead_guard"] = 1
                     await _finish(raw)
                 return
             base_body = ""
-            if fam in ("xss", "lfi", "ssti", "nosql"):
+            if fam in ("xss", "lfi", "ssti", "nosql", "sqli", "union", "blind",
+                       "ssrf", "graphql"):
                 try:
                     base_body = await _baseline(session, raw)
                 except Exception:
@@ -3467,12 +3543,18 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
     async def feeder():
         """Plan ko dheere-dheere queue me daalo (memory safe) + sentinel."""
         try:
-            for raw, params, planned in plan:
+            for _idx, (raw, params, planned) in enumerate(plan):
                 if uid and stop_requested(uid):
                     break
                 made = 0
+                #  ROTATION: 63 sqli payloads, 24/URL cap → har URL agle 24
+                #  payloads leta hai, is liye poore list par SAARE payload chalte hain.
+                _pr = probes
+                if len(probes) > 1 and planned < len(params) * len(probes):
+                    _k = (planned * _idx) % len(probes)
+                    _pr = probes[_k:] + probes[:_k]
                 for pn in params:
-                    for fam, pl in probes:
+                    for fam, pl in _pr:
                         if made >= planned:
                             break
                         u = inj_build_case(raw, pn, pl)
@@ -3484,9 +3566,14 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                         break
                 if made < planned:            # build fail — counts balance karo
                     async with lock:
+                        skip_of[raw] += planned - made
                         pending[raw] = pending.get(raw, 0) - (planned - made)
                         if pending[raw] <= 0:
                             st["urls_done"] += 1
+                            st["done_urls"].append(raw)
+                            if skip_of[raw] >= planned_of.get(raw, 1):
+                                st["urls_skipped"] += 1
+                                st["skipped_urls"].append(raw)
         finally:
             for _ in range(workers):
                 await q.put(None)
@@ -3535,6 +3622,24 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
     st["by_type"] = {}
     for v in st["vulns"]:
         st["by_type"][v["type"]] = st["by_type"].get(v["type"], 0) + 1
+    # ── vulnerable / safe URL lists (user ko yahi dikhta hai) ──────────
+    _vb = []
+    for v in st["vulns"]:
+        if v["base"] not in _vb:
+            _vb.append(v["base"])
+    st["vuln_urls"] = _vb
+    st["urls_tested"] = max(0, st["urls_done"] - st["urls_skipped"])
+    _vset = set(_vb) | set(st["skipped_urls"])
+    st["safe_urls"] = [u for u in st["done_urls"] if u not in _vset]
+    _el = max(0.001, st["took"])
+    st["speed_urls"] = round(st["urls_tested"] / _el, 2)
+    _left = max(0, st["urls"] - st["urls_done"])
+    st["eta"] = (_left / st["speed_urls"]) if st["speed_urls"] > 0.01 else 0.0
+    logger.info("injector done: total %d • unique %d • tested %d • dead-skip %d • "
+                "%d vuln • %d safe • %.1f URLs/s",
+                st["urls_input"], st["urls_unique"], st["urls_tested"],
+                st["dead_urls"] + st["urls_skipped"], len(_vb),
+                len(st["safe_urls"]), st["speed_urls"])
     return st
 
 
@@ -5322,6 +5427,18 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
           "rounds": 0, "per_dork": 0, "px_mode": "auto"}
     _t_start = time.time()
     seen, out = set(), []
+    raw_out = []                                # har raw hit (file ke liye)
+    try:
+        _raw_cap = max(1000, int(sget("parse_raw_cap", 200000) or 200000))
+    except Exception:
+        _raw_cap = 200000
+
+    def _add_raw(items):
+        """Raw list — phone RAM safe cap (default 2 lakh lines)."""
+        if len(raw_out) < _raw_cap:
+            raw_out.extend(list(items)[:_raw_cap - len(raw_out)])
+            if len(raw_out) >= _raw_cap:
+                st["raw_truncated"] = 1
     _uid = str(ACTIVE_UID.get("uid")) if ACTIVE_UID.get("uid") else None
 
     # 1) site: dorks -> Common Crawl (free, bahut zyada URLs)
@@ -5353,6 +5470,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
             got, wbn = res
             st["wb"] += wbn
             st["raw"] += len(got)
+            _add_raw(got)
             st["cc"] += len(got) - wbn
             for u in got:
                 k = u.split("#")[0]
@@ -5381,6 +5499,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                 if not got and k["cse_key"] and k["cse_cx"]:
                     got = await cse_search(session, dork)
                 st["raw"] += len(got)
+                _add_raw(got)
                 st["api"] += len(got)
                 for u in got:
                     if not (strict and not dork_match(u, dork)):
@@ -5502,6 +5621,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                     gurls = []
                 async with _lock:
                     st["raw"] += len(gurls)
+                    _add_raw(gurls)
                     st["gj"] += len(gurls)
                 keep = []
                 for u in gurls:
@@ -5547,6 +5667,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                     _miss[eng] = 0                  # healthy — count reset
                     st["engine_hits"][eng] += len(urls)
                     st["raw"] += len(urls)
+                    _add_raw(urls)
                 if strict:
                     matched = [u for u in urls if dork_match(u, dork)]
                     if matched:
@@ -5684,7 +5805,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     st["proxy"] = rot.stats()
     st["px_mode"] = _px_mode0
     st["per_dork"] = round(st["scanned"] / max(1, time.time() - _t_start), 2)
-    return {"urls": out, "stats": st}
+    return {"urls": out, "raw_urls": raw_out, "stats": st}
 
 
 
@@ -8458,16 +8579,21 @@ async def cb_inj_last(update, context):
 URL_MAX = 200000                    # safety only — 24k / 100k sab chalega
 
 
-def _urls_from_text(text: str, limit: int = 0) -> list:
-    """Text se saare URLs — limit=0 matlab ALL (sirf safety cap)."""
+def _urls_from_text(text: str, limit: int = 0, dedupe: bool = True) -> list:
+    """Text se saare URLs — limit=0 matlab ALL (sirf safety cap).
+
+    v2.18.0: `dedupe=False` — injector ko RAW lines chahiye taaki card par
+    "Total URLs / Duplicates / Unique" ka sach dikh sake (chup-chaap dedupe nahi).
+    """
     got = re.findall(r"https?://[^\s,'\"<>)\]]+", str(text or ""))
-    got = _uniq(got)
+    if dedupe:
+        got = _uniq(got)
     cap = limit if limit and limit > 0 else URL_MAX
     return got[:cap]
 
 
 async def input_inj_urls(update, context, text: str):
-    urls = _urls_from_text(text)
+    urls = _urls_from_text(text, dedupe=False)     # raw lines — count sach dikhe
     if not urls:
         await reply_msg(update).reply_text(
             "❌ <b>No URLs found.</b>\n\n"
@@ -8481,44 +8607,53 @@ async def input_inj_urls(update, context, text: str):
 
 
 def _inj_progress_card(st: dict, spin: int) -> str:
-    pct = (st["tested"] / max(1, st["total"])) * 100
-    took = max(0.001, time.time() - st["start"])
-    speed = st["tested"] / took
-    left = max(0, st["total"] - st["tested"])
-    eta = (left / speed) if speed > 0.05 else 0
-    _uniq_v = len({v["base"] for v in st["vulns"]}) if st.get("vulns") else 0
-    _extra = ""
-    if st.get("hosts"):
-        _extra = ("◆ Live hosts : <code>%s/%s</code>  <i>(dead skip)</i>\n"
-                  % (fmt(st.get("hosts_live", 0)), fmt(st.get("hosts", 0))))
-    _stage = st.get("stage") or "scan"
-    if _stage == "precheck":
+    """Live card — SIRF URLs: vulnerable / safe / speed / ETA.
+
+    (User rule: requests aur live-hosts card me nahi dikhte — wo backend ka kaam hai.)
+    """
+    total = max(1, int(st.get("urls", 0) or 0))
+    done = max(0, int(st.get("urls_done", 0) or 0)
+               - int(st.get("urls_skipped", 0) or 0))
+    pct = (done / total) * 100.0
+    took = max(0.001, time.time() - float(st.get("start") or time.time()))
+    speed = done / took
+    left = max(0, total - done)
+    eta = (left / speed) if speed > 0.01 else 0
+    _vuln_n = len({v["base"] for v in (st.get("vulns") or [])})
+    _safe_n = max(0, done - _vuln_n)
+    _dead_n = int(st.get("dead_urls", 0) or 0) + int(st.get("urls_skipped", 0) or 0)
+
+    if (st.get("stage") or "scan") == "precheck":
         _hd = int(st.get("hosts_done", 0) or 0)
         _ht = int(st.get("hosts", 0) or 0)
         _pp = (100.0 * _hd / _ht) if _ht else 0.0
-        return (H("SCANNING", "%s • pre-check" % CAT_LABEL.get(st.get("cat"), "ALL"))
+        return (H("SCANNING", "%s • checking sites" % CAT_LABEL.get(st.get("cat"), "ALL"))
                 + "\n\n" + bar2(_pp, 14, spin) + "\n\n"
-                + "◆ Sites      : <code>%s</code> URLs\n" % fmt(st.get("urls", 0))
-                + "◆ Hosts      : <code>%s / %s</code> <i>(checked)</i>\n"
-                  % (fmt(_hd), fmt(_ht) or "—")
-                + "◆ Step       : <i>dead sites hata rahe hain — phir probes shuru</i>\n"
-                + "◆ Requests   : <code>0</code>\n\n"
-                + "<i>⛔ STOP isi step me bhi turant kaam karta hai.</i>")
-    return (H("SCANNING", "%s • %d probes" % (CAT_LABEL.get(st.get("cat"), "ALL"),
-                                              len(inj_probes_for(st.get("cat") or "all"))))
+                + "◆ URLs       : <code>%s</code>\n" % fmt(total)
+                + "◆ Sites check: <code>%s / %s</code>\n" % (fmt(_hd), fmt(_ht) or "—")
+                + "\n<i>Dead sites hata rahe hain — phir testing shuru.</i>")
+
+    return (H("SCANNING", "%s • testing now" % CAT_LABEL.get(st.get("cat"), "ALL"))
             + "\n\n" + bar2(pct, 14, spin) + "\n\n"
-            + "◆ Sites      : <code>%s/%s</code>  <i>(scanned)</i>\n"
-              % (fmt(st["urls_done"]), fmt(st["urls"]))
-            + "◆ URLs in    : <code>%s</code>  <i>(dedupe ke baad)</i>\n"
-              % fmt(st.get("hosts_total") or st["urls"])
-            + "◆ Requests   : <code>%s/%s</code>  <i>(probe calls)</i>\n"
-              % (fmt(st["tested"]), fmt(st["total"]))
-            + _extra
-            + "◆ Vulnerable : <code>%s</code> site%s\n"
-              % (fmt(_uniq_v), "" if _uniq_v == 1 else "s")
-            + "◆ Blocked    : <code>%s</code>\n" % fmt(st["blocked"])
-            + "◆ Speed      : <code>%.1f req/s</code>\n" % speed
-            + "◆ ETA        : <code>%s</code>" % (("%.0fs" % eta) if eta else "—"))
+            + "◆ URLs        : <code>%s / %s</code>\n" % (fmt(done), fmt(total))
+            + "◆ Vulnerable  : <code>%s</code>\n" % fmt(_vuln_n)
+            + "◆ Safe        : <code>%s</code>\n" % fmt(_safe_n)
+            + "◆ Speed       : <code>%.1f URLs/s</code>\n" % speed
+            + "◆ ETA         : <code>%s</code>" % (fmt_eta(eta) if eta else "—")
+            + (("\n◆ Dead skipped: <code>%s</code>" % fmt(_dead_n)) if _dead_n else ""))
+
+
+def fmt_eta(sec: float) -> str:
+    """ETA — 45s / 3m 20s / 1h 12m."""
+    try:
+        sec = int(max(0, float(sec)))
+    except Exception:
+        return "—"
+    if sec < 60:
+        return "%ds" % sec
+    if sec < 3600:
+        return "%dm %02ds" % (sec // 60, sec % 60)
+    return "%dh %02dm" % (sec // 3600, (sec % 3600) // 60)
 
 
 def _inj_vuln_lines(vulns, n: int = 6) -> str:
@@ -8585,9 +8720,10 @@ async def _run_inject(update, context, urls):
     ACTIVE_UID["uid"] = update.effective_user.id
     stop_clear(uid)
     tok = stop_mark(uid)
-    urls = _uniq([u for u in urls if str(u).startswith("http")])
+    #  dedupe inj_scan karega — yahan count se pehle girao mat (Total vs Unique)
+    urls = [str(u) for u in (urls or []) if str(u).startswith("http")]
     msg = await reply_msg(update).reply_text(
-        _inj_progress_card({"urls": len(urls), "urls_done": 0, "tested": 0, "total": 0,
+        _inj_progress_card({"urls": len(_uniq(urls)), "urls_done": 0, "tested": 0, "total": 0,
                             "vulns": [], "blocked": 0, "start": time.time(),
                             "cat": cat, "stage": "precheck", "hosts": 0,
                             "hosts_done": 0}, 0),
@@ -8611,54 +8747,57 @@ async def _run_inject(update, context, urls):
                         conc=int(sget("inj_conc", 40) or 40),
                         max_targets=int(sget("inj_targets", 24) or 24))
     vulns = st["vulns"]
-    took = st.get("took", 0)
-    speed = st["tested"] / max(0.001, took)
-    clean = max(0, st["urls_done"] - len({v["base"] for v in vulns}))
-    head = ("⚠️ <b>%d vulnerable URL(s) found</b>" % len(vulns)) if vulns else \
-        "🛡 <b>No vulnerabilities found</b>"
-    body = (H("SQLi SCAN COMPLETE", "%.1fs" % took) + "\n\n"
-            + head + "\n"
-            + "📥 URLs received: <code>%s</code>\n" % fmt(st.get("hosts_total") or st["urls"])
-            + "🌐 URLs scanned: <code>%s</code> (clean <code>%s</code>)\n" % (fmt(st["urls_done"]), fmt(clean))
-            + "🧪 Requests: <code>%s</code> · ⚡ <code>%.1f req/s</code>\n" % (fmt(st["tested"]), speed)
-            + "🚫 Blocked: <code>%s</code>\n" % fmt(st["blocked"])
-            + "🧅 Proxy: <b>%s</b>\n" % (("ON — %s alive" % fmt((st.get("proxy") or {}).get("alive", 0)))
-                                         if st.get("proxy_on") else "OFF — direct")
-            + ("⚠️ Unverified: <code>%s</code> (2nd check fail — confidence low)\n"
-               % fmt(st["suspected"]) if st.get("suspected") else "")
-            + ("💀 Dead hosts skipped: <code>%s</code>\n" % fmt(st.get("hosts_dead", 0))
-               if st.get("hosts_dead") else "")
-            + ("⏱ Host pre-check: <code>%.1fs</code>\n" % st.get("precheck", 0)
-               if st.get("precheck") else "")
-            + ("⚡ Pre-check cap hit — baaki hosts <i>zinda</i> maane gaye (koi URL nahi gira)\n"
-               if st.get("precheck_capped") else "")
-            + ("⛔ Stopped early\n" if st.get("stopped") else "")
-            + "\n" + bar2(100, 14, None))
-    if vulns:
+    took = max(0.001, st.get("took", 0))
+    vuln_urls = st.get("vuln_urls") or []
+    safe_urls = st.get("safe_urls") or []
+    n_v = len(vuln_urls)
+    _dead_n = int(st.get("dead_urls", 0) or 0) + int(st.get("urls_skipped", 0) or 0)
+    head = ("⚠️ <b>%d vulnerable URL(s) found</b>" % n_v) if n_v else \
+        "🛡 <b>No vulnerable URLs found</b>"
+    body = (H("INJECTOR — COMPLETE", "%.1fs" % took) + "\n\n"
+            + head + "\n\n"
+            + "📥 Total URLs     : <code>%s</code>\n" % fmt(st.get("urls_input", len(urls)))
+            + "🔁 Duplicates     : <code>%s</code>\n" % fmt(st.get("dup_removed", 0))
+            + "🌐 Unique URLs    : <code>%s</code>\n" % fmt(st.get("urls_unique", len(urls)))
+            + "🌐 URLs tested    : <code>%s</code>\n" % fmt(st.get("urls_tested", st["urls_done"]))
+            + "💉 Vulnerable     : <code>%s</code>\n" % fmt(n_v)
+            + "✅ Safe           : <code>%s</code>\n" % fmt(len(safe_urls))
+            + "⚡ Speed          : <code>%.1f URLs/s</code>\n" % st.get("speed_urls", 0)
+            + "⏱ Time           : <code>%s</code>\n" % fmt_eta(took)
+            + (("💀 Dead-site URLs : <code>%s</code> 🏠 %s site(s)\n"
+                % (fmt(_dead_n), fmt(st.get("hosts_dead", 0))))
+               if _dead_n else "")
+            + (("🛡 Precheck valve : ON <i>(mass-dead skip rok diya)</i>\n")
+               if st.get("precheck_valve") else "")
+            + ("⛔ Stopped early\n" if st.get("stopped") else ""))
+    if n_v:
         if st["by_type"]:
-            body += "\n\n" + B("By type") + "\n" + " · ".join(
+            body += "\n" + B("By type") + "\n" + " · ".join(
                 "%s %s <code>%s</code>" % (INJ_STYLE.get(k, "•"), esc(k), fmt(v))
                 for k, v in sorted(st["by_type"].items(), key=lambda z: -z[1]))
-        body += "\n\n" + B("Vulnerable") + "\n" + _inj_vuln_lines(vulns, 6)
+        body += "\n\n" + B("💉 Vulnerable URLs (%d)" % n_v) + "\n" + _inj_vuln_lines(vulns, 8)
+    if safe_urls:
+        body += "\n\n" + B("✅ Safe URLs (%d)" % len(safe_urls)) + "\n" + \
+            "\n".join("• <code>%s</code>" % esc(u[:96]) for u in safe_urls[:8])
+        if len(safe_urls) > 8:
+            body += "\n<i>… %s more in the file</i>" % fmt(len(safe_urls) - 8)
     try:
         await msg.delete()
     except Exception:
         pass
-    _n_v = len(_uniq([v["base"] for v in vulns])) if vulns else 0
     _rows = []
-    if _n_v:
-        _rows.append([InlineKeyboardButton("📁 DUMP THESE %d URL(s)" % _n_v,
+    if n_v:
+        _rows.append([InlineKeyboardButton("📁 DUMP THESE %d URL(s)" % n_v,
                                            callback_data="df:frominj")])
-        _rows.append([InlineKeyboardButton("🔗 VULN → UHQ DORKS (%d)" % _n_v,
+        _rows.append([InlineKeyboardButton("🔗 VULN → UHQ DORKS (%d)" % n_v,
                                            callback_data="inj:uhq")])
     _rows.append([InlineKeyboardButton("⬅️ INJECTOR", callback_data="m:inj")])
     _kb_done = RK(_rows)
     for ch in chunk_lines(body)[:3]:
         await reply_msg(update).reply_text(ch, parse_mode=ParseMode.HTML,
                                            reply_markup=_kb_done)
-    if vulns:
-        base_urls = _uniq([v["base"] for v in vulns])
-        path, cnt = dump_text(base_urls, "vuln_" + str(cat),
+    if vuln_urls:
+        path, cnt = dump_text(vuln_urls, "vuln_" + str(cat),
                               "PYTHON SNAKE — vulnerable URLs (%s)" % cat)
         await send_file(update, path, "💉 %d vulnerable URL(s)" % cnt)
         rows = ["type,dbms,param,status,url,poc,evidence"]
@@ -8673,6 +8812,10 @@ async def _run_inject(update, context, urls):
         await send_file(update, csvp, "📊 Full report (csv)")
         context.user_data["last_vulns"] = vulns
         context.user_data["inj_confirmed"] = {v["base"]: v["param"] for v in vulns}
+    if safe_urls:
+        spath, scnt = dump_text(safe_urls, "safe_" + str(cat),
+                                "PYTHON SNAKE — safe URLs (%s)" % cat)
+        await send_file(update, spath, "✅ %d safe URL(s)" % scnt)
     context.user_data["last_inj_stats"] = {k: st[k] for k in
                                            ("tested", "total", "urls", "blocked", "took")}
     context.user_data.pop("inj_pending", None)
@@ -8928,7 +9071,6 @@ async def input_deep_max(update, context, text: str):
             return
         last["t"] = time.time()
         pct = st["scanned"] / max(1, st["total"]) * 100
-        pr = st.get("proxy") or {}
         try:
             await msg.edit_text(
                 (F("PARSER — RUNNING", "%s" % ENGINE_LABEL.get(st.get("mode", "fast"), "")
@@ -8937,23 +9079,13 @@ async def input_deep_max(update, context, text: str):
                  + "<code>%s / %s dorks</code>  <i>(source %s/%s)</i>\n\n"
                    % (fmt(st["scanned"]), fmt(st["total"]),
                       st.get("pass", 1), st.get("max_req", 1))
-                 + "◆ Attempts    : <code>%s</code> real requests\n" % fmt(st.get("attempts", 0))
-                 + "◆ URLs found  : <code>%s</code>  <b>(%.1fx)</b>\n"
+                 + "◆ Raw URLs    : <code>%s</code>\n" % fmt(st["raw"])
+                 + "◆ Unique URLs : <code>%s</code>  <b>(%.1fx)</b>\n"
                    % (fmt(st["unique"]),
                       st["unique"] / max(1, st.get("total", 1)))
-                 + "◆ Target      : <code>%sx</code> = <code>%s</code> URLs\n"
-                   % (("%g" % st.get("yield_target", 5)),
-                      fmt(st.get("url_goal", 0)))
-                 + "◆ Raw hits    : <code>%s</code>\n" % fmt(st["raw"])
-                 + "◆ Blocked     : <code>%s</code>\n" % fmt(st.get("errors", 0))
-                 + "◆ Engines up  : <code>%s/%s</code>\n"
-                   % (st.get("engines", 0) - len(st.get("dead") or []), st.get("engines", 0))
-                 + "◆ Proxies     : <code>%s/%s</code>\n"
-                   % (pr.get("alive", 0), pr.get("pool", 0))
-                 + ("⚠️ Proxy pool khaali — engines direct IP se block ho rahe hain.\n"
-                    "<i>Admin: INJECTOR → PROXY ENGINE → RUN (ya /rotproxy)</i>\n"
-                    if not pr.get("pool") else "")
-                 + "◆ Speed       : <code>%s dork/s</code>\n" % (st.get("per_dork", 0))
+                 + "◆ Target      : <code>%sx</code> = <code>%s</code> URLs" % (
+                     ("%g" % st.get("yield_target", 5)), fmt(st.get("url_goal", 0)))
+                 + "\n◆ Speed       : <code>%s dork/s</code>\n" % (st.get("per_dork", 0))
                  + "◆ Time left   : <code>%.0f min</code>"
                    % max(0, (budget - (time.time() - t0)) / 60)),
                 parse_mode=ParseMode.HTML, reply_markup=kb_stop(_uid, _tok))
@@ -8985,11 +9117,9 @@ async def input_deep_max(update, context, text: str):
     _ratio = _uniq / max(1, st.get("total", 1))
     _tgt = float(st.get("yield_target", 5) or 5)
     _goal = int(st.get("url_goal", 0) or 0)
-    _head = ("Scanned: <code>%d/%d</code> dorks\n" % (st["scanned"], st["total"])
+    _head = ("Dorks scanned: <code>%d/%d</code>\n" % (st["scanned"], st["total"])
              + ("Not attempted: <code>%s</code>  <i>(engines blocked — CONTINUE dabao)</i>\n"
                 % fmt(_skip) if _skip else "")
-             + "Real requests: <code>%s</code>  ·  Sources/dork: <code>%s</code>\n"
-               % (fmt(st.get("attempts", 0)), st.get("avg_req", 0))
              + "🏆 Yield: <b>%.1fx</b>  ·  target <code>%gx</code> = <code>%s</code> URLs\n"
                % (_ratio, _tgt, fmt(_goal))
              + ("✅ <b>Target reached</b>\n" if st.get("goal_hit")
@@ -9053,8 +9183,9 @@ async def input_deep_max(update, context, text: str):
         await update.effective_message.reply_text(
             ch, parse_mode=ParseMode.HTML,
             reply_markup=_kb_next if _i == len(_chunks) - 1 else None)
+    _raw = res.get("raw_urls") or []
     if urls:
-        path, cnt = dump_text(urls, "deep", "PYTHON SNAKE — deep scan")
+        path, cnt = dump_text(urls, "deep", "PYTHON SNAKE — unique URLs (deep scan)")
         await send_file(update, path, "🌐 %d unique URLs" % cnt)
         try:
             js = dump_json({"stats": {k: (v if not isinstance(v, dict) else dict(v))
@@ -9062,6 +9193,9 @@ async def input_deep_max(update, context, text: str):
             await send_file(update, js, "📊 stats")
         except Exception:
             pass
+    if _raw:
+        rpath, rcnt = dump_text(_uniq(_raw), "raw", "PYTHON SNAKE — raw URLs (before dedupe)")
+        await send_file(update, rpath, "🧾 %d raw URLs" % rcnt)
     else:
         await update.effective_message.reply_text(
             (H("0 URLs", ("stopped after %d dorks" % st["scanned"])

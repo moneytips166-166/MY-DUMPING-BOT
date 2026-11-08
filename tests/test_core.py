@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.17.0", "VERSION")
+    eq(core.VERSION, "v2.18.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.17.0"')
+    contains(btxt, 'VERSION = "v2.18.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.17.0", "shim se version")
+    eq(core.VERSION, "v2.18.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1057,8 +1057,10 @@ def test_injector_engine():
     st = {"urls": 10, "urls_done": 4, "tested": 40, "total": 100, "vulns": [],
           "blocked": 2, "errors": 1, "start": core.time.time() - 4, "cat": "all"}
     card = core._inj_progress_card(st, 3)
-    for needle in ("Requests", "Vulnerable", "Blocked", "ETA", "⟦", "req/s"):
+    for needle in ("Vulnerable", "Safe", "ETA", "⟦", "URLs/s"):
         contains(card, needle)
+    ok("Requests" not in card, "requests card me nahi")
+    ok("Live hosts" not in card, "live hosts card me nahi")
     ok(any(sp in card for sp in core.INJ_SPIN), "scan spinner")
     ok(len(card) < 4096, "progress card size")
     ok("⟦" in card and "⟧" in card, "scan bar")
@@ -1173,10 +1175,17 @@ def test_injector_live():
 
 def _inj_fake_stats(urls, cat, vulns, tested=None):
     tested = tested or len(urls) * 19
+    _vb = []
+    for v in vulns:
+        if v.get("base") not in _vb:
+            _vb.append(v.get("base"))
+    _vset = set(_vb)
     return {"urls": len(urls), "urls_done": len(urls), "tested": tested,
             "total": tested, "vulns": vulns, "blocked": 2, "errors": 0,
             "start": core.time.time() - 2, "cat": cat, "stopped": 0,
-            "by_type": {}, "took": 2.0}
+            "by_type": {}, "took": 2.0, "vuln_urls": _vb,
+            "safe_urls": [u for u in urls if u not in _vset],
+            "speed_urls": 12.5, "eta": 0.0, "precheck": 0.0}
 
 
 def test_injector_flow():
@@ -1211,7 +1220,10 @@ def test_injector_flow():
         upd = FakeUpdate(data="inj:last")
         asyncio.run(core.cb_inj_last(upd, ctx))
         body = "\n".join(upd.texts())
-        contains(body, "Requests")
+        contains(body, "URLs tested")
+        contains(body, "Vulnerable")
+        contains(body, "URLs/s")
+        ok("Requests" not in body, "requests UI se gaye")
         contains(body, "vulnerable URL(s) found")
         contains(body, "MySQL")
         contains(body, "id")
@@ -1234,16 +1246,18 @@ def test_injector_flow():
         upd2 = FakeUpdate(data="inj:last")
         asyncio.run(core.cb_inj_last(upd2, ctx2))
         body2 = "\n".join(upd2.texts())
-        contains(body2, "No vulnerabilities found")
-        contains(body2, "Requests")
-        eq(sent, [], "clean scan pe koi file nahi")
+        contains(body2, "No vulnerable URLs found")
+        contains(body2, "URLs tested")
+        ok("Requests" not in body2, "requests UI se gaye (clean)")
+        ok(any("safe_" in p for p, _c in sent), "safe file mili")
+        ok(not any("vuln_" in p for p, _c in sent), "vuln file nahi (kuch nahi mila)")
 
         # ── 3) text input path ──
         core.inj_scan = _mk([])
         ctx3 = FakeContext({})
         upd3 = FakeUpdate(text="https://d.com/a?x=1\nhttps://e.com/b?y=2\nkuch nahi")
         asyncio.run(core.input_inj_urls(upd3, ctx3, upd3.message.text))
-        contains("\n".join(upd3.texts()), "Requests")
+        contains("\n".join(upd3.texts()), "URLs tested")
 
         # ── 4) koi URL nahi mila ──
         ctx4 = FakeContext({})
@@ -1781,7 +1795,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.17.0", "version")
+    eq(core.VERSION, "v2.18.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2318,7 +2332,7 @@ def test_v2150_yield_mode():
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
     for bit in ("YIELD MODE", "_one_request", "_max_req", "URL TARGET",
-                "Sources/dork", "Target reached"):
+                "Target reached"):
         contains(src, bit)
 
     import asyncio as _aio
@@ -2415,9 +2429,9 @@ def test_v2170_big_lists():
     group("v2.17.0 big lists")
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
-    for bit in ("URL_MAX = 200000", "def _urls_from_text(text: str, limit: int = 0)",
+    for bit in ("URL_MAX = 200000", "def _urls_from_text(text: str, limit: int = 0, dedupe: bool = True)",
                 "hosts_done", "precheck_capped", "inj_precheck",
-                "async def feeder", "asyncio.Queue(maxsize", "STOP isi step me bhi"):
+                "async def feeder", "asyncio.Queue(maxsize", "Dead sites hata rahe hain"):
         contains(src, bit)
     ok(core.FILE_MAX_LINES >= 200000,
        "file lines cap (%d)" % core.FILE_MAX_LINES)
@@ -2448,6 +2462,155 @@ def test_v2170_big_lists():
         core.STOP_FLAGS.pop("777", None)
 
 
+def test_v2180_url_truth():
+    """v2.18.0 — 20,000 URL truth: input / duplicate / unique / tested, koi silent drop nahi."""
+    group("v2.18.0 url truth")
+    # ETA format
+    eq(core.fmt_eta(45), "45s", "eta 45s")
+    eq(core.fmt_eta(200), "3m 20s", "eta 3m 20s")
+    eq(core.fmt_eta(4320), "1h 12m", "eta 1h 12m")
+    eq(core.fmt_eta(0), "0s", "eta 0s")
+
+    # progress card: skipped tested se bahar
+    c = core._inj_progress_card(
+        {"urls": 100, "urls_done": 60, "urls_skipped": 10, "urls_input": 100,
+         "vulns": [{"base": "https://a/x?id=1", "type": "sqli", "param": "id"}],
+         "start": core.time.time() - 5, "cat": "all", "stage": "scan"}, 1)
+    contains(c, "URLs")
+    contains(c, "Vulnerable")
+    contains(c, "Safe")
+    contains(c, "URLs/s")
+    contains(c, "ETA")
+    ok("Requests" not in c and "Live host" not in c, "requests/live-host hidden")
+    ok("Dead skipped" in c, "dead skipped line")
+
+    # 20k real scan (network stub) — counts bilkul saaf
+    class _Cont:
+        async def read(self, n=-1):
+            return b"<html>clean page</html>"
+
+    class _Resp:
+        status = 200
+        headers = {"Content-Type": "text/html"}
+        content = _Cont()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Sess:
+        def __init__(self, connector=None, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def get(self, url, **kw):
+            return _Resp()
+
+    real_sess = core.aiohttp.ClientSession
+    core.aiohttp.ClientSession = _Sess
+    try:
+        urls = ["http://h%d.test/p%05d.php?id=%d" % (i % 6, i, i) for i in range(20000)]
+        urls += urls[:500]                     # 500 duplicate lines
+        st = asyncio.run(core.inj_scan(urls, "all", timeout=2, conc=64, max_targets=1))
+        eq(st["urls_input"], 20500, "total urls (raw lines)")
+        eq(st["dup_removed"], 500, "duplicates")
+        eq(st["urls_unique"], 20000, "unique")
+        eq(st["urls_tested"], 20000, "tested = 20000 (koi drop nahi)")
+        eq(st["urls_done"], 20000, "done")
+        eq(len(st["done_urls"]), 20000, "done list")
+        eq(st["urls_tested"] + st["dead_urls"] + st["urls_skipped"],
+           st["urls_unique"], "sum check")
+        eq(len(st["safe_urls"]), 20000, "safe list")
+        ok(st["speed_urls"] > 0, "speed computed")
+    finally:
+        core.aiohttp.ClientSession = real_sess
+
+    # precheck hard-fail me "temporary failure" zinda maana jata hai
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    for bit in ("urls_input", "dup_removed", "urls_skipped", "precheck_valve",
+                "dead_guard", "Temporary failure", "35.0"):
+        contains(src, bit)
+
+
+def test_v2180_live_injector():
+    """v2.18.0 — ASLI local HTTP app: sqli/xss/lfi/ssti/redirect sab detect + clean page FP-free."""
+    group("v2.18.0 live injector")
+
+    async def body():
+        from aiohttp import web
+
+        async def sqli(req):
+            v = req.query.get("id", "")
+            if "'" in v or '"' in v or "union" in v.lower():
+                return web.Response(
+                    text="You have an error in your SQL syntax; check the manual that "
+                         "corresponds to your MySQL server version")
+            return web.Response(text="product id %s ok" % v)
+
+        async def xss(req):
+            return web.Response(text="<html>hello %s</html>" % req.query.get("q", ""))
+
+        async def lfi(req):
+            v = req.query.get("file", "index")
+            if "passwd" in v:
+                return web.Response(text="root:x:0:0:root:/root:/bin/bash")
+            return web.Response(text="<html>page %s</html>" % v)
+
+        async def ssti(req):
+            v = req.query.get("name", "")
+            if "{{7*7}}" in v:
+                return web.Response(text="<html>Hi 49</html>")
+            if "1337*1337" in v:
+                return web.Response(text="<html>Hi 1787569</html>")
+            return web.Response(text="<html>Hi</html>")
+
+        async def redir(req):
+            return web.Response(status=302, headers={
+                "Location": req.query.get("url", "/")}, text="")
+
+        async def clean(req):
+            return web.Response(text="<html>clean page nothing here at all</html>")
+
+        app = web.Application()
+        app.router.add_get("/sqli.php", sqli)
+        app.router.add_get("/xss.php", xss)
+        app.router.add_get("/lfi.php", lfi)
+        app.router.add_get("/ssti.php", ssti)
+        app.router.add_get("/redir.php", redir)
+        app.router.add_get("/clean.php", clean)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 18099)
+        await site.start()
+        try:
+            base = "http://127.0.0.1:18099"
+            urls = [base + "/sqli.php?id=1", base + "/xss.php?q=hello",
+                    base + "/lfi.php?file=index", base + "/ssti.php?name=yash",
+                    base + "/redir.php?url=/home", base + "/clean.php?x=1"]
+            return await core.inj_scan(urls, "all", timeout=4, conc=16,
+                                       max_targets=24)
+        finally:
+            await runner.cleanup()
+
+    st = asyncio.run(body())
+    types = {v["type"] for v in st["vulns"]}
+    for need in ("SQLi", "XSS", "LFI", "SSTI", "OPEN REDIRECT"):
+        ok(need in types, "live %s detected (got %s)" % (need, sorted(types)))
+    ci = [v for v in st["vulns"] if "clean.php" in v["base"]]
+    eq(ci, [], "clean page flagged nahi")
+    sq = [v for v in st["vulns"] if "sqli.php" in v["base"]]
+    ok(sq and sq[0]["dbms"] == "MySQL", "live dbms MySQL")
+    eq(st["urls_tested"], 6, "saare 6 tested")
+
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -2473,7 +2636,9 @@ def main():
                test_v212_engines, test_v2122_bing_quality,
                test_v2130_token_repair, test_v2131_update_proof,
                test_v2140_no_dork_left, test_v2150_yield_mode,
-               test_v2160_proxy_scope, test_v2170_big_lists):
+               test_v2160_proxy_scope, test_v2170_big_lists,
+               test_v2180_url_truth,
+               test_v2180_live_injector):
         try:
             fn()
         except Exception as exc:
