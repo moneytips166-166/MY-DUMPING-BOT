@@ -18,7 +18,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import ADMIN, FakeContext, FakeDocument, FakeUpdate, load_core  # noqa: E402
+from harness import ADMIN, FakeBot, FakeContext, FakeDocument, FakeUpdate, load_core  # noqa: E402
 
 core = load_core()
 
@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.20.0", "VERSION")
+    eq(core.VERSION, "v2.21.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.20.0"')
+    contains(btxt, 'VERSION = "v2.21.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.20.0", "shim se version")
+    eq(core.VERSION, "v2.21.0", "shim se version")
 
 
 def test_diagnostics():
@@ -735,7 +735,14 @@ def test_v28_tools():
     cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
     eq(cbs[0], "m:kw", "HQ keywords pehla")
     ok("nc:add" not in cbs, "ADD NICHE home pe nahi (keywords ke andar hai)")
-    ok("m:proxy" in cbs, "admin ko proxy dikhta hai")
+    ok("m:proxy" not in cbs, "v2.21: proxy home se hata (sirf /admin me)")
+    ok("m:myproxy" in cbs, "user ko MY PROXY milta hai")
+    ok("m:tasks" in cbs, "MY TASKS button")
+    ok("m:expand" in cbs, "EXPAND button")
+    ok("m:support" in cbs, "SUPPORT button")
+    kb_ad = core.kb_admin()
+    cbs_ad = [b.callback_data for row in kb_ad.inline_keyboard for b in row]
+    ok("a:proxy" in cbs_ad, "admin panel me proxy hai")
     kbn = core.kb_main(12345)
     cbn = [b.callback_data for row in kbn.inline_keyboard for b in row]
     ok("m:proxy" not in cbn, "non-admin ko proxy nahi")
@@ -753,7 +760,10 @@ def test_proxy_hidden_from_users():
     ok(not any(c.startswith("px:") or c == "m:proxy" for c in cbs), "user kb me proxy nahi")
     kb_admin = core.kb_main(8999053405)
     cbs_a = [b.callback_data for row in kb_admin.inline_keyboard for b in row]
-    ok("m:proxy" in cbs_a, "admin ko proxy dikhta hai")
+    ok("m:proxy" not in cbs_a, "v2.21: admin ko bhi home pe proxy nahi")
+    kb_ad = core.kb_admin()
+    ok("a:proxy" in [b.callback_data for row in kb_ad.inline_keyboard for b in row],
+       "proxy sirf /admin panel me")
 
     # parse screen — user ko proxy line nahi
     ctx = FakeContext({})
@@ -1795,7 +1805,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.20.0", "version")
+    eq(core.VERSION, "v2.21.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2400,8 +2410,8 @@ def test_v2160_proxy_scope():
         os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
     contains(src, "def inj_proxy_on")
     contains(src, "def dump_proxy_on")
-    contains(src, 'ProxyRotator(enabled=bool(dump_proxy_on() and proxy_available()))')
-    contains(src, "rot = ProxyRotator(enabled=_use_proxy)")
+    contains(src, "rot = ProxyRotator(enabled=bool(dump_proxy_on() and proxy_available()), uid=uid)")
+    contains(src, "rot = ProxyRotator(enabled=_use_proxy, uid=uid)")
     contains(src, '"dumpproxy": ("dump_proxy", 0, 1')
 
     old_settings = dict(core.SETTINGS)
@@ -2995,6 +3005,287 @@ def test_v2200_key_pool_dedupe():
         core.API_KEY_STATE["dead"].clear()
 
 
+
+def test_v2210_task_engine():
+    """v2.21.0 — Task engine: banao, checkpoint, stop, resume, card."""
+    group("v2.21.0 tasks")
+    core.tasks_load()
+    uid = 777001
+    tid = core.task_new("inj", uid, ["http://a.com/1", "http://b.com/2"], title="inj test")
+    ok(tid in core.TASKS, "task bana")
+    t = core.task_get(tid)
+    eq(t["status"], "running", "running")
+    eq(t["total"], 2, "total 2")
+    ok(os.path.exists(core._task_payload_path(tid)), "payload file disk pe")
+
+    core.task_set_remaining(tid, ["http://b.com/2"])
+    eq(core.task_get(tid)["left"], 1, "checkpoint left 1")
+    eq(core.task_payload(tid), ["http://b.com/2"], "payload disk se")
+
+    core.task_update(tid, done=1)
+    eq(core.task_get(tid)["done"], 1, "done 1")
+    ok(any(x["id"] == tid for x in core.tasks_of(uid)), "tasks_of me")
+    ok(any(x["id"] == tid for x in core.tasks_active(uid)), "active me")
+
+    card = core.tasks_card(uid)
+    ok("ᴍʏ ᴛᴀꜱᴋꜱ" in card, "card title")
+    kb = core.kb_tasks(uid)
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    ok(any(c.startswith("tk:stop:") for c in cbs), "stop button")
+    ok("tk:stopall" in cbs, "stop all button")
+
+    eq(core.tasks_stop_uid(uid), 1, "stop_uid 1")
+    eq(core.task_get(tid)["status"], "stopped", "stopped")
+    core.task_finish(tid, "done")
+    eq(core.task_get(tid)["status"], "stopped", "stop respect (done nahi bana)")
+    ok(not os.path.exists(core._task_payload_path(tid)), "payload saaf")
+
+    # resume: disk se wapas load
+    core.tasks_load()
+    ok(tid in core.TASKS, "tasks_load se wapas")
+    core.TASKS.pop(tid, None)
+    core.tasks_save()
+
+    # stop callback (fake update)
+    t2 = core.task_new("dump", uid, ["http://c.com/x"], title="d")
+    u = FakeUpdate(uid, data="tk:stop:%s" % t2)
+    asyncio.run(core.cb_task_action(u, FakeContext({}), "tk:stop:%s" % t2))
+    eq(core.task_get(t2)["status"], "stopped", "callback stop")
+    u2 = FakeUpdate(uid, data="m:tasks")
+    asyncio.run(core.cb_tasks(u2, FakeContext({})))
+    ok("ᴍʏ ᴛᴀꜱᴋꜱ" in u2.last_text(), "m:tasks screen")
+    # ── resume: crash ke baad wahi payload se dobara chalta hai ──
+    calls = {}
+
+    async def _fake_dump(upd, ctx, urls, task_id=""):
+        calls["urls"] = list(urls)
+        calls["tid"] = task_id
+        core.task_update(task_id, done=len(urls))
+        core.task_finish(task_id, "done")
+
+    old_dump, old_app = core._run_dump, core.BOT_REF.get("app")
+    core._run_dump = _fake_dump
+    core.BOT_REF["app"] = type("A", (), {"bot": FakeBot()})()
+    try:
+        t3 = core.task_new("harvest", uid, ["http://r1.com", "http://r2.com"], title="h")
+        core.task_update(t3, status="paused")     # jaise crash hua ho
+        core.TASKS[t3]["status"] = "running"
+        core.tasks_save()
+        asyncio.run(core.tasks_resume_all(0.0))
+        for _ in range(100):
+            if core.task_get(t3).get("status") not in ("running", "queued"):
+                break
+            time.sleep(0.02)
+        eq(sorted(calls.get("urls") or []), ["http://r1.com", "http://r2.com"],
+           "resume me wahi payload")
+        eq(calls.get("tid"), t3, "wahi task id")
+        eq(core.task_get(t3).get("status"), "done", "resume ke baad done")
+    finally:
+        core._run_dump = old_dump
+        core.BOT_REF["app"] = old_app
+
+    for tid2 in [x["id"] for x in core.tasks_of(uid)]:
+        core.TASKS.pop(tid2, None)
+    core.tasks_save()
+
+
+def test_v2210_support_inbox():
+    """v2.21.0 — Support: user message → inbox + admin notify, owner dikhe."""
+    group("v2.21.0 support")
+    uid = 777002
+    core.inbox_add(uid, "user", "mera task atak gaya hai")
+    got = core.inbox_get(uid, 5)
+    eq(len(got), 1, "inbox 1")
+    eq(got[0]["text"], "mera task atak gaya hai", "text save")
+    st = core.support_text(uid)
+    ok("@Bloody_sweet_baby" in st, "owner username dikhta hai")
+    ok("ꜱᴜᴘᴘᴏʀᴛ" in st, "support title")
+    kb = core.support_kb(uid)
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    ok("m:support_write" in cbs, "write button")
+    ok("m:support_hist" in cbs, "history button")
+
+    u = FakeUpdate(uid, text="hello owner")
+    ctx = FakeContext({})
+    asyncio.run(core.input_support(u, ctx, "hello owner"))
+    eq(len(core.inbox_get(uid, 10)), 2, "message inbox me")
+    u2 = FakeUpdate(uid, data="m:support_hist")
+    asyncio.run(core.cb_support_hist(u2, FakeContext({})))
+    ok("hello owner" in u2.last_text(), "history me message")
+    for m in core.inbox_all().get(str(uid), []):
+        ok(bool(m.get("who")), "who set")
+    d = core.inbox_all()
+    d.pop(str(uid), None)
+    core.jsave("inbox", d)
+
+
+def test_v2210_user_proxy():
+    """v2.21.0 — User apni proxy lagaye: parse, save, on/off, engine use."""
+    group("v2.21.0 user proxy")
+    eq(core._parse_proxy_line("1.2.3.4:8080"), "http://1.2.3.4:8080", "host:port")
+    eq(core._parse_proxy_line("1.2.3.4:8080:usr:pw"),
+       "http://usr:pw@1.2.3.4:8080", "host:port:user:pass")
+    eq(core._parse_proxy_line("usr:pw:1.2.3.4:8080"),
+       "http://usr:pw@1.2.3.4:8080", "user:pass:host:port")
+    eq(core._parse_proxy_line("http://usr:pw@1.2.3.4:8080"),
+       "http://usr:pw@1.2.3.4:8080", "url as-is")
+    eq(core._parse_proxy_line("bakwaas"), "", "invalid")
+    ok("•••" in core._mask_pw("http://usr:pw@1.2.3.4:8080"), "password masked")
+
+    uid = 777003
+    old_users = json.loads(json.dumps(core.USERS))
+    try:
+        n = core.user_proxy_set(uid, ["1.2.3.4:8080", "5.6.7.8:9090:u:p"])
+        eq(n, 2, "2 proxies saved")
+        eq(len(core.user_proxy_pool(uid)), 2, "pool 2")
+        ok(core.user_proxy_on(uid), "default ON")
+        ok(core.user_proxy_url(uid).startswith("http"), "url milta hai")
+        card = core.myproxy_card(uid)
+        ok("ᴍʏ ᴘʀᴏxʏ" in card and "🧅" in card, "card")
+        kb = core.myproxy_kb(uid)
+        cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+        ok("upx:add" in cbs and "upx:toggle" in cbs, "buttons")
+
+        rot = core.ProxyRotator(enabled=True, uid=uid)
+        ok(rot.next().startswith("http"), "rotator user proxy deta hai")
+        eq(rot.stats().get("mine"), 2, "stats mine=2")
+
+        u = FakeUpdate(uid, data="upx:toggle")
+        asyncio.run(core.cb_myproxy(u, FakeContext({}), "toggle"))
+        ok(not core.user_proxy_on(uid), "toggle OFF")
+        u = FakeUpdate(uid, data="upx:toggle")
+        asyncio.run(core.cb_myproxy(u, FakeContext({}), "toggle"))
+        ok(core.user_proxy_on(uid), "toggle ON")
+
+        # admin ko user proxy dikhta hai
+        ac = core.admin_user_card(uid)
+        ok("2 saved" in ac and "🧅" in ac, "admin card me proxy")
+    finally:
+        core.USERS.clear()
+        core.USERS.update(old_users)
+
+
+def test_v2210_expand():
+    """v2.21.0 — Variator: KW→KW, DORK→DORK, URL→URL (naye, purane nahi)."""
+    group("v2.21.0 expand")
+    kws = core.expand_keywords(["shopify store", "crypto wallet"], n=60)
+    ok(len(kws) >= 30, "kw expand %d" % len(kws))
+    ok(not (set(k.lower() for k in kws) & {"shopify store", "crypto wallet"}), "purane kw nahi")
+
+    src = ['inurl:login.php?id= site:gov.in', 'filetype:sql "admin" inurl:db']
+    dorks = core.expand_dorks(src, n=60)
+    ok(len(dorks) >= 30, "dork expand %d" % len(dorks))
+    ok(not (set(dorks) & set(src)), "purane dorks nahi")
+    ok(sum(1 for d in dorks if "site:gov.in" in d or "inurl:" in d) > 10, "shape preserve")
+
+    urls = core.expand_urls(["http://ex.com/item.php?id=5"], n=40)
+    ok(len(urls) >= 10, "url expand %d" % len(urls))
+    ok(all(u.startswith("http") for u in urls), "sab http")
+    ok(not (set(urls) & {"http://ex.com/item.php?id=5"}), "purana url nahi")
+
+    u = FakeUpdate(ADMIN, data="ex:kw")
+    ctx = FakeContext({"last_keywords": ["shopify store"], "last_dorks": src,
+                       "last_urls": ["http://ex.com/item.php?id=5"]})
+    asyncio.run(core.cb_expand(u, ctx, "kw"))
+    ok(len(u.sink) > 0, "ex:kw screen")
+    u = FakeUpdate(ADMIN, data="m:expand")
+    asyncio.run(core.tool_expand(u, ctx))
+    ok("ᴇxᴘᴀɴᴅ" in u.last_text(), "expand screen")
+
+
+def test_v2210_dork_freshness():
+    """v2.21.0 — 41 templates + TSP default; same keywords par naye dorks."""
+    group("v2.21.0 dork freshness")
+    eq(len(core.DORK_TEMPLATES), 41, "41 templates")
+    a = core.make_dork("mixed", n=800)
+    b = core.make_dork("mixed", n=800)
+    eq(len(a), 800, "800 dorks (1)")
+    eq(len(b), 800, "800 dorks (2)")
+    ov = len(set(a) & set(b))
+    ok(ov < 40, "overlap kam (%d/800)" % ov)
+    ok(len(set(a)) == len(a), "koi duplicate nahi")
+    tspish = sum(1 for d in a if re.search(r"site:\.|inurl:|intitle:|\?[a-z]+=", d))
+    ok(tspish > len(a) * 0.85, "shape theek (%d)" % tspish)
+    # TSP engine ke templates default me hissa le rahe hain
+    eq(len(core.TSP_DORK_TYPES), 14, "14 TSP types")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    contains(src, 'in globals() and "tsp_render" in globals()')
+    ok("🧰 TSP ENGINE" not in src, "alag TSP section menu se hata")
+
+
+def test_v2210_admin_manager():
+    """v2.21.0 — Admin full access: user data, ban, sub±, DM, inbox."""
+    group("v2.21.0 admin manager")
+    uid = 777004
+    old_users = json.loads(json.dumps(core.USERS))
+    try:
+        core.USERS[str(uid)] = {"name": "test user", "joined": "2026-01-01T00:00:00",
+                                "last": "2026-01-02T00:00:00", "expires": ""}
+        card = core.admin_user_card(uid)
+        for bit in ("👤", "💎", "🚦", "🔑", "🗂"):
+            ok(bit in card, "card: %s" % bit)
+        kb = core.admin_user_kb(uid)
+        cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+        ok(any(c.endswith(":ban") for c in cbs), "ban button")
+        ok(any(":plus:7" in c for c in cbs), "sub + button")
+        ok(any(":minus:30" in c for c in cbs), "sub - button")
+        ok(any(c.endswith(":msg") for c in cbs), "DM button")
+        ok(any(c.endswith(":data") for c in cbs), "data button")
+
+        u = FakeUpdate(ADMIN, data="a:u:%s:ban" % uid)
+        asyncio.run(core.admin_user_action(u, FakeContext({}), "%s:ban" % uid))
+        ok(core.USERS[str(uid)].get("banned"), "ban laga")
+        u = FakeUpdate(ADMIN, data="a:u:%s:unban" % uid)
+        asyncio.run(core.admin_user_action(u, FakeContext({}), "%s:unban" % uid))
+        ok(not core.USERS[str(uid)].get("banned"), "unban")
+
+        u = FakeUpdate(ADMIN, data="a:u:%s:plus:30" % uid)
+        asyncio.run(core.admin_user_action(u, FakeContext({}), "%s:plus:30" % uid))
+        ok(bool(core.USERS[str(uid)].get("expires")), "sub +30")
+
+        u = FakeUpdate(ADMIN, data="a:u:%s:inbox" % uid)
+        asyncio.run(core.admin_user_action(u, FakeContext({}), "%s:inbox" % uid))
+        ok("ɪɴʙᴏx" in u.last_text() or "🙋" in u.last_text(), "inbox screen")
+
+        u = FakeUpdate(ADMIN, data="a:users")
+        asyncio.run(core.admin_callback(u, FakeContext({}), "users"))
+        ok("test user" in u.last_text(), "users list me naam")
+
+        # DM flow
+        ctx = FakeContext({})
+        ctx.user_data["admin_msg_to"] = str(uid)
+        u = FakeUpdate(ADMIN, text="aapka task done")
+        asyncio.run(core.input_admin_msg(u, ctx, "aapka task free"))
+        ok(any(m.get("who") == "admin" for m in core.inbox_get(uid, 5)), "DM inbox me")
+        ok(core.AWAIT_HANDLERS.get("admin_msg") is not None, "admin_msg await wired")
+    finally:
+        core.USERS.clear()
+        core.USERS.update(old_users)
+        d = core.inbox_all()
+        d.pop(str(uid), None)
+        core.jsave("inbox", d)
+
+
+def test_v2210_wiring():
+    """v2.21.0 — Saare naye buttons/awaits routed hain (dead button nahi)."""
+    group("v2.21.0 wiring")
+    for key in ("support_msg", "myproxy", "admin_msg"):
+        ok(core.AWAIT_HANDLERS.get(key) is not None, "await %s" % key)
+    for key in ("tasks", "expand", "support", "support_write", "support_hist", "myproxy"):
+        ok(key in core.TOOL_HANDLERS, "tool %s" % key)
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    for bit in ('data.startswith("tk:")', 'data.startswith("ex:")',
+                'data.startswith("upx:")', 'tasks_resume_all(8.0)',
+                'tasks_stop_uid(t_uid)', "_split_text_file"):
+        contains(src, bit)
+    kb = core.kb_main(ADMIN)
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    for want in ("m:tasks", "m:expand", "m:support", "m:myproxy"):
+        ok(want in cbs, "menu: %s" % want)
+    ok(not any(c.startswith("nc:") for c in cbs), "niches home pe nahi (v2.21)")
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -3025,7 +3316,11 @@ def main():
                test_v2180_live_injector,
                test_v2180_tsp_engine,
                test_v2190_resume_pool_gap,
-               test_v2200_key_pool_dedupe):
+               test_v2200_key_pool_dedupe,
+               test_v2210_task_engine, test_v2210_support_inbox,
+               test_v2210_user_proxy, test_v2210_expand,
+               test_v2210_dork_freshness, test_v2210_admin_manager,
+               test_v2210_wiring):
         try:
             fn()
         except Exception as exc:
