@@ -1,6 +1,55 @@
-# 🐍 PYTHON SNAKE CORE — v2.22.0
+# 🐍 PYTHON SNAKE CORE — v2.23.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🕸 v2.23.0 — WEB INJECTION (POST forms · headers · session · WAF)
+
+Ab injector sirf `?id=` tak nahi rukta — **login/search forms**, **HTTP headers**
+aur **cookie-protected pages** bhi test hote hain. Sab kuch asli requests se.
+
+### 📮 1) POST FORM SCAN (naya)
+- Har page ke **asli `<form>`** parse hote hain — action resolve (relative bhi),
+  method GET/POST, hidden/CSRF fields, `submit`/`checkbox` skip.
+- Form ka **baseline POST** (bina payload) liya jata hai, phir ek-ek field me
+  payload: `'`, `1' AND '1'='2`, `"><svg/onload=…>`, `{{1337*1337}}`.
+- Har hit **confirm** hota hai doosre payload se — single reflection = vuln nahi.
+- **Second-order (stored) XSS**: POST ke baad page dobara fetch hota hai; payload
+  wapas aa gaya to `STORED XSS` label.
+- Card: forms found, no-form, requests, by-type, vulnerable list + CSV/TXT file.
+- Buttons: injector → `📮 POST FORMS` · `/batch postforms 2` `postfields 3`
+  `postconc 6` `poststored 1` `injtimeout 8`.
+
+### 🧾 2) HEADER INJECTION (naya)
+- `User-Agent`, `Referer`, `X-Forwarded-For`, `X-Forwarded-Host`,
+  `X-Original-URL`, `Cookie` — har ek par probe + confirm.
+- Wahi baseline-truth logic: page par pehle se maujood error = vuln nahi.
+- Button: injector → `🧾 HEADERS` · `/batch headerconc 8`.
+
+### 🍪 3) SESSION / AUTH (naya)
+- `inj:session` → paste `Cookie: PHPSESSID=…` (ya `Authorization: Bearer …`,
+  aur extra headers). Per-user save, **masked** display.
+- Session headers **har engine** me merge hote hain: POST scan, header scan,
+  SQLi detect, dumper, injector scan — login-protected pages bhi test hoti hain.
+- `/batch` settings nahi chahiye — card se hi SET / CLEAR.
+
+### 🛡 4) WAF DETECTION + TAMPER
+- `waf_detect` 10 WAF pehchanta hai (Cloudflare, Akamai, AWS WAF, Sucuri,
+  ModSecurity, Imperva, F5, Wordfence, DDoS-Guard, Barracuda) + `Unknown WAF`.
+- Block mile to SQLi engine **tamper retry** karta hai:
+  `comment` (`UN/**/ION SEL/**/ECT`), `case` (`UnIoN`), `both`.
+  Trailing `-- -` safe rehta hai — query nahi tootti.
+- `tech` me `+waf(comment)` dikhta hai, dump card/result me `🛡 WAF` line.
+
+### 🐛 5) Bug fix — `_clean_url` port
+- `http://host:8080/a.php?id=1` → pehle port gir jata tha (`host/a.php`), isliye
+  form action galat port par jata tha. Ab **non-standard port preserve** hota hai.
+
+### ✅ Tests
+`1321/1321` pass (6 naye v2.23.0 tests: form parser, WAF/tamper, session,
+live POST scan (SQLi+XSS), live header scan (Referer), wiring/batch keys) +
+`48` screens clean.
 
 ---
 

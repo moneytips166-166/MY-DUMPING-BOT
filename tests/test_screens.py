@@ -45,6 +45,16 @@ def screens():
     if callable(getattr(core, "admin_dash", None)):
         out["admin_dash"] = core.admin_dash()
     out["batch_card"] = core.batch_card()
+    out["session_card_empty"] = core.session_card(0)
+    out["webscan_card_post"] = core._webscan_card(
+        {"mode": "post", "done": 3, "tested": 12, "forms": 2, "no_form": 1,
+         "vulns": [], "vuln_urls": [], "took": 1.5, "waf": "", "errors": 0})
+    out["webscan_card_header"] = core._webscan_card(
+        {"mode": "header", "done": 2, "tested": 12, "headers_tested": 6,
+         "vulns": [], "vuln_urls": [], "took": 0.8, "waf": "Cloudflare"})
+    out["webscan_progress"] = core._webscan_progress(
+        {"mode": "post", "done": 1, "urls": 3, "tested": 5, "forms": 1,
+         "vulns": [], "waf": "", "stage": "forms"}, 0)
     out["country_kb_page2"] = (core.H("COUNTRY DORKS", "test") + "\n\n" + core.P("test"))
     return out
 
@@ -58,6 +68,9 @@ async def cb_screens():
         "tool_kw": ("m:kw", core.tool_kw),
         "tool_rev": ("m:rev", core.tool_rev),
         "tool_inj": ("m:inj", core.tool_inj),
+        "tool_inj_post": ("inj:post", core.tool_inj_post),
+        "tool_inj_header": ("inj:header", core.tool_inj_header),
+        "cb_inj_session": ("inj:session", core.cb_inj_session),
         "tool_proxy": ("m:proxy", core.tool_proxy),
         "tool_qa": ("m:qa", core.tool_qa),
         "tool_rand": ("m:rand", core.tool_rand),
@@ -78,7 +91,8 @@ async def cb_screens():
     for data in ("a:keys_api", "a:apis", "a:home", "a:proxy", "a:eng",
                  "inj:cat:sqli", "df:old", "m:inj",
                  "a:pzbatch", "a:pzwant", "a:injbatch",
-                 "m:dork", "dk:cms", "dp:country", "m:dump", "kw:niche"):
+                 "m:dork", "dk:cms", "dp:country", "m:dump", "kw:niche",
+                 "inj:post", "inj:header", "inj:session", "inj:session_set"):
         ctx = FakeContext({})
         upd = FakeUpdate(data=data)
         try:
