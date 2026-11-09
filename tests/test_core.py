@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.23.0", "VERSION")
+    eq(core.VERSION, "v2.24.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.23.0"')
+    contains(btxt, 'VERSION = "v2.24.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.23.0", "shim se version")
+    eq(core.VERSION, "v2.24.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1805,7 +1805,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.23.0", "version")
+    eq(core.VERSION, "v2.24.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -3799,6 +3799,270 @@ def test_v2230_wiring():
 
 
 
+def test_v2240_tamper():
+    """v2.24.0 — tamper modes: comment / case / both / version / space / mixed."""
+    group("v2.24.0 tamper modes")
+    p = "' UNION SELECT 1,2-- -"
+    ok(core.TAMPER_MODES[:3] == ("comment", "case", "both"), "purane modes intact")
+    for m in core.TAMPER_MODES:
+        t = core.waf_tamper(p, m)
+        ok(bool(t), "%s output" % m)
+        ok(t.endswith("-- -"), "%s trailing comment safe" % m)
+    ok("UNION" not in core.waf_tamper(p, "comment"), "comment: plain word nahi")
+    ok("UNION" not in core.waf_tamper(p, "mixed").replace("/*!50000UNION*/", ""),
+       "mixed: baaki words toote")
+    contains(core.waf_tamper(p, "version"), "/*!50000UNION*/")
+    ok("/**/" in core.waf_tamper(p, "comment"), "comment split")
+    v = core.waf_tamper(p, "version")
+    contains(v, "/*!50000UNION*/")
+    contains(v, "/*!50000SELECT*/")
+    sp = core.waf_tamper(p, "space")
+    ok("\n" in sp and " " not in sp.replace("-- -", ""), "space → newline")
+    mx = core.waf_tamper(p, "mixed")
+    ok("/*!50000" in mx and ("Un" in mx or "uN" in mx or "Se" in mx), "mixed = version + case")
+    eq(core.waf_tamper(p, ""), p, "blank mode → as-is")
+    eq(core.waf_tamper(p, "nope"), p, "unknown mode → as-is")
+    eq(core.waf_tamper("", "comment"), "", "empty payload")
+    # matlab wahi rehna chahiye — comments/version hatao to original keywords
+    for m in ("comment", "case", "both", "version", "mixed"):
+        clean = core.waf_tamper(p, m).replace("/**/", "")
+        clean = re.sub(r"/\*!\d*", "", clean).replace("*/", "").lower()
+        eq(clean, p.lower(), "%s ke baad matlab wahi" % m)
+    # chain order
+    ch = core.waf_bypass_chain("Cloudflare", "MySQL")
+    eq(ch[0], "version", "cloudflare → version pehle")
+    ok("comment" in ch, "comment chain me")
+    eq(core.waf_bypass_chain("ModSecurity", "MySQL")[0], "comment", "modsec → comment")
+    ok("version" not in core.waf_bypass_chain("", "MSSQL"), "mssql: version nahi")
+    # user preference pehle
+    old = core.SETTINGS.get("wafmode")
+    try:
+        core.sset("wafmode", "space")
+        eq(core.waf_bypass_chain("ModSecurity", "MySQL")[0], "space", "pref pehle")
+        core.sset("wafmode", "auto")
+    finally:
+        if old is None:
+            core.SETTINGS.pop("wafmode", None)
+            core.jsave("settings", core.SETTINGS)
+        else:
+            core.sset("wafmode", old)
+    # block detector
+    eq(core.waf_blocked(406, {}, "Not Acceptable! mod_security"), True, "blocked 406")
+    eq(core.waf_blocked(200, {}, "hello"), False, "200 clean")
+    eq(core.waf_blocked(0, {}, ""), False, "no status")
+
+
+def test_v2240_waf_send_live():
+    """v2.24.0 — waf_send: block par tampered payload se retry."""
+    group("v2.24.0 waf send")
+    from aiohttp import web
+    import aiohttp
+
+    def blocked(v):
+        if "/**/" in v or "/*!" in v:
+            return False
+        return bool(re.search(r"union|select|and\s+1\s*=", v, re.I))
+
+    async def page(request):
+        v = request.query.get("id", "")
+        if blocked(v):
+            return web.Response(status=406, text="Not Acceptable! mod_security",
+                                headers={"Server": "Apache"}, content_type="text/html")
+        return web.Response(text="ok %s" % v, content_type="text/html")
+
+    async def main():
+        app = web.Application()
+        app.add_routes([web.get("/", page)])
+        r = web.AppRunner(app, access_log=None)
+        await r.setup()
+        s = web.TCPSite(r, "127.0.0.1", 0)
+        await s.start()
+        port = s._server.sockets[0].getsockname()[1]
+        base = "http://127.0.0.1:%d/" % port
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async def send(pl):
+                    return await core._web_req(sess, "GET",
+                                               core.inj_build_case(base, "id", pl), 3)
+                resp, used, mode, nblk, wf = await core.waf_send(
+                    send, "' UNION SELECT 1,2", "sqli", "")
+                eq(mode, "comment", "comment mode se pass")
+                ok("/**/" in used, "tampered payload use hua")
+                eq(resp["status"], 200, "final status 200")
+                eq(nblk, 1, "ek block hua")
+                eq(wf, "ModSecurity", "waf naam")
+                # xss family par tamper nahi hota
+                resp2, used2, mode2, nblk2, _ = await core.waf_send(
+                    send, "' UNION SELECT 1", "xss", "")
+                eq(mode2, "", "xss par tamper nahi")
+                ok(nblk2 >= 1, "xss block counted")
+        finally:
+            await r.cleanup()
+
+    asyncio.run(main())
+
+
+def test_v2240_scan_tamper_live():
+    """v2.24.0 — live: WAF POST/header scan ko block kare, tamper se vuln mile."""
+    group("v2.24.0 scan tamper live")
+    from aiohttp import web
+
+    def uncomment(v):
+        v = v.replace("/**/", "")
+        v = re.sub(r"/\*!\d*", "", v)
+        return v.replace("*/", "")
+
+    def blocked(v):
+        if "/**/" in v or "/*!" in v:
+            return False
+        return bool(re.search(r"union|select|and\s+1\s*=|order\s+by|'", v, re.I))
+
+    async def login(request):
+        return web.Response(text="<form action='/login.php' method='post'>"
+                                 "<input name='user'><input type='password' name='pass'>"
+                                 "</form>", content_type="text/html")
+
+    async def login_post(request):
+        d = await request.post()
+        raw = str(d.get("user", "")) + str(d.get("pass", ""))
+        if blocked(raw):
+            return web.Response(status=406, text="Not Acceptable! mod_security",
+                                headers={"Server": "Apache"}, content_type="text/html")
+        tail = "<p>You have an error in your SQL syntax</p>" if "'" in uncomment(raw) else ""
+        return web.Response(text="ok %s%s" % (raw[:40], tail), content_type="text/html")
+
+    async def hdr(request):
+        raw = "".join(str(request.headers.get(h, "")) for h in
+                      ("Referer", "Cookie", "User-Agent", "X-Forwarded-For"))
+        if blocked(raw):
+            return web.Response(status=406, text="Not Acceptable! mod_security",
+                                headers={"Server": "Apache"}, content_type="text/html")
+        tail = "<p>SQLSTATE[42000]: Syntax error</p>" if "'" in uncomment(raw) else ""
+        return web.Response(text="home %s" % tail, content_type="text/html")
+
+    async def main():
+        app = web.Application()
+        app.add_routes([web.get("/login", login), web.post("/login.php", login_post),
+                        web.get("/hdr", hdr)])
+        r = web.AppRunner(app, access_log=None)
+        await r.setup()
+        s = web.TCPSite(r, "127.0.0.1", 0)
+        await s.start()
+        port = s._server.sockets[0].getsockname()[1]
+        base = "http://127.0.0.1:%d" % port
+        try:
+            st = await core.post_scan([base + "/login"], timeout=4, conc=1,
+                                      second_order=False)
+            sqli = [v for v in st["vulns"] if v["type"] == "SQLi"]
+            ok(sqli, "WAF ke bawajood POST SQLi mila")
+            ok(any(v.get("tamper") for v in sqli), "tamper field set")
+            ok(st["tamper_hits"] >= 1, "tamper_hits %d" % st["tamper_hits"])
+            ok(st["blocked_req"] >= 1, "blocked_req %d" % st["blocked_req"])
+            eq(st["waf"], "ModSecurity", "waf naam scan me")
+
+            hs = await core.header_scan([base + "/hdr"], timeout=4, conc=1)
+            ok(hs["vulns"], "WAF ke bawajood header vuln mila")
+            ok(any(v.get("tamper") for v in hs["vulns"]), "header tamper set")
+            ok(hs["blocked_req"] >= 1, "header blocked count")
+            card = core._webscan_card(st)
+            contains(card, "Tamper bypass")
+            contains(card, "Blocked reqs")
+        finally:
+            await r.cleanup()
+
+    asyncio.run(main())
+
+
+def test_v2240_waf_probe_live():
+    """v2.24.0 — WAF LAB: har mode ka asli test + verdict."""
+    group("v2.24.0 waf probe live")
+    from aiohttp import web
+
+    def blocked(v):
+        if "/**/" in v or "/*!" in v:
+            return False
+        return bool(re.search(r"and\s+1\s*=|union|select", v, re.I))
+
+    async def page(request):
+        v = request.query.get("id", "")
+        if blocked(v):
+            return web.Response(status=406, text="Not Acceptable! mod_security",
+                                headers={"Server": "Apache"}, content_type="text/html")
+        return web.Response(text="ok", content_type="text/html")
+
+    async def main():
+        app = web.Application()
+        app.add_routes([web.get("/", page)])
+        r = web.AppRunner(app, access_log=None)
+        await r.setup()
+        s = web.TCPSite(r, "127.0.0.1", 0)
+        await s.start()
+        port = s._server.sockets[0].getsockname()[1]
+        base = "http://127.0.0.1:%d/?id=1" % port
+        try:
+            res = await core.waf_probe(base, timeout=4)
+            eq(res["waf"], "ModSecurity", "waf detect")
+            ok(res["waf_fired"], "fired")
+            ok("plain" in res["blocked_modes"], "plain blocked")
+            ok("comment" in res["passed"], "comment pass")
+            ok(res["param"] == "id", "param")
+            contains(res["verdict"], "pass hue")
+            card = core.waf_result_card(res)
+            contains(card, "ModSecurity")
+            contains(card, "comment")
+            ok(len(card) < 4096, "card 4096 me")
+            bad = await core.waf_probe("nope")
+            eq(bad["status"], 0, "bad url → khaali")
+            eq(bad["modes"], [], "bad url → koi probe nahi")
+        finally:
+            await r.cleanup()
+
+    asyncio.run(main())
+
+
+def test_v2240_wiring():
+    """v2.24.0 — WAF LAB routes, await, batch keys, menu."""
+    group("v2.24.0 wiring")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    for bit in ("async def waf_probe", "def waf_bypass_chain", "def waf_blocked",
+                "async def waf_send", "def waf_lab_card", "def waf_result_card",
+                "async def tool_inj_waf", "async def input_waf_test",
+                'if rest == "waf":', 'if rest == "waf_go":', 'if rest == "waf_mode":',
+                'AWAIT_HANDLERS["waf_test"] = lambda',
+                "inj:waf", "inj:waf_go", "inj:waf_mode",
+                '"version"', "/*!50000"):
+        contains(src, bit)
+    for alias, skey, dflt in (("wafretry", "wafretry", 2), ("wafgap", "waf_gap_ms", 400)):
+        ok(alias in core.BATCH_KEYS, "BATCH_KEYS %s" % alias)
+        eq(core.BATCH_KEYS[alias][0], skey, "%s key" % alias)
+        eq(core.BATCH_KEYS[alias][4], dflt, "%s default" % alias)
+    t = core.batch_card()
+    contains(t, "wafretry")
+    contains(t, "wafgap")
+
+    old_settings = dict(core.SETTINGS)
+    old_users = json.loads(json.dumps(core.USERS))
+    try:
+        for data in ("inj:waf", "inj:waf_go", "inj:waf_mode"):
+            u = FakeUpdate(uid=ADMIN, data=data)
+            asyncio.run(core._on_callback_inner(u, FakeContext({})))
+            ok(bool(u.texts()), "%s jawab deta hai" % data)
+        u = FakeUpdate(uid=ADMIN, data="inj:waf_go")
+        ctx = FakeContext({})
+        asyncio.run(core._on_callback_inner(u, ctx))
+        eq(core.await_get(ctx), "waf_test", "await set")
+        core.sset("wafmode", "auto")
+    finally:
+        core.SETTINGS.clear()
+        core.SETTINGS.update(old_settings)
+        core.jsave("settings", core.SETTINGS)
+        core.USERS.clear()
+        core.USERS.update(old_users)
+        core.jsave("users", core.USERS)
+
+
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -3840,7 +4104,10 @@ def main():
                test_v2220_wiring,
                test_v2230_parse_forms, test_v2230_waf, test_v2230_session,
                test_v2230_post_scan_live, test_v2230_header_scan_live,
-               test_v2230_wiring):
+               test_v2230_wiring,
+               test_v2240_tamper, test_v2240_waf_send_live,
+               test_v2240_scan_tamper_live, test_v2240_waf_probe_live,
+               test_v2240_wiring):
         try:
             fn()
         except Exception as exc:

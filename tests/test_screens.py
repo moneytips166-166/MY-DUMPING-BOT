@@ -46,6 +46,13 @@ def screens():
         out["admin_dash"] = core.admin_dash()
     out["batch_card"] = core.batch_card()
     out["session_card_empty"] = core.session_card(0)
+    out["waf_lab_card"] = core.waf_lab_card()
+    out["waf_result_card"] = core.waf_result_card(
+        {"url": "https://t.com/a.php?id=1", "status": 406, "waf": "ModSecurity",
+         "param": "id", "took": 1.2, "tamper": "",
+         "modes": [{"mode": "plain", "status": 406, "blocked": True, "waf": "ModSecurity"},
+                   {"mode": "comment", "status": 200, "blocked": False, "waf": ""}],
+         "verdict": "WAF active (ModSecurity) — ye modes pass hue: comment"})
     out["webscan_card_post"] = core._webscan_card(
         {"mode": "post", "done": 3, "tested": 12, "forms": 2, "no_form": 1,
          "vulns": [], "vuln_urls": [], "took": 1.5, "waf": "", "errors": 0})
@@ -92,7 +99,8 @@ async def cb_screens():
                  "inj:cat:sqli", "df:old", "m:inj",
                  "a:pzbatch", "a:pzwant", "a:injbatch",
                  "m:dork", "dk:cms", "dp:country", "m:dump", "kw:niche",
-                 "inj:post", "inj:header", "inj:session", "inj:session_set"):
+                 "inj:post", "inj:header", "inj:session", "inj:session_set",
+                 "inj:waf", "inj:waf_go", "inj:waf_mode"):
         ctx = FakeContext({})
         upd = FakeUpdate(data=data)
         try:

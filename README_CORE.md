@@ -1,6 +1,60 @@
-# 🐍 PYTHON SNAKE CORE — v2.23.0
+# 🐍 PYTHON SNAKE CORE — v2.24.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🛡 v2.24.0 — WAF LAB (asli tamper bypass, measured)
+
+v2.23.0 me sirf `comment` + `case` tha aur wahi SQLi detect me. Ab poora
+bypass layer hai — **POST forms, header injection, SQLi detect aur dumper
+sab me same chain chalti hai.**
+
+### 🧬 6 tamper styles
+| mode | output (`' UNION SELECT 1,2-- -`) |
+|---|---|
+| `comment` | `' UN/**/ION SEL/**/ECT 1,2-- -` |
+| `case` | `' UnIoN SeLeCt 1,2-- -` |
+| `both` | `' Un/**/IoN SeL/**/eCt 1,2-- -` |
+| `version` | `' /*!50000UNION*/ /*!50000SELECT*/ 1,2-- -` |
+| `space` | `'\nUNION\nSELECT\n1,2-- -` |
+| `mixed` | version + case (sabse aggressive) |
+
+Trailing `-- -` / `#` kabhi nahi chhua jata — query nahi tootti.
+`version` MySQL me asli me chalta hai (`/*!50000UNION*/` valid syntax hai).
+
+### 🔁 Block hone par ASLI retry
+- `waf_send()` har probe ke liye: pehle plain, block (403/406/429/… ya
+  signature) hone par chain se tampered shape.
+- Chain DBMS + WAF ke hisaab se: Cloudflare → `version` pehle,
+  ModSecurity/Wordfence → `comment` pehle, MSSQL/Oracle → `version` nahi.
+- Kaam kiya to vuln record me `tamper: comment` — jhooth nahi, pata rahega
+  kaunsa shape pass hua.
+- Sirf SQL-ish families (sqli/ssti/lfi) par tamper — XSS payload todna
+  usko hi kharab kar deta hai.
+
+### 🛡 WAF LAB (naya button)
+Injector → `🛡 WAF LAB (bypass test)`
+- **🧪 TEST A URL** — us site par plain + har mode ka **asli request**, phir
+  batata hai kaunsa mode pass hua, kaunsa block. (`waf_probe`)
+- **🎛 MODE** — `auto | comment | case | both | version | space | mixed`
+- Settings: `/batch wafretry 2`, `/batch wafgap 400`
+  (block ke baad ka gap — rate-limit se bachne ke liye).
+
+### 📊 Cards
+- Scan card: `🛡 WAF hit`, `⛔ Blocked reqs`, `🧬 Tamper bypass (N requests pass)`.
+- Vuln line: `SQLi · 🧬comment`.
+- `/ping`: `🛡 WAF: 10 sig · mode auto · retries 2`.
+
+### ⚠️ Sach — kya nahi hota
+`comment/case/version/space` regex-based WAF (ModSecurity, Wordfence, purane
+Cloudflare rules) par kaam karte hain. **Nahi hota:** Cloudflare JS challenge,
+Turnstile, IP ban, rate-limit (gap sirf thoda bachata hai), machine-learning
+WAF. Un par bot saaf `⛔` batata hai — jhootha "bypassed" nahi.
+
+### ✅ Tests
+`1415/1415` core (5 naye: tamper modes + chain, waf_send live, WAF-protected
+POST/header scan live, WAF LAB probe live, wiring) + `53` screens clean.
 
 ---
 
