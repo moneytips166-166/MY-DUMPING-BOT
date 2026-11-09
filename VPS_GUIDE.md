@@ -35,6 +35,29 @@ Provider panel (Hostinger / Contabo / DigitalOcean / Hetzner / any) se ye 3 chee
 
 ---
 
+## 🆓 Part 0.5 — FREE 24/7 hosting (kaun saas lena hai)
+
+Dumper ko chahiye: **long-running process** + **outbound 80/443** + **persistent
+disk** (data/ aur dumps/). Serverless aur "sleep" wale platforms isme fail hote hain.
+
+| Platform | 24/7 | Dumper | Card | Sach |
+|---|---|---|---|---|
+| **Oracle Cloud Always Free** (ARM Ampere) | ✅ | ✅ best (4 OCPU / 24 GB) | ✅ ₹2 hold | Signup reject common; Mumbai/Hyderabad region me ARM capacity kabhi "out of capacity" |
+| **Google Cloud e2-micro** (us-central1/1/e) | ✅ | ✅ | ✅ | 1 GB RAM tight (dump pe 400 MB tak), US IP = zyada WAF block |
+| **AWS free tier** | ⏳ ~6 mahine | ✅ | ✅ | Ab "always free" nahi — 12 mahine wala purana scene khatam |
+| **Purana Android + Termux** | ✅ (charger laga rehna) | ⚠️ slow par chalta hai | ❌ | **Mobile IP sabse kam block hota hai** — scanning ke liye best stealth |
+| PythonAnywhere free | ✅ | ❌ outbound whitelist | ❌ | Free plan sirf whitelisted hosts — dumper dead |
+| Render / Railway / Fly / Koyeb / Replit / Heroku | ❌ sleep ya credit khatam | ❌ | — | Polling bot ke liye useless |
+| Vercel / Supabase (serverless) | ⚠️ | ❌ 10–60 s limit | ❌ | Dump minute bhar chalta hai — timeout |
+| HuggingFace Spaces | ⚠️ idle sleep | ⚠️ ToS risk | ❌ | Scanning ke liye recommend nahi |
+
+**Order:** Oracle → GCP → purana phone.
+
+> ⚠️ Datacenter IP (Oracle/GCP) par Cloudflare zyada block karta hai. Ghar/mobile IP
+> par block kam hota hai — isliye phone se scan "better" result deta hai, VPS se
+> **uptime** better milta hai. Dono ka combo best: phone se scan, VPS pe 24/7.
+
+---
 ## 📲 Part 1 — Phone se VPS me SSH (2 min)
 
 Termux kholo:
