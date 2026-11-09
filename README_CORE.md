@@ -1,6 +1,54 @@
-# 🐍 PYTHON SNAKE CORE — v2.21.0
+# 🐍 PYTHON SNAKE CORE — v2.22.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 📥 v2.22.0 — PARAM TRUTH (pipeline audit ke saare bugs fix)
+
+Audit ka root cause ek tha: **parser parameterless URLs pass karta tha →
+injector unpe fake `?id=` lagata tha → results jhoothe → dumper unpe kaam nahi
+karta tha.** Ab poora pipeline sirf ASLI parameters par chalta hai.
+
+### 🔗 1) Parser — param filter + sach ka hisaab
+- Naya button: `🔗 PARAM URLs: AUTO | ONLY PARAMS | ALL` (cycle).
+- Dork khud param maang raha ho (`inurl:product.php?id=`) to us dork ka
+  paramless result **relax mode me bhi nahi** rakha jata (`relaxed_blocked`).
+- Completion card par: `🔗 With params` + `🚫 No-param` — pata chalega kitni
+  URLs actually testable hain.
+- `/batch paramonly auto|1|0` se admin default badal sakta hai.
+
+### 🎯 2) Injector — fake param bilkul band
+- Parameterless URL par ab **koi invented `?id=`/`?page=` nahi** — `inject_targets`
+  me param invent karna opt-in hai (`invent=True`), default OFF.
+- Bina param wali URL skip hoti hai aur **card par count** dikhta hai:
+  `🚫 No-param URLs: N (query param nahi — test nahi hue)`.
+- Agar 0 URL testable ho: saaf message + fix suggestion (PARSER filter ya
+  param discovery) — jhootha "safe" result nahi.
+- `or ["id"]` hardcoded fallback hata diya.
+- **🔎 PARAM DISCOVERY (naya, opt-in)**: paramless URL ke liye common param
+  names test hote hain — **sirf wahi param accept** hota hai jisse response
+  sach me badle (arjun-style). `/batch discover 1`, `discovercap`, `discovernames`.
+
+### 🧪 3) Baseline truth — false positive killer
+- Baseline fetch **fail** ho (timeout/block) to us URL ka koi verdict nahi
+  banta — pehle `base_body=""` ki wajah se page pe pehle se maujood `mysql`
+  ya SQL error bhi "naya" lagta tha → confirmed false positive.
+- Card par: `🧪 Baseline fail: N requests (compare possible nahi → vuln nahi gina)`.
+
+### 📥 4) Dumper — sirf real targets
+- Paramless URLs dump se pehle hi skip + count (`🚫 No-param skipped`), aur
+  agar ek bhi testable URL na ho to saaf message — jhootha dump nahi.
+- **Column count ab binary search** (1–6 linear, phir 7–30 binary) — 12+ column
+  wale pages par bhi sahi, kam requests me.
+- Blind row extraction default **0 → 2 rows/table** (pehle effectively off tha).
+- UI par farak saaf: **SQL DUMP = DB se asli rows** (UNION / error-based /
+  blind) vs **PAGE HARVEST = page ka data** (forms/links/emails/secrets).
+
+### ✅ Tests
+`1197/1197` pass (7 naye v2.22 tests: param truth, parser filter, fake-param
+band, baseline fail, column binary search, dump guard, wiring) + live aiohttp
+tests (vulnerable/clean pages).
 
 ---
 

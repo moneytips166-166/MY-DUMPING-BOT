@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.21.0", "VERSION")
+    eq(core.VERSION, "v2.22.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.21.0"')
+    contains(btxt, 'VERSION = "v2.22.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.21.0", "shim se version")
+    eq(core.VERSION, "v2.22.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1805,7 +1805,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.21.0", "version")
+    eq(core.VERSION, "v2.22.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -3286,6 +3286,241 @@ def test_v2210_wiring():
         ok(want in cbs, "menu: %s" % want)
     ok(not any(c.startswith("nc:") for c in cbs), "niches home pe nahi (v2.21)")
 
+
+def test_v2220_url_truth():
+    """v2.22.0 — param sach: URL me asli param hai ya nahi."""
+    group("v2.22.0 url truth")
+    ok(core.url_has_param("https://a.com/p.php?id=5"), "?id=5 = param")
+    ok(core.url_has_param("https://a.com/p.php?a="), "blank value bhi param")
+    ok(core.url_has_param("https://a.com/p.php?a=1&b=2"), "multiple params")
+    ok(not core.url_has_param("https://a.com/about.html"), "plain path = no param")
+    ok(not core.url_has_param("https://a.com/"), "root = no param")
+    ok(not core.url_has_param("https://a.com/p?utm_source=x"), "track param strip = no param")
+    eq(core.url_param_names("https://a.com/p.php?id=5&cat=2"), ["id", "cat"], "param names")
+
+    ok(core.dork_requires_param("inurl:product.php?id="), "dork ?id= param maangta hai")
+    ok(core.dork_requires_param('inurl:"index.php?page="'), "quoted param dork")
+    ok(not core.dork_requires_param("inurl:login.php"), "plain inurl = no param")
+    ok(not core.dork_requires_param("site:gov.in intitle:admin"), "site dork = no param")
+
+    # inject_targets — fake param DEFAULT nahi
+    eq(core.inject_targets(["https://a.com/about.html"], "'"), [],
+       "paramless URL par koi invented URL nahi")
+    inv = core.inject_targets(["https://a.com/about.html"], "'", invent=True)
+    ok(len(inv) >= 1 and "?id=" in inv[0], "invent=True par hi param (%s)" % inv[:1])
+    real = core.inject_targets(["https://a.com/p.php?id=5"], "'")
+    ok(real and all("id=%27" in u for u in real), "asli param replace (%s)" % real[:1])
+
+    # verdict — baseline fail par koi confirm nahi
+    body = "You have an error in your SQL syntax near '1'"
+    eq(core.inj_verdict("sqli", "'", 200, {}, body).get("type"), "SQLi",
+       "baseline ok = detect")
+    eq(core.inj_verdict("sqli", "'", 200, {}, body, "", "", baseline_ok=False), {},
+       "baseline fail = NO false positive")
+    eq(core.inj_verdict("xss", '"><svg/onload=alert(1)>', 200, {},
+                        '<body>"><svg/onload=alert(1)></body>', "", "",
+                        baseline_ok=False), {},
+       "xss baseline fail = clean")
+
+
+def test_v2220_parser_param_filter():
+    """v2.22.0 — parser paramless URLs ko relax me nahi rakhta."""
+    group("v2.22.0 parser param")
+    import asyncio as _aio
+    old_fetch = core.fetch_engine
+    old_gj = core.gj_enabled
+    old_settings = dict(core.SETTINGS)
+
+    async def fake_fetch(session, engine, dork, proxy=None, timeout=15.0,
+                         page=0, rot=None, miss=None):
+        return ["https://ex.com/plain/p%d.html" % i for i in range(4)]
+
+    core.fetch_engine = fake_fetch
+    core.gj_enabled = lambda: False
+    try:
+        # dork khud ?id= maang raha hai → paramless URLs bilkul nahi
+        core.SETTINGS["parse_param_filter"] = "auto"
+        res = _aio.run(core.parse_deep(["inurl:item.php?id=1"] * 3, max_urls=100,
+                                       use_proxy=False, strict=True, mode="fast",
+                                       budget=2))
+        st = res["stats"]
+        eq(st["unique"], 0, "param-required dork se paramless URL nahi")
+        ok(st["no_param"] > 0, "no-param counted (%s)" % st["no_param"])
+        ok(st["relaxed_blocked"] > 0, "relax band (%s)" % st["relaxed_blocked"])
+        eq(st["param_filter"], "auto", "filter mode reported")
+
+        # filter ONLY PARAMS → plain dork par bhi paramless drop
+        core.SETTINGS["parse_param_filter"] = "1"
+        res2 = _aio.run(core.parse_deep(["inurl:test"] * 2, max_urls=100,
+                                        use_proxy=False, strict=True, mode="fast",
+                                        budget=2))
+        st2 = res2["stats"]
+        eq(st2["unique"], 0, "ONLY PARAMS me paramless nahi")
+        ok(st2["no_param"] > 0, "ONLY PARAMS count (%s)" % st2["no_param"])
+
+        # param wale URLs pass + counted
+        async def good_fetch(session, engine, dork, proxy=None, timeout=15.0,
+                             page=0, rot=None, miss=None):
+            return ["https://ex.com/item.php?id=%d" % i for i in range(4)]
+
+        core.fetch_engine = good_fetch
+        core.SETTINGS["parse_param_filter"] = "1"
+        res3 = _aio.run(core.parse_deep(["inurl:item.php?id="] * 2, max_urls=100,
+                                        use_proxy=False, strict=True, mode="fast",
+                                        budget=4))
+        st3 = res3["stats"]
+        ok(st3["unique"] > 0, "param URL pass (%d)" % st3["unique"])
+        ok(st3["param_urls"] > 0, "param_urls counted (%d)" % st3["param_urls"])
+        eq(st3["no_param"], 0, "filter ne param URL nahi giraya")
+    finally:
+        core.fetch_engine = old_fetch
+        core.gj_enabled = old_gj
+        core.SETTINGS.clear()
+        core.SETTINGS.update(old_settings)
+
+
+def test_v2220_injector_no_fake():
+    """v2.22.0 — injector fake param nahi banata, no-param saaf batata hai."""
+    group("v2.22.0 injector truth")
+    import asyncio as _aio
+    urls = ["https://a.com/one.html", "https://b.com/two.php", "https://c.com/three"]
+    st = _aio.run(core.inj_scan(urls, "all", timeout=1, conc=4, max_targets=2))
+    eq(st["urls_testable"], 0, "0 testable")
+    eq(st["no_param_urls"], 3, "no-param 3")
+    eq(st["tested"], 0, "koi request nahi")
+    eq(st["total"], 0, "total 0")
+    eq(st["vulns"], [], "koi fake vuln nahi")
+
+    # discovery ON → verified param ke saath scan chalta hai
+    # (network nahi — sirf plan/discovery function ka behaviour)
+    async def fake_fetch(u):
+        if "?" not in u:
+            return (200, {}, "<html>hello page</html>")
+        if "page=" in u:
+            return (200, {}, "<html>hello page</html>")           # same → reject
+        return (200, {}, "<html>hello page " + ("X" * 400) + "</html>")  # change → accept
+
+    found = _aio.run(core.discover_params("https://a.com/one.html", fake_fetch, limit=4))
+    ok(found, "discovery ne param dhoondha (%s)" % found)
+    ok("page" not in found, "same response wala param reject (%s)" % found)
+
+
+def test_v2220_baseline_fail():
+    """v2.22.0 — live: baseline fail hone par URL vuln nahi banti."""
+    group("v2.22.0 baseline fail")
+    import asyncio as _aio
+    from aiohttp import web
+
+    async def page(request):
+        # sirf payload wali request par SQL error dikhta hai
+        if "'" in request.query_string:
+            return web.Response(text="You have an error in your SQL syntax near '1'",
+                                content_type="text/html")
+        return web.Response(text="<html>normal page</html>", content_type="text/html")
+
+    async def go():
+        app = web.Application()
+        app.add_routes([web.get("/p.php", page)])
+        runner = web.AppRunner(app, access_log=None)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        url = "http://127.0.0.1:%d/p.php?id=1" % port
+        try:
+            st = await core.inj_scan([url], "sqli", timeout=3, conc=2, max_targets=2)
+            st2 = await core.inj_scan(["http://127.0.0.1:1/p.php?id=1"], "sqli",
+                                      timeout=1.2, conc=2, max_targets=1)
+        finally:
+            await runner.cleanup()
+        return st, st2
+
+    old_settings = dict(core.SETTINGS)
+    core.SETTINGS["inj_host_gap_ms"] = 0
+    try:
+        st, st2 = _aio.run(go())
+        ok(len(st["vulns"]) >= 1, "baseline ok = vuln mila")
+        eq(st["baseline_fail"], 0, "baseline fail 0")
+        eq(st2["vulns"], [], "baseline fail = koi false positive nahi")
+    finally:
+        core.SETTINGS.clear()
+        core.SETTINGS.update(old_settings)
+
+
+def test_v2220_columns_binary():
+    """v2.22.0 — ORDER BY column count binary search (12+ bhi)."""
+    group("v2.22.0 column count")
+    import asyncio as _aio
+    calls = {"n": 0}
+    real_req = core._sqli_req
+
+    async def fake_req(session, url, timeout, rot=None, budget=None):
+        calls["n"] += 1
+        m = re.search(r"ORDER[+ ]BY[+ ](\d+)", url)
+        n = int(m.group(1)) if m else 0
+        body = "SAME" if n <= 9 else "DIFFERENT PAGE CONTENT " * 10
+        return {"status": 200, "body": body}
+
+    core._sqli_req = fake_req
+    try:
+        det = {"raw": "http://x/a.php?id=1", "param": "id", "quote": "'",
+               "comment": "-- -", "true": {"body": "SAME"}, "base": {"body": "SAME"},
+               "noise": 0}
+        cols = _aio.run(core._sqli_cols(None, det, 5))
+        eq(cols, 9, "9 columns sahi mile")
+        ok(calls["n"] <= 12, "binary search requests kam (%d)" % calls["n"])
+    finally:
+        core._sqli_req = real_req
+
+
+def test_v2220_dump_guard():
+    """v2.22.0 — dumper paramless URLs par jhootha dump nahi karta."""
+    group("v2.22.0 dump guard")
+    import asyncio as _aio
+    ctx = FakeContext({})
+    upd = FakeUpdate(uid=ADMIN, text="")
+    _aio.run(core._run_sqldump(upd, ctx, ["https://a.com/about.html",
+                                          "https://b.com/x.php"]))
+    txt = "\n".join(upd.texts())
+    ok("0 testable" in txt.lower() or "🚫" in txt, "0 testable bataya")
+    ok("No parameter" in txt or "🚫" in txt, "no-parameter count dikha")
+
+
+def test_v2220_wiring():
+    """v2.22.0 — naye buttons routed + settings surface."""
+    group("v2.22.0 wiring")
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    for bit in ('if rest == "param":', 'if rest == "discover":',
+                "def url_has_param", "def dork_requires_param",
+                "async def discover_params", "baseline_ok=base_ok",
+                "/batch paramonly", "ifs = \"1\"" if False else "inj_discover"):
+        contains(src, bit)
+    ok("invent: bool = False" in src, "invent default off")
+    ok('params = (url_reverse(raw).get("params") or [])[:2] or ["id"]' not in src,
+       "hardcoded 'id' fallback hata")
+    ok("or [\"id\"]" not in src, "koi ['id'] fallback nahi")
+
+    # callbacks live (settings wapas — disk par test ki gandagi nahi)
+    old_settings = dict(core.SETTINGS)
+    try:
+        ctx = FakeContext({})
+        upd = FakeUpdate(uid=ADMIN, data="pr:param")
+        asyncio.run(core._on_callback_inner(upd, ctx))
+        ok(bool(upd.texts()), "pr:param jawab deta hai")
+        upd2 = FakeUpdate(uid=ADMIN, data="inj:discover")
+        asyncio.run(core._on_callback_inner(upd2, FakeContext({})))
+        ok(bool(upd2.texts()), "inj:discover jawab deta hai")
+    finally:
+        core.SETTINGS.clear()
+        core.SETTINGS.update(old_settings)
+        core.jsave("settings", core.SETTINGS)
+
+    # batch card me paramonly line
+    t = core.batch_card()
+    contains(t, "paramonly")
+    contains(t, "discover")
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -3320,7 +3555,11 @@ def main():
                test_v2210_task_engine, test_v2210_support_inbox,
                test_v2210_user_proxy, test_v2210_expand,
                test_v2210_dork_freshness, test_v2210_admin_manager,
-               test_v2210_wiring):
+               test_v2210_wiring,
+               test_v2220_url_truth, test_v2220_parser_param_filter,
+               test_v2220_injector_no_fake, test_v2220_baseline_fail,
+               test_v2220_columns_binary, test_v2220_dump_guard,
+               test_v2220_wiring):
         try:
             fn()
         except Exception as exc:
