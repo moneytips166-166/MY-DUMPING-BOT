@@ -1,10 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=9)
+# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=10)
 #   ./update.sh   →  khud ko latest karta hai, phir bot.py (Termux + DBF) + restart
 #   ./update.sh --no-self   →  self-update skip
 # NOTE: Termux me /tmp writable nahi — log script folder ke logs/ me jata hai.
 set -u
-UPDATER_V=9
+UPDATER_V=10
 
 REPO="moneytips166-166/MY-DUMPING-BOT"
 BRANCH="arena/063f862a-my-dumping-bot"
@@ -267,6 +267,11 @@ _sync_shadow() {
         _bk="$_sh_dir/backups/new_old_$(date +%Y%m%d_%H%M%S).py"
         cp -f "$_sh_dir/new.py" "$_bk" 2>/dev/null && echo "💾 purana new.py backup: $_bk"
     fi
+    # 📦 user ka purana requirements.txt (agar alag hai) — side me rakh do
+    if [ -f "$_sh_dir/requirements.txt" ]; then
+        rm -f "$_sh_dir/requirements.old.txt" 2>/dev/null
+        cp -f "$_sh_dir/requirements.txt" "$_sh_dir/requirements.old.txt" 2>/dev/null
+    fi
     _ok=0
     for _f in $SH_FILES; do
         if fetch_file "shadow/$_f" "$_sh_dir/$_f.new" 2>/dev/null \
@@ -299,12 +304,27 @@ _sync_shadow "$DIR/shadow"
 if [ -d "$EXT" ] && [ "$(cd "$DIR" && pwd -P)" != "$(cd "$EXT" 2>/dev/null && pwd -P)" ]; then
     _sync_shadow "$EXT/shadow"
 fi
+SHADOW_READY=""
 # phone ka alag shadow folder (screenshot wala: /storage/emulated/0/shadow)
 if [ -d "$(dirname "$SHADOW_EXT")" ] || mkdir -p "$SHADOW_EXT" 2>/dev/null; then
     if [ "$(cd "$SHADOW_EXT" 2>/dev/null && pwd -P)" != "$(cd "$DIR/shadow" && pwd -P)" ] && \
        [ "$(cd "$SHADOW_EXT" 2>/dev/null && pwd -P)" != "$(cd "$EXT/shadow" 2>/dev/null && pwd -P)" ]; then
         _sync_shadow "$SHADOW_EXT"
+        [ -f "$SHADOW_EXT/new.py" ] && SHADOW_READY="$SHADOW_EXT"
     fi
+fi
+if [ -z "$SHADOW_READY" ] && [ -f "$EXT/shadow/new.py" ]; then
+    SHADOW_READY="$EXT/shadow"
+fi
+
+# 🎛 ~/shadowctl.sh — kahin se bhi shadow chalao (path yaad rakhne ki zaroorat nahi)
+if [ -n "$SHADOW_READY" ]; then
+    cat > "$HOME/shadowctl.sh" <<CTLEOF
+#!/usr/bin/env bash
+# 🐍 SHADOW X control — bash ~/shadowctl.sh start|stop|restart|status|logs
+exec bash "$SHADOW_READY/run.sh" "\${1:-start}"
+CTLEOF
+    chmod +x "$HOME/shadowctl.sh" 2>/dev/null
 fi
 
 # 🔐 config DBF folder me bhi (bot wahan se chale to bhi token mile)
@@ -510,6 +530,14 @@ if [ -n "$PIDS" ]; then
     echo "→ Telegram: /ping  →  $VER (build ${BUILD:-?})"
     echo "📂 bot.py: $RUN_DIR/bot.py"
     [ -n "$MIRRORED" ] && echo "📂 mirror:$MIRRORED"
+    if [ -n "$SHADOW_READY" ]; then
+        echo ""
+        echo "🐍 SHADOW X (alag bot) ready: $SHADOW_READY"
+        echo "   cd $SHADOW_READY"
+        echo "   bash restart.sh        # (./restart.sh mat likho — storage noexec hai)"
+        echo "   bash status.sh | bash stop.sh | bash run.sh logs"
+        echo "   ya kahin se:  bash ~/shadowctl.sh restart"
+    fi
     if [ -f "$CFG" ]; then
         if grep -q '"bot_token": ""' "$CFG" 2>/dev/null; then
             echo "⚠️ token khaali hai — chalao: ./setconfig.sh --token <TOKEN> && ./restart.sh"

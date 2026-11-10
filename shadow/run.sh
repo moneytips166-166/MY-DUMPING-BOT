@@ -48,7 +48,7 @@ case "${1:-start}" in
     pkill -f "new.py" 2>/dev/null && echo "🧹 new.py process saaf" || true
     ;;
   restart)
-    "$0" stop; sleep 1; "$0" start
+    bash "$0" stop; sleep 1; bash "$0" start
     ;;
   logs)
     tail -f "$LOG"

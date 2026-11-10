@@ -8,11 +8,18 @@
 ```bash
 pkg update -y && pkg install -y python screen
 
-cd ~/MY-DUMPING-BOT
-./update.sh            # bot.py + shadow/ (aur /storage/emulated/0/shadow) dono update
+cd ~/snake             # jahan tumhara main bot + update.sh hai
+bash update.sh         # bot.py + shadow/ (aur /storage/emulated/0/shadow) dono update
 
-cd shadow              # ya: cd /storage/emulated/0/shadow
-pip install -r requirements.txt
+cd /storage/emulated/0/shadow
+bash restart.sh
+```
+
+`update.sh` khatam hone par khud batata hai: `🐍 SHADOW X ready: <folder>`.
+Agar `~/snake` me `update.sh` na ho to pehle dhoondo:
+
+```bash
+find ~ -maxdepth 3 -name update.sh 2>/dev/null
 ```
 
 ## 🔑 Token + Admin (default set hai)
@@ -45,12 +52,16 @@ Priority: `SHADOW_TOKEN` env → `shadow_config.json` → `new.py` ka default.
 ```bash
 cd /storage/emulated/0/shadow
 
-./start.sh      # background me start
-./status.sh     # chal raha hai ya nahi
-./restart.sh    # fresh restart (purana session saaf)
-./stop.sh       # band
-./run.sh logs   # live log
+bash start.sh      # background me start
+bash status.sh     # chal raha hai ya nahi
+bash restart.sh    # fresh restart (purana session saaf)
+bash stop.sh       # band
+bash run.sh logs   # live log
 ```
+
+> ⚠️ **`./start.sh` mat likho** — `/storage/emulated/0` `noexec` mount hota hai,
+> isliye `Permission denied` aata hai. `bash start.sh` likhne se chalta hai.
+> (`~/snake` jaisi internal storage me `./start.sh` bhi chalta hai.)
 
 `./update.sh` (main repo me) shadow folder ko **khud update** karta hai —
 `~/MY-DUMPING-BOT/shadow` aur `/storage/emulated/0/shadow` dono me.

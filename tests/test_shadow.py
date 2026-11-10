@@ -322,6 +322,39 @@ def main():
     chk(r1["status"] == 200 and r1["body"] == "ok-proxy", "dead proxy fallback fail")
     chk(r2["status"] == 200, "direct fetch fail")
 
+    # ── scripts: /storage noexec safe (bash se chalne chahiye) ──────────────
+    for name in ("start", "stop", "restart", "status"):
+        path = os.path.join(ROOT, "shadow", name + ".sh")
+        txt = open(path, encoding="utf-8").read()
+        chk("exec bash" in txt, "%s.sh bash se exec nahi karta" % name)
+        chk(name in txt, "%s.sh action missing" % name)
+    run_sh = open(os.path.join(ROOT, "shadow", "run.sh"), encoding="utf-8").read()
+    chk('bash "$0" stop' in run_sh, "run.sh recursive stop bash se nahi")
+    chk('bash "$0" start' in run_sh, "run.sh recursive start bash se nahi")
+    chk('"$0" stop' not in run_sh.replace('bash "$0" stop', ""), "run.sh me direct $0 bacha")
+    readme = open(os.path.join(ROOT, "shadow", "README.md"), encoding="utf-8").read()
+    chk("bash restart.sh" in readme, "README me bash restart.sh nahi")
+    chk("noexec" in readme, "README me noexec note nahi")
+
+    # wrappers ko bina +x ke bhi bash chalana chahiye (asli test)
+    import subprocess as _sp2
+    import tempfile as _tf
+    tmp2 = _tf.mkdtemp(prefix="shadow_sh_")
+    for name in ("run", "start", "stop", "restart", "status"):
+        src = os.path.join(ROOT, "shadow", name + ".sh")
+        dst = os.path.join(tmp2, name + ".sh")
+        open(dst, "w", encoding="utf-8").write(open(src, encoding="utf-8").read())
+        os.chmod(dst, 0o644)                      # no +x — noexec jaisa
+    try:
+        r2 = _sp2.run(["bash", os.path.join(tmp2, "status.sh")],
+                      capture_output=True, text=True, timeout=30,
+                      env={**os.environ, "PATH": "/usr/bin:/bin"})
+        chk("Permission denied" not in (r2.stdout + r2.stderr),
+            "bash se chalane par permission denied")
+    finally:
+        import shutil as _sh2
+        _sh2.rmtree(tmp2, ignore_errors=True)
+
     # ── commands ─────────────────────────────────────────────────────────────
     m.cmd_start(MsgObj("/start"))
     chk(str(uid) in m.jload("users", {}), "/start ne user save nahi kiya")
