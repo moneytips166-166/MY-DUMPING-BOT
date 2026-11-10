@@ -1,10 +1,16 @@
 
 
 #!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE helpers  (SNAKE_LIB_V=6)
-SNAKE_LIB_V=6
+# 🐍 PYTHON SNAKE helpers  (SNAKE_LIB_V=7)
+SNAKE_LIB_V=7
 SNAKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SNAKE_EXT="/storage/emulated/0/DBF"
+SNAKE_EXT="${SNAKE_EXT:-/storage/emulated/0/DBF}"
+# bot.py kahan hai?  DBF (user ka asli folder) pehle, phir script ka folder
+if [ -f "$SNAKE_EXT/bot.py" ]; then
+    SNAKE_RUN="$SNAKE_EXT"
+else
+    SNAKE_RUN="$SNAKE_DIR"
+fi
 SNAKE_SCREEN="snake"
 SNAKE_LOGDIR="$SNAKE_DIR/logs"
 mkdir -p "$SNAKE_LOGDIR" "$SNAKE_DIR/backups" 2>/dev/null
@@ -44,7 +50,7 @@ snake_screen_kill() {
 }
 
 snake_lock_clear() {
-    rm -f "$SNAKE_DIR/.snake.lock" "$SNAKE_EXT/.snake.lock" \
+    rm -f "$SNAKE_RUN/.snake.lock" "$SNAKE_DIR/.snake.lock" "$SNAKE_EXT/.snake.lock" \
           "$HOME/snake/.snake.lock" 2>/dev/null
 }
 
@@ -71,18 +77,18 @@ snake_start() {
     local py log rc=1 waited=0 name="$SNAKE_SCREEN"
     py="$(snake_py)"
     [ -z "$py" ] && { echo "❌ python nahi mila — pkg install python"; return 1; }
-    [ -f "$SNAKE_DIR/bot.py" ] || { echo "❌ bot.py nahi mila ($SNAKE_DIR)"; return 1; }
+    [ -f "$SNAKE_RUN/bot.py" ] || { echo "❌ bot.py nahi mila ($SNAKE_RUN)"; return 1; }
     log="$SNAKE_LOGDIR/bot_$(date +%Y%m%d_%H%M%S).log"
-    cd "$SNAKE_DIR" || return 1
+    cd "$SNAKE_RUN" || return 1
     snake_lock_clear
 
     if command -v screen >/dev/null 2>&1; then
         snake_screen_kill
-        if ! screen -dmS "$name" bash -c "cd '$SNAKE_DIR' && exec '$py' bot.py >> '$log' 2>&1"; then
+        if ! screen -dmS "$name" bash -c "cd '$SNAKE_RUN' && exec '$py' bot.py >> '$log' 2>&1"; then
             # naam clash (purana session zinda) → unique naam, phir bhi chalta rahe
             name="snake_$(date +%s)"
             echo "→ 'snake' session clash — naya naam: $name"
-            screen -dmS "$name" bash -c "cd '$SNAKE_DIR' && exec '$py' bot.py >> '$log' 2>&1"
+            screen -dmS "$name" bash -c "cd '$SNAKE_RUN' && exec '$py' bot.py >> '$log' 2>&1"
         fi
         rc=0
     fi
@@ -95,7 +101,7 @@ snake_start() {
         sleep 1; waited=$((waited + 1))
         snake_alive && break
     done
-    echo "$log" > "$SNAKE_DIR/.last_log"
+    echo "$log" > "$SNAKE_RUN/.last_log" 2>/dev/null || echo "$log" > "$SNAKE_DIR/.last_log"
     if snake_alive; then
         echo "🚀 bot chalu (pid $(snake_pids | tr '\n' ' '))"
         echo "📝 log: $log"
@@ -109,6 +115,7 @@ snake_start() {
 }
 
 snake_version() {
-    [ -f "$SNAKE_DIR/bot.py" ] && \
-        grep -m1 '^VERSION = ' "$SNAKE_DIR/bot.py" | cut -d'"' -f2 || echo "?"
+    _f="$SNAKE_RUN/bot.py"
+    [ -f "$_f" ] || _f="$SNAKE_DIR/bot.py"
+    sed -n 's/^VERSION = "\(.*\)"/\1/p' "$_f" 2>/dev/null | head -1
 }

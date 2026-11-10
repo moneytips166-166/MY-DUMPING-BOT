@@ -4,6 +4,34 @@
 
 ---
 
+## 🐍 DO BOTS — ek folder, alag alag commands
+
+Dono files **ek hi folder** me: `/storage/emulated/0/DBF/`
+
+| File | Bot | Screen | Data |
+|---|---|---|---|
+| `bot.py` | PYTHON SNAKE (main) | `snake` | `DBF/data/` |
+| `new.py` | SHADOW X | `shadow` | `DBF/shadow_data/` |
+
+Commands (`~/snake` ya `DBF` — dono jagah scripts rehti hain):
+
+```
+bash update.sh      # dono files update (bot.py + new.py) + dono restart
+bash restart.sh     # main bot restart        bash restart2.sh  → shadow restart
+bash stop.sh        # main stop               bash stop2.sh     → shadow stop
+bash start.sh       # main start              bash start2.sh    → shadow start
+bash status.sh      # main status             bash status2.sh   → shadow status
+bash update2.sh     # sirf shadow update
+bash bots.sh        # dono bots ka status ek screen me
+```
+
+`/storage/emulated/0` **noexec** hai → `./restart2.sh` nahi, `bash restart2.sh`.
+
+Har bot ka **apna token** hona chahiye — ek hi token pe do bots = 409
+(dono me same bot dikhega). `update.sh` khud warn karta hai.
+
+---
+
 ## 🎨 v2.25.0 — BUTTON COLOURS + SHADOW X v3.0
 
 ### 🌈 1) Har button ka rang (Telegram Bot API 9.4)

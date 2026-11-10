@@ -47,7 +47,23 @@ export SHADOW_TOKEN="123456:ABCDEF..."
 Priority: `SHADOW_TOKEN` env → `shadow_config.json` → `new.py` ka default.
 `shadow_config.json` gitignored hai — repo me kabhi nahi jaata.
 
-## ▶️ Chalana (sirf screen se — main bot jaisa)
+## ▶️ Chalana — do tarike
+
+**A) DBF me (recommended, main bot ke saath):** `new.py` `/storage/emulated/0/DBF/` me
+rehta hai, control scripts `~/snake/` me:
+
+```bash
+cd ~/snake
+bash restart2.sh     # shadow restart
+bash stop2.sh
+bash status2.sh
+bash update2.sh      # sirf shadow update
+bash bots.sh         # dono bots ka status
+```
+
+**B) alag shadow folder se:**
+
+
 
 ```bash
 cd /storage/emulated/0/shadow

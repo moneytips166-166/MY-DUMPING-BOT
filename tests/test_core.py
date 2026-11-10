@@ -2216,7 +2216,8 @@ def test_v2131_update_proof():
     contains(sc, "khaali token kabhi disk pe nahi")
     ok("8937044612" in sc, "owner default admin")
     lib = open(os.path.join(root, "snake_lib.sh"), encoding="utf-8").read()
-    contains(lib, "SNAKE_LIB_V=6")
+    _mv = re.search(r"SNAKE_LIB_V=(\d+)", lib)
+    ok(bool(_mv) and int(_mv.group(1)) >= 6, "SNAKE_LIB_V marker")
     contains(lib, "*/bot.py")                 # absolute-path wala process bhi kill
     contains(lib, "snake_$(date +%s)")          # naam clash → unique session name
     contains(lib, "snake_lock_clear")
@@ -4122,6 +4123,76 @@ def test_v2250_button_colors():
 
 
 
+def test_v2260_two_bots():
+    """bot #1 (bot.py) + bot #2 (new.py) — ek folder, alag scripts."""
+    group("two bots — DBF/bot.py + DBF/new.py")
+    import subprocess as _sp
+    import tempfile
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # files maujood
+    for f in ("shadow_lib.sh", "start2.sh", "stop2.sh", "restart2.sh",
+              "status2.sh", "update2.sh", "bots.sh"):
+        ok(os.path.exists(os.path.join(root, f)), f + " missing")
+
+    up = open(os.path.join(root, "vps", "termux_update.sh"), encoding="utf-8").read()
+    m = re.search(r"^UPDATER_V=(\d+)", up, re.M)
+    ok(bool(m) and int(m.group(1)) >= 11, "UPDATER_V >= 11")
+    for bit in ("--shadow-only", "--main-only", "SHADOW_READY", '"$EXT/new.py"',
+                "start2.sh", "stop2.sh", "restart2.sh", "status2.sh", "update2.sh",
+                "bots.sh", "shadow_lib.sh", "DONO BOTS KA TOKEN SAME",
+                "_migrate_state"):
+        contains(up, bit)
+    # shadow sync MODE guard ke bahar (--shadow-only me bhi chale)
+    ok(up.index("MODE != shadow ka end") < up.index("_sync_shadow \"$DIR/shadow\""),
+       "shadow sync guard ke andar hai")
+
+    lib = open(os.path.join(root, "snake_lib.sh"), encoding="utf-8").read()
+    m2 = re.search(r"SNAKE_LIB_V=(\d+)", lib)
+    ok(bool(m2) and int(m2.group(1)) >= 7, "SNAKE_LIB_V >= 7")
+    contains(lib, "SNAKE_RUN")           # bot.py DBF se chale
+    contains(lib, "$SNAKE_RUN/bot.py")
+
+    sl = open(os.path.join(root, "shadow_lib.sh"), encoding="utf-8").read()
+    for bit in ("SHADOW_LIB_V=1", "SHADOW_DATA", "SHADOW_DATA_DIR", "new.py|*/new.py",
+                "shadow_kill_all",
+                "shadow_start", "DEFAULT_TOKEN", "shadow_deps"):
+        contains(sl, bit)
+    # main bot ke session/process se takrao na ho
+    ok("bot\\.py" not in sl, "shadow_lib bot.py ko match karta hai")
+    ok('SHADOW_SCREEN="shadow"' in sl, "shadow ka apna screen session")
+
+    np = open(os.path.join(root, "shadow", "new.py"), encoding="utf-8").read()
+    contains(np, "SHADOW_DATA_DIR")
+    contains(np, "DATA_ROOT")
+
+    u2 = open(os.path.join(root, "update2.sh"), encoding="utf-8").read()
+    contains(u2, "--shadow-only")
+
+    # ── ASLI shell test: shadow_lib temp DBF ke saath ──
+    tmp = tempfile.mkdtemp(prefix="twobots_")
+    try:
+        open(os.path.join(tmp, "new.py"), "w").write(
+            'VERSION = "v3.0"\nDEFAULT_TOKEN = "123456:FAKE_TOKEN_FOR_TEST"\n')
+        open(os.path.join(tmp, "bot.py"), "w").write('VERSION = "v2.25.0"\n')
+        sh = ('export SHADOW_DBF="%s"; export SHADOW_HOME="%s"; '
+              'cd "%s"; . "%s/shadow_lib.sh"; '
+              'echo "RUN=$SHADOW_RUN_DIR"; echo "DAT=$SHADOW_DATA"; '
+              'echo "TOK=$(shadow_token)"; '
+              'shadow_alive && echo "ALIVE=1" || echo "ALIVE=0"; '
+              'echo "PIDS=$(shadow_pids)"') % (
+            tmp, tmp, root, root)
+        r = _sp.run(["bash", "-c", sh], capture_output=True, text=True, timeout=60)
+        out = r.stdout
+        ok("RUN=" + tmp in out, "SHADOW_RUN_DIR DBF nahi chuna")
+        ok("DAT=" + tmp in out, "SHADOW_DATA galat")
+        ok("TOK=123456:FAKE_TOKEN_FOR_TEST" in out, "default token nahi mila")
+        ok("ALIVE=0" in out, "fake bot zinda dikha")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_v2250_updater_mirror():
     """updater v9 — bot.py sab bot folders me (snake / DBF / chalta hua folder)."""
     group("updater v9 mirror")
@@ -4140,9 +4211,12 @@ def test_v2250_updater_mirror():
     ok(up.index("3) SCRIPTS REFRESH") < up.index("3.5) scripts refresh"), "3.5 order")
 
     # ── asli shell test: _same_dir + _mirror_to extract karke chalao ──
-    start = up.index("_same_dir() {")
+    same_start = up.index("_same_dir() {")
+    same_end = up.index("MIRRORED=", same_start)
+    same_fn = up[same_start:same_end]
+    start = up.index("_mirror_to() {")
     end = up.index("# 3 jagah:")
-    funcs = up[start:end]
+    funcs = same_fn + up[start:end]
     tmp = tempfile.mkdtemp(prefix="upd_mirror_")
     try:
         src = os.path.join(tmp, "src")
@@ -4222,7 +4296,8 @@ def main():
                test_v2240_tamper, test_v2240_waf_send_live,
                test_v2240_scan_tamper_live, test_v2240_waf_probe_live,
                test_v2240_wiring, test_v2250_button_colors,
-               test_v2250_updater_mirror):
+               test_v2250_updater_mirror,
+               test_v2260_two_bots):
         try:
             fn()
         except Exception as exc:

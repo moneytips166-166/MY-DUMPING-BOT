@@ -49,8 +49,11 @@ except ImportError:
 #  CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-DUMP_DIR = os.path.join(BASE_DIR, "dumps")
+# 🗄 data apni alag jagah — main bot (bot.py) ke data/ se takrao na ho.
+#    script se: SHADOW_DATA_DIR=/storage/emulated/0/DBF/shadow_data bash restart2.sh
+DATA_ROOT = (os.environ.get("SHADOW_DATA_DIR") or "").strip() or BASE_DIR
+DATA_DIR = os.path.join(DATA_ROOT, "data")
+DUMP_DIR = os.path.join(DATA_ROOT, "dumps")
 for _d in (DATA_DIR, DUMP_DIR):
     os.makedirs(_d, exist_ok=True)
 
