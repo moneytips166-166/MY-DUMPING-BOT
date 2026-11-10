@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.25.0", "VERSION")
+    eq(core.VERSION, "v2.26.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.25.0"')
+    contains(btxt, 'VERSION = "v2.26.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.25.0", "shim se version")
+    eq(core.VERSION, "v2.26.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1805,7 +1805,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.25.0", "version")
+    eq(core.VERSION, "v2.26.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -4123,71 +4123,99 @@ def test_v2250_button_colors():
 
 
 
-def test_v2260_two_bots():
-    """bot #1 (bot.py) + bot #2 (new.py) — ek folder, alag scripts."""
-    group("two bots — DBF/bot.py + DBF/new.py")
+def test_v2260_shadow_removed():
+    """v2.26.0 — SHADOW X (bot #2) poora hata; ab sirf EK bot (bot.py)."""
+    group("shadow system removed — ek hi bot")
     import subprocess as _sp
     import tempfile
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # files maujood
+    # shadow ki koi file repo me nahi bachi
     for f in ("shadow_lib.sh", "start2.sh", "stop2.sh", "restart2.sh",
-              "status2.sh", "update2.sh", "bots.sh"):
+              "status2.sh", "update2.sh", "bots.sh", "shadow/new.py",
+              "shadow/README.md", "shadow/requirements.txt",
+              "tests/test_shadow.py"):
+        ok(not os.path.exists(os.path.join(root, f)), f + " abhi bhi maujood hai")
+
+    # main bot ki files bilkul theek-salamat
+    for f in ("bot.py", "snake_lib.sh", "start.sh", "stop.sh",
+              "restart.sh", "status.sh", "update.sh", "vps/termux_update.sh"):
         ok(os.path.exists(os.path.join(root, f)), f + " missing")
 
     up = open(os.path.join(root, "vps", "termux_update.sh"), encoding="utf-8").read()
     m = re.search(r"^UPDATER_V=(\d+)", up, re.M)
-    ok(bool(m) and int(m.group(1)) >= 11, "UPDATER_V >= 11")
-    for bit in ("--shadow-only", "--main-only", "SHADOW_READY", '"$EXT/new.py"',
-                "start2.sh", "stop2.sh", "restart2.sh", "status2.sh", "update2.sh",
-                "bots.sh", "shadow_lib.sh", "DONO BOTS KA TOKEN SAME",
+    ok(bool(m) and int(m.group(1)) >= 12, "UPDATER_V >= 12")
+    for bad in ("_sync_shadow", "SHADOW_READY", "SHADOW_LIB_V",
+                "shadow_kill_all", "shadow_start", "DONO BOTS KA TOKEN SAME"):
+        ok(bad not in up, "updater me purana shadow code: " + bad)
+    # purane command par friendly note (crash nahi)
+    contains(up, "--shadow-only")
+    contains(up, "purge_shadow_dir")
+    contains(up, "purge_shadow_proc")
+    # cleanup block ke BAAHAR shadow ka koi runtime code nahi
+    _a = up.index("# <<SHADOW_PURGE")
+    _b = up.index("# SHADOW_PURGE>>")
+    body = up[:_a] + up[_b:]
+    for bad in ("new.py", "shadow_lib", "start2", "stop2", "restart2",
+                "status2", "update2", "bots.sh"):
+        ok(bad not in body, "cleanup ke bahar bhi shadow ref: " + bad)
+    # main bot ka kaam waise hi
+    for bit in ("_mirror_to", "RUN_DIR", "snake_kill_all", "snake_start",
                 "_migrate_state"):
         contains(up, bit)
-    # shadow sync MODE guard ke bahar (--shadow-only me bhi chale)
-    ok(up.index("MODE != shadow ka end") < up.index("_sync_shadow \"$DIR/shadow\""),
-       "shadow sync guard ke andar hai")
 
-    lib = open(os.path.join(root, "snake_lib.sh"), encoding="utf-8").read()
-    m2 = re.search(r"SNAKE_LIB_V=(\d+)", lib)
-    ok(bool(m2) and int(m2.group(1)) >= 7, "SNAKE_LIB_V >= 7")
-    contains(lib, "SNAKE_RUN")           # bot.py DBF se chale
-    contains(lib, "$SNAKE_RUN/bot.py")
+    # scripts me shadow ka koi nishaan nahi
+    for f in ("snake_lib.sh", "status.sh", "restart.sh", "start.sh", "stop.sh"):
+        txt = open(os.path.join(root, f), encoding="utf-8").read()
+        ok("shadow" not in txt.lower(), f + " me shadow ka reference")
+    # README: purane shadow commands nahi (sirf removal table me naam)
+    rd = open(os.path.join(root, "README_CORE.md"), encoding="utf-8").read()
+    for bad in ("bash restart2.sh", "bash stop2.sh", "bash start2.sh",
+                "bash status2.sh", "bash update2.sh", "bash bots.sh"):
+        ok(bad not in rd, "README me purana command: " + bad)
+    contains(rd, "v2.26.0 — SHADOW X POORA HATA")
 
-    sl = open(os.path.join(root, "shadow_lib.sh"), encoding="utf-8").read()
-    for bit in ("SHADOW_LIB_V=1", "SHADOW_DATA", "SHADOW_DATA_DIR", "new.py|*/new.py",
-                "shadow_kill_all",
-                "shadow_start", "DEFAULT_TOKEN", "shadow_deps"):
-        contains(sl, bit)
-    # main bot ke session/process se takrao na ho
-    ok("bot\\.py" not in sl, "shadow_lib bot.py ko match karta hai")
-    ok('SHADOW_SCREEN="shadow"' in sl, "shadow ka apna screen session")
+    req = open(os.path.join(root, "tests", "requirements.txt"), encoding="utf-8").read()
+    ok("pyTelegramBotAPI" not in req, "tests req me shadow dep bachi")
+    runtxt = open(os.path.join(root, "tests", "run.sh"), encoding="utf-8").read()
+    ok("test_shadow" not in runtxt, "run.sh abhi bhi shadow test chalata hai")
 
-    np = open(os.path.join(root, "shadow", "new.py"), encoding="utf-8").read()
-    contains(np, "SHADOW_DATA_DIR")
-    contains(np, "DATA_ROOT")
+    # updater ka syntax
+    r = _sp.run(["bash", "-n", os.path.join(root, "vps", "termux_update.sh")],
+                capture_output=True, text=True)
+    eq(r.returncode, 0, "updater bash -n")
 
-    u2 = open(os.path.join(root, "update2.sh"), encoding="utf-8").read()
-    contains(u2, "--shadow-only")
-
-    # ── ASLI shell test: shadow_lib temp DBF ke saath ──
-    tmp = tempfile.mkdtemp(prefix="twobots_")
+    # ── ASLI bash test: purge function temp folder pe ──
+    a = up.index("# <<SHADOW_PURGE")
+    b = up.index("# SHADOW_PURGE>>")
+    funcs = up[a:b]
+    tmp = tempfile.mkdtemp(prefix="noshadow_")
     try:
-        open(os.path.join(tmp, "new.py"), "w").write(
-            'VERSION = "v3.0"\nDEFAULT_TOKEN = "123456:FAKE_TOKEN_FOR_TEST"\n')
+        for f in ("new.py", "shadow_lib.sh", "start2.sh", "stop2.sh",
+                  "restart2.sh", "status2.sh", "update2.sh", "bots.sh"):
+            open(os.path.join(tmp, f), "w").write("x\n")
+        os.makedirs(os.path.join(tmp, "shadow"))
+        open(os.path.join(tmp, "shadow", "new.py"), "w").write("x\n")
+        open(os.path.join(tmp, "shadow", "README.md"), "w").write("x\n")
         open(os.path.join(tmp, "bot.py"), "w").write('VERSION = "v2.25.0"\n')
-        sh = ('export SHADOW_DBF="%s"; export SHADOW_HOME="%s"; '
-              'cd "%s"; . "%s/shadow_lib.sh"; '
-              'echo "RUN=$SHADOW_RUN_DIR"; echo "DAT=$SHADOW_DATA"; '
-              'echo "TOK=$(shadow_token)"; '
-              'shadow_alive && echo "ALIVE=1" || echo "ALIVE=0"; '
-              'echo "PIDS=$(shadow_pids)"') % (
-            tmp, tmp, root, root)
+        open(os.path.join(tmp, "snake_config.json"), "w").write("{}")
+        os.makedirs(os.path.join(tmp, "shadow_data"))
+        open(os.path.join(tmp, "shadow_data", "users.json"), "w").write("{}")
+        open(os.path.join(tmp, "shadow_config.json"), "w").write("{}")
+        sh = ('set -u; SHADOW_PURGE_NO_PROC=1; PURGED=""; PURGED_PIDS=""; '
+              '%s\npurge_shadow_dir "%s"; echo "PURGED=$PURGED"') % (funcs, tmp)
         r = _sp.run(["bash", "-c", sh], capture_output=True, text=True, timeout=60)
-        out = r.stdout
-        ok("RUN=" + tmp in out, "SHADOW_RUN_DIR DBF nahi chuna")
-        ok("DAT=" + tmp in out, "SHADOW_DATA galat")
-        ok("TOK=123456:FAKE_TOKEN_FOR_TEST" in out, "default token nahi mila")
-        ok("ALIVE=0" in out, "fake bot zinda dikha")
+        eq(r.returncode, 0, "purge function chala: " + r.stderr[-200:])
+        for f in ("new.py", "shadow_lib.sh", "start2.sh", "stop2.sh",
+                  "restart2.sh", "status2.sh", "update2.sh", "bots.sh",
+                  "shadow/new.py", "shadow/README.md"):
+            ok(not os.path.exists(os.path.join(tmp, f)), f + " saaf nahi hua")
+        ok(not os.path.exists(os.path.join(tmp, "shadow")),
+           "khaali shadow/ folder bacha")
+        # user ka data / main bot safe
+        for f in ("bot.py", "snake_config.json", "shadow_data/users.json",
+                  "shadow_config.json"):
+            ok(os.path.exists(os.path.join(tmp, f)), f + " galti se delete ho gaya")
     finally:
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
@@ -4297,7 +4325,7 @@ def main():
                test_v2240_scan_tamper_live, test_v2240_waf_probe_live,
                test_v2240_wiring, test_v2250_button_colors,
                test_v2250_updater_mirror,
-               test_v2260_two_bots):
+               test_v2260_shadow_removed):
         try:
             fn()
         except Exception as exc:

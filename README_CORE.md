@@ -1,38 +1,59 @@
-# 🐍 PYTHON SNAKE CORE — v2.25.0
+# 🐍 PYTHON SNAKE CORE — v2.26.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
 ---
 
-## 🐍 DO BOTS — ek folder, alag alag commands
+## 🐍 EK BOT — `bot.py` (+ `snake_lib.sh`)
 
-Dono files **ek hi folder** me: `/storage/emulated/0/DBF/`
+Sab kuch **ek hi folder** me: `~/snake` ya `/storage/emulated/0/DBF/`
 
-| File | Bot | Screen | Data |
-|---|---|---|---|
-| `bot.py` | PYTHON SNAKE (main) | `snake` | `DBF/data/` |
-| `new.py` | SHADOW X | `shadow` | `DBF/shadow_data/` |
+| File | Kya |
+|---|---|
+| `bot.py` | PYTHON SNAKE (screen `snake`, data `data/`) |
+| `snake_lib.sh` | start / stop / status helpers |
 
-Commands (`~/snake` ya `DBF` — dono jagah scripts rehti hain):
+Commands (dono folder me scripts rehti hain):
 
 ```
-bash update.sh      # dono files update (bot.py + new.py) + dono restart
-bash restart.sh     # main bot restart        bash restart2.sh  → shadow restart
-bash stop.sh        # main stop               bash stop2.sh     → shadow stop
-bash start.sh       # main start              bash start2.sh    → shadow start
-bash status.sh      # main status             bash status2.sh   → shadow status
-bash update2.sh     # sirf shadow update
-bash bots.sh        # dono bots ka status ek screen me
+bash update.sh      # latest code + restart
+bash restart.sh     # restart — purana session saaf, fresh start
+bash stop.sh        # stop
+bash start.sh       # start
+bash status.sh      # status
 ```
 
-`/storage/emulated/0` **noexec** hai → `./restart2.sh` nahi, `bash restart2.sh`.
-
-Har bot ka **apna token** hona chahiye — ek hi token pe do bots = 409
-(dono me same bot dikhega). `update.sh` khud warn karta hai.
+`/storage/emulated/0` **noexec** hai → `./restart.sh` nahi, `bash restart.sh`.
 
 ---
 
-## 🎨 v2.25.0 — BUTTON COLOURS + SHADOW X v3.0
+## 🧹 v2.26.0 — SHADOW X POORA HATA
+
+Ab repo me **sirf ek bot** hai — `bot.py`. Shadow ka system gaya:
+
+| Hataya | Kya tha |
+|---|---|
+| `shadow/new.py` | SHADOW X bot (bot #2) |
+| `shadow_lib.sh` | shadow ka start/stop/status lib |
+| `start2.sh` `stop2.sh` `restart2.sh` `status2.sh` `update2.sh` | shadow commands |
+| `bots.sh` | dono bots ka status |
+| `shadow/` folder | shadow README / requirements / run.sh |
+| `tests/test_shadow.py` | shadow ke tests |
+
+**Updater v12** pehle update pe phone ka purana shadow system khud saaf karta hai:
+chalti hui shadow process (last arg `new.py`) + `screen` session `shadow` band,
+aur `new.py` / shadow scripts `~/snake`, `DBF` aur `/storage/emulated/0/shadow`
+se delete. **User ka data safe**: `shadow_data/`, `shadow_config.json`,
+`dumps/` nahi chhedte — chaho to khud delete kar dena.
+
+Purana command `update2.sh` ya flag `--shadow-only` chalao to updater bas
+friendly line print karke poora main-bot update kar deta hai (crash nahi).
+
+`/ping` → **v2.26.0** (build `one-bot`).
+
+---
+
+## 🎨 v2.25.0 — BUTTON COLOURS
 
 ### 🌈 1) Har button ka rang (Telegram Bot API 9.4)
 
@@ -56,41 +77,9 @@ sirf teen values: `primary` (🔵 blue), `success` (🟢 green), `danger` (🔴 
 
 Settings batch key `btncolor` — `/admin` → batch se on/off.
 
-### 🐍 3) SHADOW X v3.0 — `shadow/new.py` (alag bot, fixed)
+### ✅ Tests
 
-Aapka diya hua SHADOW X code fix karke **ek hi file** me:
-
-```bash
-cd ~/MY-DUMPING-BOT/shadow
-./run.sh start     # screen me background
-./run.sh logs      # live log
-./run.sh restart
-```
-
-- Fix: `send_photo_cached` recursion · `WAF_SIGS` dict→list crash ·
-  duplicate `_last_saver`/`_auto_saver` · state race · key/expiry format
-  mismatch · `ENABLE_MIDDLEWARE`.
-- Real engine: 10 search engines · WAF detect (CF/ModSec/Sucuri/Wordfence/
-  Imperva/Akamai/AWS/F5) · error + boolean + time SQLi · 6 tamper modes ·
-  error-based dump (extractvalue/updatexml/CAST/CONVERT) · proxy hunt+check ·
-  crt.sh subfinder · URL QC.
-- UI/colour rules `bot.py` jaisa hi. Token: `SHADOW_TOKEN` env ya
-  `shadow/shadow_config.json` (gitignored).
-- `./update.sh` (updater **v9**) `bot.py` ko **saare bot folders** me mirror karta hai:
-  `~/snake` (primary) · `/storage/emulated/0/DBF` · jahan bot abhi chal raha hai ·
-  jahan `update.sh` pada hai. Purana `bot.py` har jagah `backups/bot_<stamp>.py` me.
-  Token/`snake_config.json` **kabhi overwrite nahi** hota.
-- `./update.sh` ab `shadow/` ko **teen jagah** sync karta hai (updater v8):
-  `~/MY-DUMPING-BOT/shadow`, `/storage/emulated/0/DBF/shadow`,
-  `/storage/emulated/0/shadow` — scripts + README ke saath.
-- `shadow/` me `start.sh` / `stop.sh` / `restart.sh` / `status.sh` (main bot jaisa).
-- Phone ke `sites.txt` · `keywords.txt` · `page_types.txt` ·
-  `page_parameters.txt` · `patterns.txt` seedha dork/keyword banane me use hote hain.
-- Optional 🐍 **SQLMAP** button (Dumper screen) — `pip install sqlmap`.
-
-### ✅ 4) Tests
-
-`tests/run.sh` → core **1439/1439** · screens **53** · shadow **74** · repro ✅
+`tests/run.sh` → core **1532/1532** · screens **53** · repro ✅
 
 ---
 

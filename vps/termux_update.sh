@@ -1,24 +1,25 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=11)
+# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=12)
 #   ./update.sh   →  khud ko latest karta hai, phir bot.py (Termux + DBF) + restart
 #   ./update.sh --no-self   →  self-update skip
 # NOTE: Termux me /tmp writable nahi — log script folder ke logs/ me jata hai.
 set -u
-UPDATER_V=11
+UPDATER_V=12
 
-# MODE: all (default) | shadow (sirf bot #2) | main (sirf bot #1)
-MODE="all"
+# v12: SHADOW X (bot #2) poora system hata diya — ab sirf EK bot.
+# Purane command (--shadow-only / --main-only) chup-chaap ignore hote hain.
 for _a in "$@"; do
     case "$_a" in
-        --shadow-only) MODE="shadow" ;;
-        --main-only)   MODE="main" ;;
+        --shadow-only|--main-only)
+            echo "ℹ️ SHADOW X hata diya gaya — ab ek hi bot (bot.py), poora update chalega"
+            ;;
     esac
 done
 REPO="moneytips166-166/MY-DUMPING-BOT"
 BRANCH="arena/063f862a-my-dumping-bot"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 EXT="/storage/emulated/0/DBF"
-SHADOW_EXT="/storage/emulated/0/shadow"
+LEGACY_SHADOW_EXT="/storage/emulated/0/shadow"   # purana shadow folder (sirf cleanup)
 STAMP="$(date +%Y%m%d_%H%M%S)"
 BOT_URL="${SNAKE_URL:-https://raw.githubusercontent.com/$REPO/$BRANCH/bot.py}"
 BOT_FB="https://github.com/$REPO/raw/$BRANCH/bot.py"
@@ -124,9 +125,7 @@ _same_dir() {
 }
 
 MIRRORED=""
-SHADOW_READY=""
 CFG="$DIR/snake_config.json"          # token/config — kabhi overwrite nahi
-if [ "$MODE" != "shadow" ]; then
 
 # ══════════════ 1) BOT DOWNLOAD ══════════════
 [ -f bot.py ] && cp -f bot.py "backups/bot_$STAMP.py" && echo "💾 backup: backups/bot_$STAMP.py"
@@ -263,113 +262,71 @@ else
 fi
 echo "✅ version: $VER  (build: ${BUILD:-?})"
 
-fi   # ── MODE != shadow ka end (sirf bot.py download/compile) ──
-
-# 🐍 SHADOW X — alag bot (shadow/new.py), main bot se independent
-#    ~/MY-DUMPING-BOT/shadow + /storage/emulated/0/shadow dono update hote hain
-SH_FILES="new.py run.sh start.sh stop.sh restart.sh status.sh requirements.txt README.md"
-_sync_shadow() {
-    _sh_dir="$1"
-    mkdir -p "$_sh_dir" 2>/dev/null || return 0
-    # 🔐 token migrate — purane new.py se (config pehle se na ho to)
-    if [ ! -f "$_sh_dir/shadow_config.json" ] && [ -f "$_sh_dir/new.py" ]; then
-        _tok="$(grep -m1 -o 'BOT_TOKEN[[:space:]]*=[[:space:]]*"[0-9][0-9]*:[A-Za-z0-9_-]*"' \
-                "$_sh_dir/new.py" 2>/dev/null | sed 's/.*"\(.*\)"/\1/')"
-        if [ -n "$_tok" ]; then
-            # ⚠️ agar purana token MAIN BOT ka hi hai to migrate mat karo
-            #    (ek hi token pe do bots = 409, dono same bot dikhenge)
-            _mtok=""
-            if [ -f "$CFG" ]; then
-                _mtok="$("$PY" -c 'import json,sys
-try:
-    print((json.load(open(sys.argv[1])) or {}).get("bot_token","") or "")
-except Exception:
-    print("")' "$CFG" 2>/dev/null)"
-            fi
-            if [ -n "$_mtok" ] && [ "$_mtok" = "$_tok" ]; then
-                echo "⚠️ $_sh_dir/new.py ka token MAIN BOT ka hi hai — migrate nahi kiya"
-                echo "   (naya shadow token: shadow_config.json me daalo, phir restart2.sh)"
-            else
-                printf '{"token": "%s", "admins": [8937044612, 8999053405]}\n' "$_tok" \
-                    > "$_sh_dir/shadow_config.json"
-                chmod 600 "$_sh_dir/shadow_config.json" 2>/dev/null
-                echo "🔐 shadow_config.json banaya (purane token se) — $_sh_dir"
-            fi
-        fi
-    fi
-    # 💾 purana new.py backup — overwrite se pehle (user ka data na jaye)
-    if [ -f "$_sh_dir/new.py" ] && ! grep -q "SHADOW X — v3" "$_sh_dir/new.py" 2>/dev/null; then
-        mkdir -p "$_sh_dir/backups" 2>/dev/null
-        _bk="$_sh_dir/backups/new_old_$(date +%Y%m%d_%H%M%S).py"
-        cp -f "$_sh_dir/new.py" "$_bk" 2>/dev/null && echo "💾 purana new.py backup: $_bk"
-    fi
-    # 📦 user ka purana requirements.txt (agar alag hai) — side me rakh do
-    if [ -f "$_sh_dir/requirements.txt" ]; then
-        rm -f "$_sh_dir/requirements.old.txt" 2>/dev/null
-        cp -f "$_sh_dir/requirements.txt" "$_sh_dir/requirements.old.txt" 2>/dev/null
-    fi
-    _ok=0
-    for _f in $SH_FILES; do
-        if fetch_file "shadow/$_f" "$_sh_dir/$_f.new" 2>/dev/null \
-           && [ -s "$_sh_dir/$_f.new" ]; then
-            mv -f "$_sh_dir/$_f.new" "$_sh_dir/$_f" && _ok=$((_ok+1))
-        else
-            rm -f "$_sh_dir/$_f.new" 2>/dev/null
-        fi
+# ══════════════ 1.9) 🧹 SHADOW X purana system hatao (v12) ══════════════
+#  v12 se sirf EK bot hai — bot.py. Phone pe pada purana shadow system
+#  (bot #2 ke files + shadow scripts + chalti hui session) yahan se saaf ho jate hain.
+#  User ka DATA (shadow_config.json / shadow_data/ / dumps/) nahi chhedte.
+# <<SHADOW_PURGE
+SHADOW_CODE_FILES="new.py shadow_lib.sh start2.sh stop2.sh restart2.sh status2.sh update2.sh bots.sh"
+purge_shadow_proc() {
+    [ "${SHADOW_PURGE_NO_PROC:-0}" = "1" ] && return 0
+    # chalta hua purana shadow bot — SIRF jiska aakhri arg new.py ho
+    for _pp in $(pgrep -f 'new\.py' 2>/dev/null); do
+        [ -r "/proc/$_pp/cmdline" ] || continue
+        _pc="$(tr '\0' ' ' < "/proc/$_pp/cmdline" 2>/dev/null)"
+        _plast=""; for _pw in $_pc; do _plast="$_pw"; done
+        case "$_plast" in
+            new.py|*/new.py)
+                kill "$_pp" 2>/dev/null && PURGED_PIDS="$PURGED_PIDS $_pp" ;;
+        esac
     done
-    chmod +x "$_sh_dir"/*.sh 2>/dev/null
-    if [ "$_ok" -gt 0 ]; then
-        echo "✅ $_sh_dir/new.py (SHADOW X v3.0)"
-        "$PY" -m py_compile "$_sh_dir/new.py" 2>/dev/null \
-            || echo "⚠️ shadow/new.py compile fail — deps: pip install -r shadow/requirements.txt"
-    fi
-    # 📦 shadow ki deps (pyTelegramBotAPI + aiohttp) — ek baar auto install
-    if ! "$PY" -c "import telebot, aiohttp" >/dev/null 2>&1; then
-        echo "📦 shadow deps install ho rahi hain (pyTelegramBotAPI, aiohttp)…"
-        if command -v pip >/dev/null 2>&1; then
-            pip install -q --disable-pip-version-check pyTelegramBotAPI aiohttp 2>/dev/null \
-                && echo "✅ shadow deps ready"
-        else
-            "$PY" -m pip install -q --disable-pip-version-check pyTelegramBotAPI aiohttp 2>/dev/null \
-                && echo "✅ shadow deps ready"
-        fi
+    # screen session "shadow" (agar purane shadow ne banaya tha)
+    if command -v screen >/dev/null 2>&1; then
+        screen -ls 2>/dev/null \
+            | sed -n 's/^[[:space:]]*\([0-9][0-9]*\.shadow[^[:space:]]*\).*/\1/p' \
+            | while read -r _sid; do screen -S "$_sid" -X quit >/dev/null 2>&1; done
+        screen -wipe >/dev/null 2>&1
     fi
     return 0
 }
-_sync_shadow "$DIR/shadow"
-if [ -d "$EXT" ] && [ "$(cd "$DIR" && pwd -P)" != "$(cd "$EXT" 2>/dev/null && pwd -P)" ]; then
-    _sync_shadow "$EXT/shadow"
-fi
-SHADOW_READY=""
-# phone ka alag shadow folder (screenshot wala: /storage/emulated/0/shadow)
-if [ -d "$(dirname "$SHADOW_EXT")" ] || mkdir -p "$SHADOW_EXT" 2>/dev/null; then
-    if [ "$(cd "$SHADOW_EXT" 2>/dev/null && pwd -P)" != "$(cd "$DIR/shadow" && pwd -P)" ] && \
-       [ "$(cd "$SHADOW_EXT" 2>/dev/null && pwd -P)" != "$(cd "$EXT/shadow" 2>/dev/null && pwd -P)" ]; then
-        _sync_shadow "$SHADOW_EXT"
-        [ -f "$SHADOW_EXT/new.py" ] && SHADOW_READY="$SHADOW_EXT"
+purge_shadow_dir() {   # $1 = folder jisme purana shadow system ho sakta hai
+    _pd="$1"
+    [ -n "$_pd" ] && [ -d "$_pd" ] || return 0
+    for _pf in $SHADOW_CODE_FILES shadowctl.sh; do
+        if [ -f "$_pd/$_pf" ]; then
+            rm -f "$_pd/$_pf" 2>/dev/null && PURGED="$PURGED $_pd/$_pf"
+        fi
+    done
+    if [ -d "$_pd/shadow" ]; then          # purana shadow/ folder — sirf code
+        for _pf in new.py run.sh start.sh stop.sh restart.sh status.sh \
+                   requirements.txt README.md shadow_config.example.json; do
+            [ -f "$_pd/shadow/$_pf" ] && rm -f "$_pd/shadow/$_pf" 2>/dev/null \
+                && PURGED="$PURGED $_pd/shadow/$_pf"
+        done
+        rmdir "$_pd/shadow" 2>/dev/null
     fi
+    return 0
+}
+# SHADOW_PURGE>>
+PURGED=""
+PURGED_PIDS=""
+purge_shadow_proc
+for _pd in "$DIR" "$EXT" "$HOME/snake" "$LEGACY_SHADOW_EXT"; do
+    purge_shadow_dir "$_pd"
+done
+if [ -f "$HOME/shadowctl.sh" ]; then
+    rm -f "$HOME/shadowctl.sh" 2>/dev/null && PURGED="$PURGED $HOME/shadowctl.sh"
 fi
-if [ -z "$SHADOW_READY" ] && [ -f "$EXT/shadow/new.py" ]; then
-    SHADOW_READY="$EXT/shadow"
-fi
-
-# 🎛 ~/shadowctl.sh — kahin se bhi shadow chalao (path yaad rakhne ki zaroorat nahi)
-if [ -n "$SHADOW_READY" ]; then
-    cat > "$HOME/shadowctl.sh" <<CTLEOF
-#!/usr/bin/env bash
-# 🐍 SHADOW X control — bash ~/shadowctl.sh start|stop|restart|status|logs
-exec bash "$SHADOW_READY/run.sh" "\${1:-start}"
-CTLEOF
-    chmod +x "$HOME/shadowctl.sh" 2>/dev/null
-fi
-
-# 🐍 SHADOW X ka asli file: /storage/emulated/0/DBF/new.py (bot.py ke saath)
-if [ -f "$DIR/shadow/new.py" ] && [ -d "$EXT" ]; then
-    if cp -f "$DIR/shadow/new.py" "$EXT/new.py" 2>/dev/null; then
-        echo "✅ $EXT/new.py (SHADOW X)"
-        SHADOW_READY="$EXT"
-    fi
-fi
+[ -n "$PURGED" ] && echo "🧹 purana SHADOW X system hata diya:$PURGED"
+[ -n "$PURGED_PIDS" ] && echo "🧹 purana shadow process band (pids:$PURGED_PIDS)"
+# data chhoda — chaho to khud delete karo (bot ko isse koi farak nahi)
+_KEPT=""
+for _pd in "$DIR" "$EXT" "$HOME/snake" "$LEGACY_SHADOW_EXT"; do
+    [ -d "$_pd/shadow_data" ] && _KEPT="$_KEPT $_pd/shadow_data"
+    [ -d "$_pd/shadow" ] && _KEPT="$_KEPT $_pd/shadow/"
+    [ -f "$_pd/shadow_config.json" ] && _KEPT="$_KEPT $_pd/shadow_config.json"
+done
+[ -n "$_KEPT" ] && echo "📦 shadow ka purana DATA chhoda (chahe to delete karo):$_KEPT"
 
 # 🔐 config DBF folder me bhi (bot wahan se chale to bhi token mile)
 if [ -f "$CFG" ] && [ -d "$EXT" ] && \
@@ -381,7 +338,6 @@ if [ -f "$CFG" ] && [ -d "$EXT" ] && \
 fi
 
 # ══════════════ 2.5) 🔁 MIRROR — bot.py har bot folder me ══════════════
-if [ "$MODE" != "shadow" ]; then
 #  Phone pe bot kai jagah se chalta hai:
 #     ~/snake        (primary — user ka bot folder)
 #     /storage/emulated/0/DBF
@@ -434,8 +390,6 @@ done
 [ -n "$MIRRORED" ] && echo "🔁 bot.py mirror:$MIRRORED"
 [ -n "$MIRROR_SKIP" ] && echo "⚠️ mirror skip (likh nahi paya):$MIRROR_SKIP"
 
-fi   # ── MODE != shadow end (bot.py mirror) ──
-
 # ══════════════ 3) SCRIPTS REFRESH ══════════════
 # v2.13.0: phone pe purani/tuti scripts hi "screen already exists" + duplicate
 # sessions ka karan thi. Ab har update pe saari scripts overwrite hoti hain.
@@ -453,20 +407,11 @@ _install_script() {                       # $1 = filename, $2 = marker (sanity)
 }
 _install_script snake_lib.sh "SNAKE_LIB_V" && echo "✅ snake_lib.sh" \
     || echo "⚠️ snake_lib.sh download fail (purana chalega)"
-_install_script shadow_lib.sh "SHADOW_LIB_V" && echo "✅ shadow_lib.sh" \
-    || echo "⚠️ shadow_lib.sh download fail"
-for _s in start.sh stop.sh restart.sh status.sh bots.sh \
-          start2.sh stop2.sh restart2.sh status2.sh update2.sh; do
+for _s in start.sh stop.sh restart.sh status.sh; do
     case "$_s" in
         start.sh)    _m="snake_start" ;;
         stop.sh)     _m="snake_kill_all" ;;
         restart.sh)  _m="snake_kill_all" ;;
-        start2.sh)   _m="shadow_start" ;;
-        stop2.sh)    _m="shadow_kill_all" ;;
-        restart2.sh) _m="shadow_kill_all" ;;
-        status2.sh)  _m="shadow_lib" ;;
-        update2.sh)  _m="update.sh" ;;
-        bots.sh)     _m="MAIN BOT" ;;
         *)           _m="PYTHON SNAKE" ;;
     esac
     _install_script "$_s" "$_m" && echo "✅ $_s" || echo "⚠️ $_s fail"
@@ -492,10 +437,9 @@ for _dst in $MIRRORED; do
     chmod +x "$_dst"/*.sh 2>/dev/null
 done
 
-# scripts DBF me bhi (bash restart2.sh wahan se bhi chale)
+# scripts DBF me bhi (bash restart.sh wahan se bhi chale)
 if [ -d "$EXT" ]; then
-    for _f in snake_lib.sh shadow_lib.sh start.sh stop.sh restart.sh status.sh bots.sh \
-              start2.sh stop2.sh restart2.sh status2.sh update2.sh update.sh; do
+    for _f in snake_lib.sh start.sh stop.sh restart.sh status.sh update.sh; do
         [ -f "$DIR/$_f" ] && cp -f "$DIR/$_f" "$EXT/$_f" 2>/dev/null
     done
     chmod +x "$EXT"/*.sh 2>/dev/null
@@ -503,7 +447,6 @@ fi
 
 # ══════════════ 4) RESTART — purane SAARE sessions saaf, fresh start ══════
 MAIN_FAIL=0
-if [ "$MODE" != "shadow" ]; then
 #  Kahan se start karein?  priority:
 #    1) /storage/emulated/0/DBF   (user ka asli bot folder)
 #    2) jahan bot abhi chal raha tha
@@ -609,13 +552,6 @@ if [ -n "$PIDS" ]; then
     echo "→ Telegram: /ping  →  $VER (build ${BUILD:-?})"
     echo "📂 bot.py: $RUN_DIR/bot.py"
     [ -n "$MIRRORED" ] && echo "📂 mirror:$MIRRORED"
-    if [ -n "$SHADOW_READY" ]; then
-        echo ""
-        echo "🐍 SHADOW X (bot #2) file: $SHADOW_READY/new.py"
-        echo "   bash $DIR/bots.sh          # dono bots ka status"
-        echo "   bash $DIR/restart2.sh      # shadow restart"
-        echo "   bash $DIR/stop2.sh         # shadow stop"
-    fi
     if [ -f "$CFG" ]; then
         if grep -q '"bot_token": ""' "$CFG" 2>/dev/null; then
             echo "⚠️ token khaali hai — chalao: ./setconfig.sh --token <TOKEN> && ./restart.sh"
@@ -630,33 +566,6 @@ else
     echo ""
     echo "   wapas purana version: cp backups/bot_$STAMP.py bot.py && ./restart.sh"
     MAIN_FAIL=1
-fi
-fi   # ── MODE != shadow end (main bot restart) ──
-
-# ⚠️ dono bots ka token SAME ho to Telegram 409 dega (ek hi bot do jagah)
-if [ -f "$EXT/new.py" ] && [ -f "$CFG" ]; then
-    _mt="$("$PY" -c 'import json,sys
-try:
-    print((json.load(open(sys.argv[1])) or {}).get("bot_token","") or "")
-except Exception:
-    print("")' "$CFG" 2>/dev/null)"
-    _st="$(sed -n 's/^DEFAULT_TOKEN = "\([^"]*\)".*/\1/p' "$EXT/new.py" 2>/dev/null | head -1)"
-    if [ -n "$_mt" ] && [ "$_mt" = "$_st" ]; then
-        echo ""
-        echo "⚠️⚠️ DONO BOTS KA TOKEN SAME HAI — ek hi bot do jagah nahi chal sakta (409)."
-        echo "     fix: shadow/shadow_config.json me ALAG token daalo, phir bash restart2.sh"
-    fi
-fi
-
-# ══════════════ 5) 🐍 SHADOW X restart (new.py — alag bot) ══════════════
-if [ "$MODE" != "main" ] && [ -f "$EXT/new.py" ]; then
-    echo ""
-    echo "🐍 SHADOW X (bot #2) restart…"
-    if [ -f "$DIR/shadow_lib.sh" ]; then
-        ( cd "$DIR" && . ./shadow_lib.sh && shadow_kill_all && shadow_start )
-    else
-        echo "⚠️ shadow_lib.sh nahi mila — chalao: bash $DIR/restart2.sh"
-    fi
 fi
 
 if [ "$MAIN_FAIL" = "1" ]; then
