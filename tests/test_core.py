@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.26.0", "VERSION")
+    eq(core.VERSION, "v2.27.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.26.0"')
+    contains(btxt, 'VERSION = "v2.27.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.26.0", "shim se version")
+    eq(core.VERSION, "v2.27.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1805,7 +1805,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.26.0", "version")
+    eq(core.VERSION, "v2.27.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -3862,6 +3862,9 @@ def test_v2240_tamper():
 def test_v2240_waf_send_live():
     """v2.24.0 — waf_send: block par tampered payload se retry."""
     group("v2.24.0 waf send")
+    # settings.json me purana wafmode pada ho to chain badal jata hai — isolate
+    _old_mode = core.SETTINGS.pop("wafmode", None)
+    _old_retry = core.SETTINGS.pop("wafretry", None)
     from aiohttp import web
     import aiohttp
 
@@ -3907,6 +3910,10 @@ def test_v2240_waf_send_live():
             await r.cleanup()
 
     asyncio.run(main())
+    if _old_mode is not None:
+        core.SETTINGS["wafmode"] = _old_mode
+    if _old_retry is not None:
+        core.SETTINGS["wafretry"] = _old_retry
 
 
 def test_v2240_scan_tamper_live():
@@ -4123,6 +4130,90 @@ def test_v2250_button_colors():
 
 
 
+def test_v2270_proxy_formats():
+    """v2.27.0 — PROXY: HAR FORMAT (rotating + my proxy, socks safe)."""
+    group("v2.27.0 proxy formats")
+    cases = [
+        ("1.2.3.4:8080", "http://1.2.3.4:8080"),
+        ("p.webshare.io:80", "http://p.webshare.io:80"),
+        ("1.2.3.4:8080:usr:pw", "http://usr:pw@1.2.3.4:8080"),
+        ("p.webshare.io:80:user-rotate:pass",
+         "http://user-rotate:pass@p.webshare.io:80"),
+        ("usr:pw:1.2.3.4:8080", "http://usr:pw@1.2.3.4:8080"),
+        ("usr:pw@p.webshare.io:80", "http://usr:pw@p.webshare.io:80"),
+        ("p.webshare.io:80@usr:pw", "http://usr:pw@p.webshare.io:80"),
+        ("http://usr:pw@1.2.3.4:8080", "http://usr:pw@1.2.3.4:8080"),
+        ("https://u:p@proxy.example.com:443", "https://u:p@proxy.example.com:443"),
+        ("socks5h://usr:pw@1.2.3.4:1080", "socks5h://usr:pw@1.2.3.4:1080"),
+        ("socks4://1.2.3.4:1080", "socks4://1.2.3.4:1080"),
+        ("user:1234@1.2.3.4:8080", "http://user:1234@1.2.3.4:8080"),
+        ("[2001:db8::1]:8080", "http://[2001:db8::1]:8080"),
+    ]
+    for raw, want in cases:
+        eq(core.norm_proxy(raw), want, "format " + raw[:32])
+    for bad in ("bakwaas", "1.2.3.4", "1.2.3.4:99999", "ftp://1.2.3.4:21",
+                "", "host:port"):
+        eq(core.norm_proxy(bad), "", "invalid " + repr(bad)[:24])
+
+    # bulk — newline / comma / semicolon / space, sab
+    got = core.parse_proxy_endpoints(
+        "1.2.3.4:8080\nusr:pw@5.6.7.8:9090 ; p.webshare.io:80:u:p, "
+        "http://a:b@9.9.9.9:3128")
+    eq(len(got), 4, "bulk 4 proxies")
+    eq(got[0], "http://1.2.3.4:8080", "bulk order")
+    eq(core.parse_proxy_endpoints("bakwaas"), [], "bulk invalid -> []")
+    # purana rotating parser bhi waise hi
+    eq(len(core.parse_proxies("p.webshare.io:80:u-rot:p")), 1, "parse_proxies rot")
+    # _parse_proxy_line ab har format
+    eq(core._parse_proxy_line("p.webshare.io:80@u:p"),
+       "http://u:p@p.webshare.io:80", "_parse_proxy_line har format")
+
+    # socks: store hota hai, use nahi hota, wajah saaf
+    ok(core.proxy_usable("http://1.2.3.4:8080")[0], "http usable")
+    ok(core.proxy_usable("https://1.2.3.4:443")[0], "https usable")
+    ok(not core.proxy_usable("socks5://1.2.3.4:1080")[0], "socks not usable")
+    ok("aiohttp" in core.proxy_usable("socks5://1.2.3.4:1080")[1], "wajah batai")
+    eq(core.proxy_scheme("socks5h://x:1"), "socks5h", "scheme")
+
+    # ProxyRotator socks ko pool me nahi leta
+    rot = core.ProxyRotator(pool=[{"url": "http://1.2.3.4:8080"},
+                                  {"url": "socks5://5.6.7.8:1080"}], enabled=True)
+    eq(len(rot), 1, "sirf http pool me")
+    eq(rot.stats().get("socks"), 1, "socks count")
+    eq(rot.next(), "http://1.2.3.4:8080", "http proxy milta hai")
+
+    # MY PROXY — socks save + card me warning
+    uid = 777004
+    old_users = json.loads(json.dumps(core.USERS))
+    try:
+        n = core.user_proxy_set(uid, ["1.2.3.4:8080",
+                                      "socks5://u:p@5.6.7.8:1080"])
+        eq(n, 2, "dono save")
+        ok(core.user_proxy_url(uid).startswith("http://1.2.3.4"), "sirf http use")
+        card = core.myproxy_card(uid)
+        ok("aiohttp support nahi" in card, "card me socks warning")
+        ok("<code>" in card, "card ka HTML tag styled nahi hua")
+        styled = core.P("dekho <code>host:port</code> aur &lt;x&gt;")
+        ok("<code>" in styled and "&lt;" in styled, "P() tags/entities safe")
+        # har format add
+        n2 = core.user_proxy_set(uid, ["p.webshare.io:80:u-rot:p",
+                                       "u:p@p.webshare.io:80",
+                                       "p.webshare.io:80@u2:p2"])
+        ok(n2 >= 2, "har format save")
+    finally:
+        core.USERS.clear()
+        core.USERS.update(old_users)
+
+    # UI text me naye formats + socks note
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    for bit in ("PROXY_FORMAT_HELP", "parse_proxy_endpoints", "norm_proxy",
+                "proxy_usable", "PROXY_HTTP_SCHEMES"):
+        contains(src, bit)
+    ok(src.count("PROXY_FORMAT_HELP") >= 3, "help text teen jagah (admin + my proxy)")
+    contains(src, "socks proxy aiohttp se support nahi hota")
+
+
 def test_v2260_shadow_removed():
     """v2.26.0 — SHADOW X (bot #2) poora hata; ab sirf EK bot (bot.py)."""
     group("shadow system removed — ek hi bot")
@@ -4325,7 +4416,8 @@ def main():
                test_v2240_scan_tamper_live, test_v2240_waf_probe_live,
                test_v2240_wiring, test_v2250_button_colors,
                test_v2250_updater_mirror,
-               test_v2260_shadow_removed):
+               test_v2260_shadow_removed,
+               test_v2270_proxy_formats):
         try:
             fn()
         except Exception as exc:

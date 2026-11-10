@@ -1,4 +1,4 @@
-# 🐍 PYTHON SNAKE CORE — v2.26.0
+# 🐍 PYTHON SNAKE CORE — v2.27.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
 
@@ -24,6 +24,42 @@ bash status.sh      # status
 ```
 
 `/storage/emulated/0` **noexec** hai → `./restart.sh` nahi, `bash restart.sh`.
+
+---
+
+## 🌐 v2.27.0 — ROTATING PROXY: HAR FORMAT
+
+Ek hi normalizer (`norm_proxy`) — **admin ROTATING PROXY** aur **user MY PROXY**
+dono me har format chalta hai, single ya bulk (comma / newline / semicolon / space).
+
+| Input | Saved as |
+|---|---|
+| `1.2.3.4:8080` | `http://1.2.3.4:8080` |
+| `p.webshare.io:80` | `http://p.webshare.io:80` |
+| `p.webshare.io:80:user-rotate:pass` | `http://user-rotate:pass@p.webshare.io:80` |
+| `user:pass:p.webshare.io:80` | `http://user:pass@p.webshare.io:80` |
+| `user:pass@p.webshare.io:80` | `http://user:pass@p.webshare.io:80` |
+| `p.webshare.io:80@user:pass` | `http://user:pass@p.webshare.io:80` |
+| `http://user:pass@host:port` | as-is |
+| `https://…` | as-is |
+| `socks5h://user:pass@host:1080` | saved, **use nahi hota** |
+| `[2001:db8::1]:8080` | `http://[2001:db8::1]:8080` |
+
+- **Socks ka sach**: aiohttp socks proxy support nahi karta. Isliye socks
+  endpoint **save hota hai** (delete nahi), par rotator use skip karta hai —
+  card me `⚠️ SOCKS (OFF)` + reason dikhta hai. Rotation test bhi saaf
+  batata hai. HTTP/HTTPS endpoint use karo.
+- Rotator me socks count alag (`stats()["socks"]`), pool me nahi milta.
+- `PROXY_FORMAT_HELP` — wahi list admin + my-proxy add screen me dikhti hai.
+- **Bonus fix 1**: `P()` / `B()` ab HTML tags (`<code>`, `<b>`) aur entities
+  (`&lt;`) ko chhod ke sirf text style karte hain. Pehle tag ke letters bhi
+  style ho jate the → Telegram HTML parse fail → screen update nahi hota tha.
+- **Bonus fix 2**: `bot.py` ke andar embedded `snake_lib.sh` ab **v7** hai
+  (pehle v6 tha — bot start hote hi chalti v7 lib ko purani v6 se overwrite
+  kar deta tha, jisse DBF-first start toot jata tha). Saath me guard:
+  jo helper pehle se **nayi version** ka hai use bot downgrade nahi karta.
+- **Test isolation**: `wafmode` / `wafretry` settings har WAF test me isolate
+  hote hain — purani `data/settings.json` se chain nahi badalti.
 
 ---
 
@@ -79,7 +115,7 @@ Settings batch key `btncolor` — `/admin` → batch se on/off.
 
 ### ✅ Tests
 
-`tests/run.sh` → core **1532/1532** · screens **53** · repro ✅
+`tests/run.sh` → core **1577/1577** · screens **53** · repro ✅
 
 ---
 

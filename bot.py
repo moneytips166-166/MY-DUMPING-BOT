@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.26.0"
-BUILD = "one-bot"       # feature flags — /ping me dikhte hain
+VERSION = "v2.27.0"
+BUILD = "proxy-formats"       # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -395,11 +395,18 @@ HELPERS_V = "6"
 _HELPER_FILES = {
     "snake_lib.sh": r"""
 
+
 #!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE helpers  (SNAKE_LIB_V=6)
-SNAKE_LIB_V=6
+# 🐍 PYTHON SNAKE helpers  (SNAKE_LIB_V=7)
+SNAKE_LIB_V=7
 SNAKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SNAKE_EXT="/storage/emulated/0/DBF"
+SNAKE_EXT="${SNAKE_EXT:-/storage/emulated/0/DBF}"
+# bot.py kahan hai?  DBF (user ka asli folder) pehle, phir script ka folder
+if [ -f "$SNAKE_EXT/bot.py" ]; then
+    SNAKE_RUN="$SNAKE_EXT"
+else
+    SNAKE_RUN="$SNAKE_DIR"
+fi
 SNAKE_SCREEN="snake"
 SNAKE_LOGDIR="$SNAKE_DIR/logs"
 mkdir -p "$SNAKE_LOGDIR" "$SNAKE_DIR/backups" 2>/dev/null
@@ -439,7 +446,7 @@ snake_screen_kill() {
 }
 
 snake_lock_clear() {
-    rm -f "$SNAKE_DIR/.snake.lock" "$SNAKE_EXT/.snake.lock" \
+    rm -f "$SNAKE_RUN/.snake.lock" "$SNAKE_DIR/.snake.lock" "$SNAKE_EXT/.snake.lock" \
           "$HOME/snake/.snake.lock" 2>/dev/null
 }
 
@@ -466,18 +473,18 @@ snake_start() {
     local py log rc=1 waited=0 name="$SNAKE_SCREEN"
     py="$(snake_py)"
     [ -z "$py" ] && { echo "❌ python nahi mila — pkg install python"; return 1; }
-    [ -f "$SNAKE_DIR/bot.py" ] || { echo "❌ bot.py nahi mila ($SNAKE_DIR)"; return 1; }
+    [ -f "$SNAKE_RUN/bot.py" ] || { echo "❌ bot.py nahi mila ($SNAKE_RUN)"; return 1; }
     log="$SNAKE_LOGDIR/bot_$(date +%Y%m%d_%H%M%S).log"
-    cd "$SNAKE_DIR" || return 1
+    cd "$SNAKE_RUN" || return 1
     snake_lock_clear
 
     if command -v screen >/dev/null 2>&1; then
         snake_screen_kill
-        if ! screen -dmS "$name" bash -c "cd '$SNAKE_DIR' && exec '$py' bot.py >> '$log' 2>&1"; then
+        if ! screen -dmS "$name" bash -c "cd '$SNAKE_RUN' && exec '$py' bot.py >> '$log' 2>&1"; then
             # naam clash (purana session zinda) → unique naam, phir bhi chalta rahe
             name="snake_$(date +%s)"
             echo "→ 'snake' session clash — naya naam: $name"
-            screen -dmS "$name" bash -c "cd '$SNAKE_DIR' && exec '$py' bot.py >> '$log' 2>&1"
+            screen -dmS "$name" bash -c "cd '$SNAKE_RUN' && exec '$py' bot.py >> '$log' 2>&1"
         fi
         rc=0
     fi
@@ -490,7 +497,7 @@ snake_start() {
         sleep 1; waited=$((waited + 1))
         snake_alive && break
     done
-    echo "$log" > "$SNAKE_DIR/.last_log"
+    echo "$log" > "$SNAKE_RUN/.last_log" 2>/dev/null || echo "$log" > "$SNAKE_DIR/.last_log"
     if snake_alive; then
         echo "🚀 bot chalu (pid $(snake_pids | tr '\n' ' '))"
         echo "📝 log: $log"
@@ -504,8 +511,9 @@ snake_start() {
 }
 
 snake_version() {
-    [ -f "$SNAKE_DIR/bot.py" ] && \
-        grep -m1 '^VERSION = ' "$SNAKE_DIR/bot.py" | cut -d'"' -f2 || echo "?"
+    _f="$SNAKE_RUN/bot.py"
+    [ -f "$_f" ] || _f="$SNAKE_DIR/bot.py"
+    sed -n 's/^VERSION = "\(.*\)"/\1/p' "$_f" 2>/dev/null | head -1
 }
 """,
 
@@ -666,6 +674,12 @@ def install_helpers(force: bool = False) -> list:
                     cur = open(pth, encoding="utf-8", errors="ignore").read()
                     # same content → kuch mat likho; purani/tuti → overwrite
                     if cur.strip() == body.strip():
+                        continue
+                    # 🛡 v2.27.0 — chalti hui helper ko PURANI embedded copy se
+                    # downgrade mat karo (updater naya SNAKE_LIB_V install karta hai)
+                    _cur_v = re.search(r"SNAKE_LIB_V=(\d+)", cur)
+                    _emb_v = re.search(r"SNAKE_LIB_V=(\d+)", body)
+                    if _cur_v and _emb_v and int(_cur_v.group(1)) > int(_emb_v.group(1)):
                         continue
                 with open(pth, "w", encoding="utf-8") as f:
                     f.write(body)
@@ -1298,8 +1312,20 @@ def T() -> dict:
     return THEMES[theme_name()]
 
 
+def _style_chunks(text: str, font: str) -> str:
+    """Text ko font me badlo — par HTML tags (&lt;code&gt;, &lt;b&gt;) aur entities
+    (&amp;lt; &#39;) chhod do. Warna tag ke letters style ho jate hain aur
+    Telegram HTML parse fail karta hai."""
+    m = FONTS.get(font)
+    if not m:
+        return str(text)
+    parts = re.split(r"(<[^>]+>|&[A-Za-z]+;|&#\d+;)", str(text))
+    return "".join(p if i % 2 else "".join(m.get(c, c) for c in p)
+                   for i, p in enumerate(parts))
+
+
 def style(text: str, role: str = "btn") -> str:
-    """Emoji/icon ko chhod ke sirf text ko theme font me badlo."""
+    """Emoji/icon ko chhod ke sirf text ko theme font me badlo (tags safe)."""
     s2 = str(text or "")
     if not s2:
         return s2
@@ -1309,7 +1335,7 @@ def style(text: str, role: str = "btn") -> str:
     if not rest:
         return s2
     font = T().get(role) or "plain"
-    return pre + F(rest, font)
+    return pre + _style_chunks(rest, font)
 
 
 def H(title: str, sub: str = "", slot: str = "") -> str:
@@ -4986,6 +5012,136 @@ def parse_proxies(text: str) -> list:
     return _uniq(out)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  🌐 v2.27.0 — PROXY: HAR FORMAT
+#  Ek hi jagah normalize: manual paste (admin ROTATING PROXY + user MY PROXY).
+#  scrape wala parse_proxies() waise hi rehta hai (free lists me noise na aaye).
+# ═══════════════════════════════════════════════════════════════════════════
+PROXY_SCHEMES = ("http", "https", "socks4", "socks4a", "socks5", "socks5h")
+PROXY_HTTP_SCHEMES = ("http", "https")
+PROXY_FORMAT_HELP = (
+    "<code>host:port</code>  →  <code>1.2.3.4:8080</code> / <code>p.webshare.io:80</code>\n"
+    "<code>host:port:user:pass</code>  →  <code>p.webshare.io:80:user-rotate:pass</code>\n"
+    "<code>user:pass:host:port</code>  →  <code>user-rotate:pass:p.webshare.io:80</code>\n"
+    "<code>user:pass@host:port</code>  →  <code>user-rotate:pass@p.webshare.io:80</code>\n"
+    "<code>host:port@user:pass</code>  →  <code>p.webshare.io:80@user-rotate:pass</code>\n"
+    "<code>http://user:pass@host:port</code>\n"
+    "<code>socks5h://user:pass@host:1080</code>  (stored; aiohttp socks nahi chalta)\n"
+    "<code>[2001:db8::1]:8080</code>  (IPv6)"
+)
+
+
+def _split_proxy_colons(s: str) -> list:
+    """':' par todo — par [IPv6] ke andar wale colons chhodo."""
+    parts, cur, depth = [], "", 0
+    for ch in s:
+        if ch == "[":
+            depth += 1
+            cur += ch
+        elif ch == "]":
+            depth = max(0, depth - 1)
+            cur += ch
+        elif ch == ":" and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    return parts
+
+
+def _host_ok(h: str) -> bool:
+    """IPv4 / domain / [IPv6] — valid host?"""
+    h = str(h or "").strip()
+    if not h or len(h) > 255:
+        return False
+    if h.startswith("[") or h.count(":") >= 2:
+        return bool(re.fullmatch(r"[0-9A-Fa-f:.]{2,}", h.strip("[]")))
+    if _valid_ip(h):
+        return True
+    return bool(re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?\.[A-Za-z]{2,}", h))
+
+
+def _proxy_url(scheme: str, host: str, port, user: str = "", pw: str = "") -> str:
+    try:
+        p = int(str(port).strip())
+    except Exception:
+        return ""
+    if not (1 <= p <= 65535) or not _host_ok(host):
+        return ""
+    sch = str(scheme or "http").lower()
+    if sch not in PROXY_SCHEMES:
+        return ""
+    auth = ""
+    if user:
+        auth = "%s:%s@" % (user, pw)
+    return "%s://%s%s:%d" % (sch, auth, host, p)
+
+
+def norm_proxy(line: str) -> str:
+    """Koi bhi format → `http://user:pass@host:port` (invalid = "")."""
+    s = str(line or "").strip().strip("'\"").strip()
+    s = re.sub(r"\s+", "", s)
+    if not s or len(s) > 400:
+        return ""
+    scheme = "http"
+    m = re.match(r"^([A-Za-z][A-Za-z0-9+.\-]*)://(.*)$", s)
+    if m:
+        scheme = m.group(1).lower()
+        if scheme not in PROXY_SCHEMES:
+            return ""
+        s = m.group(2)
+    s = s.rstrip("/")
+    user = pw = ""
+    if "@" in s:
+        left, right = s.rsplit("@", 1)
+        lp = _split_proxy_colons(left)
+        # host:port@user:pass  (host pehle)
+        if len(lp) == 2 and lp[1].isdigit() and _host_ok(lp[0]) and ":" in right:
+            u2, p2 = right.split(":", 1)
+            return _proxy_url(scheme, lp[0], lp[1], u2, p2)
+        # user:pass@host:port
+        if ":" in left:
+            user, pw = left.split(":", 1)
+        else:
+            user = left
+        s = right
+    parts = _split_proxy_colons(s)
+    if len(parts) == 2:
+        return _proxy_url(scheme, parts[0], parts[1], user, pw)
+    if len(parts) == 4 and not user:
+        a, b, c, d = parts
+        if b.isdigit() and _host_ok(a):          # host:port:user:pass
+            return _proxy_url(scheme, a, b, c, d)
+        if d.isdigit() and _host_ok(c):          # user:pass:host:port
+            return _proxy_url(scheme, c, d, a, b)
+    return ""
+
+
+def parse_proxy_endpoints(text: str) -> list:
+    """Manual paste — ek ya kai proxies, newline/comma/space, har format."""
+    out = []
+    for chunk in re.split(r"[\s,;|]+", str(text or "")):
+        u = norm_proxy(chunk)
+        if u:
+            out.append(u)
+    return _uniq(out)
+
+
+def proxy_scheme(url: str) -> str:
+    s = str(url or "")
+    return s.split("://", 1)[0].lower() if "://" in s else "http"
+
+
+def proxy_usable(url: str) -> tuple:
+    """(chalega?, wajah) — aiohttp sirf http/https proxy kar sakta hai."""
+    if proxy_scheme(url) in PROXY_HTTP_SCHEMES:
+        return True, ""
+    return False, ("socks proxy aiohttp se support nahi hota — http(s) endpoint "
+                   "use karo (ya socks5 endpoint ko http me badlo)")
+
+
 _DNS_CACHE = {}
 
 
@@ -6517,9 +6673,14 @@ class ProxyRotator:
             self.uon = False
         self.pool = []
         self.rot = set()
+        self.socks = 0
         for x in (pool if pool is not None else (PROXIES or load_proxy_pool())) or []:
             u = x.get("url") if isinstance(x, dict) else str(x or "")
             if u:
+                # v2.27.0 — socks endpoint aiohttp me chalta nahi: pool me na daalo
+                if not proxy_usable(u)[0]:
+                    self.socks += 1
+                    continue
                 self.pool.append(u)
                 if (isinstance(x, dict) and x.get("rot")) or u in rot_proxies():
                     self.rot.add(u)
@@ -6571,6 +6732,7 @@ class ProxyRotator:
     def stats(self) -> dict:
         return {"pool": len(self.pool), "alive": self.alive(),
                 "used": self.used, "fail": self.fail,
+                "socks": getattr(self, "socks", 0),
                 "mine": (len(self.upool) if getattr(self, "uon", False) else 0)}
 
 
@@ -9504,6 +9666,10 @@ async def rot_live_test(urls: list, tries: int = 3, timeout: float = 12.0) -> di
     proxy = urls[0] if urls else None
     if not proxy:
         return out
+    _usable, _why = proxy_usable(proxy)
+    if not _usable:
+        out["errs"].append(_why)
+        return out
     conn_url, host, ip, src = await proxy_connect_url(proxy)
     out.update({"dns": ip, "dns_src": src, "host": host, "conn": conn_url})
     conn = mk_connector(limit=6, force_close=True)
@@ -9531,6 +9697,11 @@ async def rot_live_test(urls: list, tries: int = 3, timeout: float = 12.0) -> di
         except Exception as exc:
             out["errs"].append("engine: %s" % str(exc)[:110])
     return out
+
+
+def rot_socks_count() -> int:
+    """Rotating endpoints me se kitne socks hain (aiohttp me nahi chalenge)."""
+    return sum(0 if proxy_usable(u)[0] else 1 for u in rot_proxies())
 
 
 def rot_test_card(res: dict) -> str:
@@ -9577,6 +9748,11 @@ def rot_test_card(res: dict) -> str:
     if res.get("errs"):
         body += "\n\n" + B("Errors") + "\n" + "\n".join(
             "• <code>%s</code>" % esc(e) for e in (res.get("errs") or [])[:4])
+    _sn = rot_socks_count()
+    if _sn:
+        body += ("\n\n" + P("⚠️ <b>%d socks endpoint</b> saved — aiohttp socks "
+                             "nahi chalta, isliye use nahi honge. http(s) endpoint "
+                             "daalo ya socks ko http me badlo." % _sn))
     return H("ROTATION TEST", "%d/%d ok" % (len(ips), max(1, len(ips) + len(res.get("errs") or [])))) \
         + "\n\n" + head + "\n\n" + body + tip
 
@@ -9585,12 +9761,10 @@ async def input_rot_paste(update, context, text: str):
     """Admin rotating endpoint paste karta hai → parse → save → live test."""
     if not is_admin(update.effective_user.id):
         return
-    px = parse_proxies(text or "")
+    px = parse_proxy_endpoints(text or "") or parse_proxies(text or "")
     if not px:
         await update.effective_message.reply_text(
-            "❌ Nothing parsed. Format:\n"
-            "<code>p.webshare.io:80:USER-rotate:PASS</code>\n"
-            "<code>http://USER-rotate:PASS@p.webshare.io:80</code>",
+            "❌ Nothing parsed. Formats:\n" + PROXY_FORMAT_HELP,
             parse_mode=ParseMode.HTML,
             reply_markup=RK([[InlineKeyboardButton("⬅️ BACK", callback_data="a:proxy")]]))
         await_set(context, "rot_paste")
@@ -15686,8 +15860,10 @@ def user_proxy_cfg(uid) -> dict:
 
 
 def user_proxy_pool(uid) -> list:
+    """Saved proxies — http(s) + socks (socks card me warning ke saath dikhta hai)."""
     cfg = user_proxy_cfg(uid)
-    return [str(u) for u in (cfg.get("pool") or []) if str(u).startswith("http")]
+    return [str(u) for u in (cfg.get("pool") or [])
+            if proxy_scheme(u) in PROXY_SCHEMES]
 
 
 def user_proxy_on(uid) -> bool:
@@ -15695,7 +15871,7 @@ def user_proxy_on(uid) -> bool:
 
 
 def user_proxy_url(uid) -> str:
-    pool = user_proxy_pool(uid)
+    pool = [u for u in user_proxy_pool(uid) if proxy_usable(u)[0]]
     if not pool or not user_proxy_on(uid):
         return ""
     return random.choice(pool)
@@ -15704,14 +15880,9 @@ def user_proxy_url(uid) -> str:
 def user_proxy_set(uid, pool) -> int:
     rec = USERS.setdefault(str(uid), {})
     cfg = rec.get("proxy") or {}
-    # har line parse karo — host:port / host:port:user:pass / url, sab chale
-    norm = []
-    for u in (pool or []):
-        u = str(u).strip()
-        if not u:
-            continue
-        norm.append(u if u.startswith("http") else (_parse_proxy_line(u) or ""))
-    pool = _uniq([u for u in norm if u.startswith("http")])[:20]
+    # har line parse karo — host:port / host:port:user:pass / url / socks, sab chale
+    norm = [norm_proxy(u) for u in (pool or []) if str(u or "").strip()]
+    pool = _uniq([u for u in norm if u])[:20]
     cfg["pool"] = pool
     cfg["on"] = 1 if pool else 0
     cfg["ts"] = datetime.now().isoformat(timespec="seconds")
@@ -15722,20 +15893,8 @@ def user_proxy_set(uid, pool) -> int:
 
 
 def _parse_proxy_line(line: str) -> str:
-    """host:port:user:pass → http://user:pass@host:port"""
-    raw = str(line or "").strip()
-    if not raw:
-        return ""
-    if "://" in raw:
-        return raw
-    parts = raw.split(":")
-    if len(parts) == 2 and parts[1].isdigit():
-        return "http://%s:%s" % (parts[0], parts[1])
-    if len(parts) == 4 and parts[1].isdigit():
-        return "http://%s:%s@%s:%s" % (parts[2], parts[3], parts[0], parts[1])
-    if len(parts) == 4 and parts[3].isdigit():
-        return "http://%s:%s@%s:%s" % (parts[0], parts[1], parts[2], parts[3])
-    return ""
+    """Ek line → proxy URL — ab har format (norm_proxy ka shortcut)."""
+    return norm_proxy(line)
 
 
 def _mask_pw(u: str) -> str:
@@ -15765,12 +15924,17 @@ def myproxy_card(uid) -> str:
     return (H("MY PROXY", "%d in pool" % len(pool)) + "\n\n"
             + KV("Status", "✅ ON" if onn else ("⚪ OFF" if pool else "⚪ not set"), "🎛") + "\n"
             + KV("Proxies", "<code>%d</code> saved (max 20)" % len(pool), "🧅") + "\n"
+            + (KV("Socks (off)", "<code>%d</code> — aiohttp support nahi"
+                  % sum(0 if proxy_usable(u)[0] else 1 for u in pool), "⚠️") + "\n"
+               if any(not proxy_usable(u)[0] for u in pool) else "")
             + ("\n" + B("Your proxies") + "\n"
                + "\n".join("• <code>%s</code>" % esc(_mask_pw(u)) for u in pool[:6])
                + (("\n<i>+ %d more…</i>" % (len(pool) - 6)) if len(pool) > 6 else "")
                if pool else "")
-            + "\n\n" + P("Format: <code>host:port:user:pass</code> (ya comma/newline se "
-                         "kai proxies). Rotating proxy best — har request naya IP.")
+            + "\n\n" + P("Har format chalta hai: <code>host:port</code>, "
+                         "<code>host:port:user:pass</code>, "
+                         "<code>user:pass@host:port</code> — comma/newline se kai proxies.")
+            + "\n" + P("Rotating proxy best — har request naya IP.")
             + "\n" + P("⚠️ Proxy ON karne se speed thodi kam hoti hai, par block kam."))
 
 
@@ -15798,16 +15962,12 @@ async def tool_myproxy(update, context):
 
 async def input_myproxy(update, context, text: str):
     uid = update.effective_user.id
-    lines = [x.strip() for x in re.split(r"[\n,;]+", str(text or "")) if x.strip()]
-    good, bad = [], []
-    for ln in lines:
-        pu = _parse_proxy_line(ln)
-        (good if pu else bad).append(pu or ln)
+    lines = [x.strip() for x in re.split(r"[\n,;|]+", str(text or "")) if x.strip()]
+    good = parse_proxy_endpoints(text or "")
+    bad = [ln for ln in lines if not norm_proxy(ln)]
     if not good:
         await reply_msg(update).reply_text(
-            "❌ Proxy samajh nahi aaya.\n\n"
-            "Sahi format:\n<code>host:port:user:pass</code>\n"
-            "<code>host:port</code>\n<code>http://user:pass@host:port</code>",
+            "❌ Proxy samajh nahi aaya.\n\nFormats:\n" + PROXY_FORMAT_HELP,
             parse_mode=ParseMode.HTML, reply_markup=kb_back("m:myproxy"))
         await_set(context, "myproxy")
         return
@@ -15830,8 +15990,7 @@ async def cb_myproxy(update, context, act: str):
             await q.edit_message_text(
                 (H("MY PROXY", "add") + "\n\n"
                  + P("Ek line me proxy bhejo (kai ho to comma/newline se):") + "\n\n"
-                 + "<code>host:port:user:pass</code>\n"
-                 + "<code>http://user:pass@host:port</code>\n\n"
+                 + PROXY_FORMAT_HELP + "\n\n"
                  + P("Rotating proxy (jaise webshare/smartproxy) ka endpoint best hai.")),
                 parse_mode=ParseMode.HTML, reply_markup=kb_back("m:myproxy"))
         except Exception:
@@ -16719,10 +16878,7 @@ async def admin_callback(update, context, action: str):
     if action == "rotadd":
         await ed(H("ROTATING PROXY", "one endpoint • new IP every request") + "\n\n"
                  "Send the rotating endpoint in <b>any</b> of these formats:\n"
-                 "<code>host:port:user:pass</code>\n"
-                 "<code>user:pass@host:port</code>\n"
-                 "<code>http://user:pass@host:port</code>\n"
-                 "<code>socks5h://user:pass@host:port</code>\n\n"
+                 + PROXY_FORMAT_HELP + "\n\n"
                  "Webshare example:\n"
                  "<code>p.webshare.io:80:USER-rotate:PASS</code>\n\n"
                  "<i>One endpoint gives a new IP on every request — it is kept separately, "
