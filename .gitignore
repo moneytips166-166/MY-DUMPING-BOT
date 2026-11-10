@@ -36,3 +36,4 @@ shadow/data/
 shadow/dumps/
 shadow/shadow_config.json
 shadow/*.log
+shadow/backups/

@@ -261,6 +261,12 @@ _sync_shadow() {
             echo "🔐 shadow_config.json banaya (purane token se) — $_sh_dir"
         fi
     fi
+    # 💾 purana new.py backup — overwrite se pehle (user ka data na jaye)
+    if [ -f "$_sh_dir/new.py" ] && ! grep -q "SHADOW X — v3" "$_sh_dir/new.py" 2>/dev/null; then
+        mkdir -p "$_sh_dir/backups" 2>/dev/null
+        _bk="$_sh_dir/backups/new_old_$(date +%Y%m%d_%H%M%S).py"
+        cp -f "$_sh_dir/new.py" "$_bk" 2>/dev/null && echo "💾 purana new.py backup: $_bk"
+    fi
     _ok=0
     for _f in $SH_FILES; do
         if fetch_file "shadow/$_f" "$_sh_dir/$_f.new" 2>/dev/null \
