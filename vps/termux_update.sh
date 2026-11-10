@@ -1,10 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=6)
+# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=7)
 #   ./update.sh   →  khud ko latest karta hai, phir bot.py (Termux + DBF) + restart
 #   ./update.sh --no-self   →  self-update skip
 # NOTE: Termux me /tmp writable nahi — log script folder ke logs/ me jata hai.
 set -u
-UPDATER_V=6
+UPDATER_V=7
 
 REPO="moneytips166-166/MY-DUMPING-BOT"
 BRANCH="arena/063f862a-my-dumping-bot"
@@ -242,6 +242,32 @@ else
     echo "⚠️ DBF copy fail — 'termux-setup-storage' chala ke dobara ./update.sh"
 fi
 echo "✅ version: $VER  (build: ${BUILD:-?})"
+
+# 🐍 SHADOW X (optional) — shadow/new.py + run.sh bhi sync (fail ho to bot.py pe asar nahi)
+_sync_shadow() {
+    _sh_dir="$1"
+    mkdir -p "$_sh_dir" 2>/dev/null || return 0
+    _ok=0
+    for _f in new.py run.sh; do
+        if fetch_file "shadow/$_f" "$_sh_dir/$_f.new" 2>/dev/null \
+           && [ -s "$_sh_dir/$_f.new" ]; then
+            mv -f "$_sh_dir/$_f.new" "$_sh_dir/$_f" && _ok=$((_ok+1))
+        else
+            rm -f "$_sh_dir/$_f.new" 2>/dev/null
+        fi
+    done
+    fetch_file "shadow/README.md" "$_sh_dir/README.md" 2>/dev/null
+    chmod +x "$_sh_dir/run.sh" 2>/dev/null
+    if [ "$_ok" -gt 0 ]; then
+        echo "✅ $_sh_dir/new.py (SHADOW X)"
+        "$PY" -m py_compile "$_sh_dir/new.py" 2>/dev/null \
+            || echo "⚠️ shadow/new.py compile check fail — deps dekho (pyTelegramBotAPI)"
+    fi
+}
+_sync_shadow "$DIR/shadow"
+if [ -d "$EXT" ] && [ "$(cd "$DIR" && pwd -P)" != "$(cd "$EXT" 2>/dev/null && pwd -P)" ]; then
+    _sync_shadow "$EXT/shadow"
+fi
 
 # 🔐 config DBF folder me bhi (bot wahan se chale to bhi token mile)
 if [ -f "$CFG" ] && [ -d "$EXT" ] && \

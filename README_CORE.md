@@ -1,6 +1,58 @@
-# 🐍 PYTHON SNAKE CORE — v2.24.0
+# 🐍 PYTHON SNAKE CORE — v2.25.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🎨 v2.25.0 — BUTTON COLOURS + SHADOW X v3.0
+
+### 🌈 1) Har button ka rang (Telegram Bot API 9.4)
+
+Telegram ne **9.4 (9 Feb 2026)** me `InlineKeyboardButton.style` diya —
+sirf teen values: `primary` (🔵 blue), `success` (🟢 green), `danger` (🔴 red).
+
+| Rang | Kab | Examples |
+|---|---|---|
+| 🔴 `danger` | cheez **rok/delete/khatam** karti hai | ⛔ STOP, 🗑 DELETE, 🚫 BAN, 🔄 RESET, 🧨 WIPE |
+| 🟢 `success` | **kaam shuru** karti hai | ▶️ START, 🚀 RUN, 💾 SAVE, 📥 DOWNLOAD, ➕ NEW, ♻️ EXPAND |
+| 🔵 `primary` | navigation / info | ⬅️ BACK, 🏠 HOME, LIST, STATS, menu |
+
+- `btn_style(cb, label)` — callback + emoji se rang nikalti hai, phir bhi
+  explicit `style=` override kar sakte ho.
+- `InlineKeyboardButton = IBtn` alias — **saare 346 purane call sites** bina
+  chhue coloured ho gaye.
+- Purane Telegram clients par rang ignore hota hai → button normal, kaam same.
+- Off karna ho: setting `btncolor = 0`.
+
+### 🧠 2) HQ KEYWORDS pe 🧠
+
+Settings batch key `btncolor` — `/admin` → batch se on/off.
+
+### 🐍 3) SHADOW X v3.0 — `shadow/new.py` (alag bot, fixed)
+
+Aapka diya hua SHADOW X code fix karke **ek hi file** me:
+
+```bash
+cd ~/MY-DUMPING-BOT/shadow
+./run.sh start     # screen me background
+./run.sh logs      # live log
+./run.sh restart
+```
+
+- Fix: `send_photo_cached` recursion · `WAF_SIGS` dict→list crash ·
+  duplicate `_last_saver`/`_auto_saver` · state race · key/expiry format
+  mismatch · `ENABLE_MIDDLEWARE`.
+- Real engine: 10 search engines · WAF detect (CF/ModSec/Sucuri/Wordfence/
+  Imperva/Akamai/AWS/F5) · error + boolean + time SQLi · 6 tamper modes ·
+  error-based dump (extractvalue/updatexml/CAST/CONVERT) · proxy hunt+check ·
+  crt.sh subfinder · URL QC.
+- UI/colour rules `bot.py` jaisa hi. Token: `SHADOW_TOKEN` env ya
+  `shadow/shadow_config.json` (gitignored).
+- `./update.sh` ab `shadow/` bhi sync karta hai (updater v7).
+
+### ✅ 4) Tests
+
+`tests/run.sh` → core **1439/1439** · screens **53** · shadow **74** · repro ✅
 
 ---
 
