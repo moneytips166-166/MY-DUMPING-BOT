@@ -1,15 +1,16 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=7)
+# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=8)
 #   ./update.sh   →  khud ko latest karta hai, phir bot.py (Termux + DBF) + restart
 #   ./update.sh --no-self   →  self-update skip
 # NOTE: Termux me /tmp writable nahi — log script folder ke logs/ me jata hai.
 set -u
-UPDATER_V=7
+UPDATER_V=8
 
 REPO="moneytips166-166/MY-DUMPING-BOT"
 BRANCH="arena/063f862a-my-dumping-bot"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 EXT="/storage/emulated/0/DBF"
+SHADOW_EXT="/storage/emulated/0/shadow"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 BOT_URL="${SNAKE_URL:-https://raw.githubusercontent.com/$REPO/$BRANCH/bot.py}"
 BOT_FB="https://github.com/$REPO/raw/$BRANCH/bot.py"
@@ -243,12 +244,25 @@ else
 fi
 echo "✅ version: $VER  (build: ${BUILD:-?})"
 
-# 🐍 SHADOW X (optional) — shadow/new.py + run.sh bhi sync (fail ho to bot.py pe asar nahi)
+# 🐍 SHADOW X — alag bot (shadow/new.py), main bot se independent
+#    ~/MY-DUMPING-BOT/shadow + /storage/emulated/0/shadow dono update hote hain
+SH_FILES="new.py run.sh start.sh stop.sh restart.sh status.sh requirements.txt README.md"
 _sync_shadow() {
     _sh_dir="$1"
     mkdir -p "$_sh_dir" 2>/dev/null || return 0
+    # 🔐 token migrate — purane new.py se (config pehle se na ho to)
+    if [ ! -f "$_sh_dir/shadow_config.json" ] && [ -f "$_sh_dir/new.py" ]; then
+        _tok="$(grep -m1 -o 'BOT_TOKEN[[:space:]]*=[[:space:]]*"[0-9][0-9]*:[A-Za-z0-9_-]*"' \
+                "$_sh_dir/new.py" 2>/dev/null | sed 's/.*"\(.*\)"/\1/')"
+        if [ -n "$_tok" ]; then
+            printf '{"token": "%s", "admins": [8937044612, 8999053405]}\n' "$_tok" \
+                > "$_sh_dir/shadow_config.json"
+            chmod 600 "$_sh_dir/shadow_config.json" 2>/dev/null
+            echo "🔐 shadow_config.json banaya (purane token se) — $_sh_dir"
+        fi
+    fi
     _ok=0
-    for _f in new.py run.sh; do
+    for _f in $SH_FILES; do
         if fetch_file "shadow/$_f" "$_sh_dir/$_f.new" 2>/dev/null \
            && [ -s "$_sh_dir/$_f.new" ]; then
             mv -f "$_sh_dir/$_f.new" "$_sh_dir/$_f" && _ok=$((_ok+1))
@@ -256,17 +270,24 @@ _sync_shadow() {
             rm -f "$_sh_dir/$_f.new" 2>/dev/null
         fi
     done
-    fetch_file "shadow/README.md" "$_sh_dir/README.md" 2>/dev/null
-    chmod +x "$_sh_dir/run.sh" 2>/dev/null
+    chmod +x "$_sh_dir"/*.sh 2>/dev/null
     if [ "$_ok" -gt 0 ]; then
-        echo "✅ $_sh_dir/new.py (SHADOW X)"
+        echo "✅ $_sh_dir/new.py (SHADOW X v3.0)"
         "$PY" -m py_compile "$_sh_dir/new.py" 2>/dev/null \
-            || echo "⚠️ shadow/new.py compile check fail — deps dekho (pyTelegramBotAPI)"
+            || echo "⚠️ shadow/new.py compile fail — deps: pip install -r shadow/requirements.txt"
     fi
+    return 0
 }
 _sync_shadow "$DIR/shadow"
 if [ -d "$EXT" ] && [ "$(cd "$DIR" && pwd -P)" != "$(cd "$EXT" 2>/dev/null && pwd -P)" ]; then
     _sync_shadow "$EXT/shadow"
+fi
+# phone ka alag shadow folder (screenshot wala: /storage/emulated/0/shadow)
+if [ -d "$(dirname "$SHADOW_EXT")" ] || mkdir -p "$SHADOW_EXT" 2>/dev/null; then
+    if [ "$(cd "$SHADOW_EXT" 2>/dev/null && pwd -P)" != "$(cd "$DIR/shadow" && pwd -P)" ] && \
+       [ "$(cd "$SHADOW_EXT" 2>/dev/null && pwd -P)" != "$(cd "$EXT/shadow" 2>/dev/null && pwd -P)" ]; then
+        _sync_shadow "$SHADOW_EXT"
+    fi
 fi
 
 # 🔐 config DBF folder me bhi (bot wahan se chale to bhi token mile)

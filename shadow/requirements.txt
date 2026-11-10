@@ -1,0 +1,6 @@
+# 🐍 SHADOW X — pip install -r requirements.txt
+pyTelegramBotAPI>=4.14
+aiohttp>=3.9
+
+# optional — SQLMAP button ke liye (native dumper ko zaroorat nahi)
+# sqlmap

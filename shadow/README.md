@@ -7,8 +7,12 @@
 
 ```bash
 pkg update -y && pkg install -y python screen
-pip install pyTelegramBotAPI aiohttp
-cd ~/MY-DUMPING-BOT/shadow
+
+cd ~/MY-DUMPING-BOT
+./update.sh            # bot.py + shadow/ (aur /storage/emulated/0/shadow) dono update
+
+cd shadow              # ya: cd /storage/emulated/0/shadow
+pip install -r requirements.txt
 ```
 
 ## 🔑 Token
@@ -25,16 +29,21 @@ export SHADOW_TOKEN="123456:ABCDEF..."
 
 `shadow_config.json` gitignored hai — token repo me nahi jaata.
 
-## ▶️ Chalana (sirf screen se)
+## ▶️ Chalana (sirf screen se — main bot jaisa)
 
 ```bash
-cd ~/MY-DUMPING-BOT/shadow
-./run.sh start      # background me start
-./run.sh status     # chal raha hai ya nahi
-./run.sh logs       # live log
-./run.sh restart    # fresh restart
-./run.sh stop       # band
+cd /storage/emulated/0/shadow
+
+./start.sh      # background me start
+./status.sh     # chal raha hai ya nahi
+./restart.sh    # fresh restart (purana session saaf)
+./stop.sh       # band
+./run.sh logs   # live log
 ```
+
+`./update.sh` (main repo me) shadow folder ko **khud update** karta hai —
+`~/MY-DUMPING-BOT/shadow` aur `/storage/emulated/0/shadow` dono me.
+Token purane `new.py` se auto-migrate ho jata hai (`shadow_config.json`).
 
 Manual (agar chahiye):
 
@@ -66,6 +75,7 @@ python3 new.py
 | 🌐 PARSER | 10 engines se URLs | 🔵 |
 | 💉 INJECTOR | error / boolean / time SQLi | 🔵 |
 | 📥 DUMPER | DB → tables → columns → rows | 🟢 |
+| 📥 DUMPER → 🐍 SQLMAP | sqlmap se dump (optional) | 🟢 |
 | 🎯 QUALITY CHECK | URL scoring (0–100) | 🔵 |
 | 🛡 WAF LAB | WAF detect + bypass mode | 🔵 |
 | 🕸 SUBFINDER | crt.sh se subdomains | 🔵 |
@@ -80,6 +90,32 @@ Purane Telegram clients par rang ignore hoga — button normal dikhega, kaam sam
 `DDG · Bing · Yahoo · Brave · Mojeek · Ecosia · Ask · Yep · Google · Yandex`
 
 Settings me toggle — ek dork pehle engine se try hota hai, block mile to agla.
+
+## 📂 Resource files (tumhare folder wale)
+
+`shadow/` me ye files rakho to bot **inhi se** dorks/keywords banata hai
+(na milne par built-in pool):
+
+| File | Kya |
+|---|---|
+| `sites.txt` | `site:` list |
+| `keywords.txt` | seed keywords |
+| `page_types.txt` | `product.php`, `news.php` … |
+| `page_parameters.txt` | `id`, `cat`, `page` … |
+| `patterns.txt` | dork patterns (`{site}`, `{keyword}`, `{page_type}`, `{page_parameter}`, `{search_function}`) |
+
+Dorker screen par `Sources: patterns 20 · sites 40 · kw 500` dikhega.
+
+## 🐍 SQLMAP (optional)
+
+Native **📥 DUMPER** ko sqlmap ki zaroorat nahi. Bada/blind dump chahiye to:
+
+```bash
+pip install sqlmap
+```
+
+Phir **📥 DUMPER → 🐍 SQLMAP** button (max 10 URLs, `--dbs --dump`).
+Status: `/sqlmap`. VPS par zyada tez chalta hai.
 
 ## 🗄 Files
 

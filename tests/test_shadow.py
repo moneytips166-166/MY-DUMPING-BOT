@@ -162,8 +162,8 @@ def main():
     chk(any("HQ KEYWORDS" in b["text"] for row in kb for b in row), "HQ KEYWORDS button nahi")
 
     # ── callbacks (network-free) ─────────────────────────────────────────────
-    for d in ("home", "kw", "dork", "parse", "inj", "dump", "qc", "waf", "subs",
-              "proxy", "cfg", "cfg:param", "cfg:eng", "files", "support",
+    for d in ("home", "kw", "dork", "parse", "inj", "dump", "sqlmap", "qc", "waf",
+              "subs", "proxy", "cfg", "cfg:param", "cfg:eng", "files", "support",
               "admin", "adm:stats", "adm:users"):
         n = len(sent)
         m.on_cb(Call(d))
@@ -195,6 +195,41 @@ def main():
     chk(re.match(r"^SHX-[0-9A-F]{4}-[0-9A-F]{4}$", key), "key format galat: %s" % key)
     m.cmd_redeem(MsgObj("/redeem " + key))
     chk(m.jload("keys", {})[key].get("used_by") == uid, "redeem ne key use nahi ki")
+
+    # ── resource files (phone ke shadow folder se) ───────────────────────────
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="shadow_res_")
+    with open(os.path.join(tmp, "patterns.txt"), "w", encoding="utf-8") as f:
+        f.write("site:{site} inurl:{page_parameter}={search_function}\n"
+                "inurl:{page_type}?{page_parameter}=\n")
+    with open(os.path.join(tmp, "sites.txt"), "w", encoding="utf-8") as f:
+        f.write("demo.com\nexample.org\n")
+    with open(os.path.join(tmp, "keywords.txt"), "w", encoding="utf-8") as f:
+        f.write("shoes\nwatch\n")
+    with open(os.path.join(tmp, "page_types.txt"), "w", encoding="utf-8") as f:
+        f.write("product.php\nnews.php\n")
+    with open(os.path.join(tmp, "page_parameters.txt"), "w", encoding="utf-8") as f:
+        f.write("id\ncat\n")
+    old_res = m.RES_FILES
+    m.RES_FILES = {n: os.path.join(tmp, n + ".txt") for n in old_res}
+    st = m.res_status()
+    chk(st.get("patterns") == 2, "res_status patterns galat")
+    chk(st.get("sites") == 2, "res_status sites galat")
+    dd = m.gen_dorks(25)
+    chk(len(dd) == 25, "gen_dorks(25) resources se count galat")
+    chk(any("site:demo.com" in x or "site:example.org" in x for x in dd),
+        "patterns.txt ke {site} use nahi hue")
+    kk = m.gen_keywords([], 10)
+    chk(len(kk) == 10, "keywords.txt fallback fail")
+    m._fill_pattern  # noqa
+    chk(m._fill_pattern("inurl:{page_parameter}=", [], [], [], ["id"]) == "inurl:id=",
+        "_fill_pattern fail")
+    m.RES_FILES = old_res
+
+    # ── sqlmap (optional engine) ─────────────────────────────────────────────
+    chk(isinstance(m.sqlmap_cmd_base(), list), "sqlmap_cmd_base list nahi")
+    chk(callable(m.run_sqlmap), "run_sqlmap missing")
+    chk(callable(m.cmd_sqlmap), "/sqlmap command missing")
 
     # ── helpers ──────────────────────────────────────────────────────────────
     chk(m.build_url("http://x/a.php?id=1&p=2", "' OR 1=1-- -", "id").startswith("http://x/a.php"),

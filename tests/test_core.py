@@ -2200,9 +2200,14 @@ def test_v2131_update_proof():
     group("v2.13.1 update-proof")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     up = open(os.path.join(root, "vps", "termux_update.sh"), encoding="utf-8").read()
-    for bit in ("SNAKE_UPDATER_V=6", "fetch_file", "api.github.com", "codeload.github.com",
-                "token kahin nahi mila", "snake_kill_all", "UPDATER_V=6"):
+    for bit in ("fetch_file", "api.github.com", "codeload.github.com",
+                "token kahin nahi mila", "snake_kill_all"):
         contains(up, bit)
+    # version bump allowed (sh_ver >= 6) — exact number hardcode nahi
+    m1 = re.search(r"SNAKE_UPDATER_V=(\d+)", up)
+    m2 = re.search(r"^UPDATER_V=(\d+)", up, re.M)
+    ok(bool(m1) and int(m1.group(1)) >= 6, "SNAKE_UPDATER_V marker")
+    ok(bool(m2) and int(m2.group(1)) >= 6, "UPDATER_V marker")
     boot = open(os.path.join(root, "update.sh"), encoding="utf-8").read()
     for bit in ("SNAKE_BOOT_V=6", "API_DL", "codeload.github.com", "TAR_DL"):
         contains(boot, bit)
@@ -3803,6 +3808,9 @@ def test_v2240_tamper():
     """v2.24.0 — tamper modes: comment / case / both / version / space / mixed."""
     group("v2.24.0 tamper modes")
     p = "' UNION SELECT 1,2-- -"
+    # settings.json me user ka wafmode pada ho to chain test fail hota tha — isolate
+    _old_pref = core.SETTINGS.get("wafmode")
+    core.SETTINGS.pop("wafmode", None)
     ok(core.TAMPER_MODES[:3] == ("comment", "case", "both"), "purane modes intact")
     for m in core.TAMPER_MODES:
         t = core.waf_tamper(p, m)
@@ -3835,17 +3843,15 @@ def test_v2240_tamper():
     eq(core.waf_bypass_chain("ModSecurity", "MySQL")[0], "comment", "modsec → comment")
     ok("version" not in core.waf_bypass_chain("", "MSSQL"), "mssql: version nahi")
     # user preference pehle
-    old = core.SETTINGS.get("wafmode")
     try:
         core.sset("wafmode", "space")
         eq(core.waf_bypass_chain("ModSecurity", "MySQL")[0], "space", "pref pehle")
-        core.sset("wafmode", "auto")
     finally:
-        if old is None:
+        if _old_pref is None:
             core.SETTINGS.pop("wafmode", None)
-            core.jsave("settings", core.SETTINGS)
         else:
-            core.sset("wafmode", old)
+            core.SETTINGS["wafmode"] = _old_pref
+        core.jsave("settings", core.SETTINGS)
     # block detector
     eq(core.waf_blocked(406, {}, "Not Acceptable! mod_security"), True, "blocked 406")
     eq(core.waf_blocked(200, {}, "hello"), False, "200 clean")

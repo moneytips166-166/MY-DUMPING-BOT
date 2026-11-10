@@ -48,7 +48,13 @@ cd ~/MY-DUMPING-BOT/shadow
   crt.sh subfinder · URL QC.
 - UI/colour rules `bot.py` jaisa hi. Token: `SHADOW_TOKEN` env ya
   `shadow/shadow_config.json` (gitignored).
-- `./update.sh` ab `shadow/` bhi sync karta hai (updater v7).
+- `./update.sh` ab `shadow/` ko **teen jagah** sync karta hai (updater v8):
+  `~/MY-DUMPING-BOT/shadow`, `/storage/emulated/0/DBF/shadow`,
+  `/storage/emulated/0/shadow` — scripts + README ke saath.
+- `shadow/` me `start.sh` / `stop.sh` / `restart.sh` / `status.sh` (main bot jaisa).
+- Phone ke `sites.txt` · `keywords.txt` · `page_types.txt` ·
+  `page_parameters.txt` · `patterns.txt` seedha dork/keyword banane me use hote hain.
+- Optional 🐍 **SQLMAP** button (Dumper screen) — `pip install sqlmap`.
 
 ### ✅ 4) Tests
 
