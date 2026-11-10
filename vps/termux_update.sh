@@ -1,10 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=8)
+# 🐍 PYTHON SNAKE — Termux updater  (SNAKE_UPDATER_V=9)
 #   ./update.sh   →  khud ko latest karta hai, phir bot.py (Termux + DBF) + restart
 #   ./update.sh --no-self   →  self-update skip
 # NOTE: Termux me /tmp writable nahi — log script folder ke logs/ me jata hai.
 set -u
-UPDATER_V=8
+UPDATER_V=9
 
 REPO="moneytips166-166/MY-DUMPING-BOT"
 BRANCH="arena/063f862a-my-dumping-bot"
@@ -316,6 +316,64 @@ if [ -f "$CFG" ] && [ -d "$EXT" ] && \
     fi
 fi
 
+# ══════════════ 2.5) 🔁 MIRROR — bot.py har bot folder me ══════════════
+#  Phone pe bot kai jagah se chalta hai:
+#     ~/snake        (primary — user ka bot folder)
+#     /storage/emulated/0/DBF
+#     jahan update.sh khud pada hai ($DIR, jaise ~/MY-DUMPING-BOT)
+#  Sab jagah ek hi latest bot.py ho — isliye mirror karte hain.
+HOME_SNAKE="$HOME/snake"
+MIRRORED=""
+MIRROR_SKIP=""
+
+_same_dir() {   # $1 $2 — same path? (dono resolve ho to)
+    [ -n "$1" ] && [ -n "$2" ] || return 1
+    [ "$(cd "$1" 2>/dev/null && pwd -P)" = "$(cd "$2" 2>/dev/null && pwd -P)" ]
+}
+
+_mirror_to() {   # $1 = destination folder (pehle se maujood ho)
+    _dst="$1"
+    [ -n "$_dst" ] || return 0
+    [ -d "$_dst" ] || return 0                    # naya folder nahi banate
+    [ -w "$_dst" ] || { MIRROR_SKIP="$MIRROR_SKIP $_dst"; return 0; }
+    _same_dir "$_dst" "$DIR" && return 0
+    # 💾 purana bot.py backup (dest ka, overwrite se pehle)
+    if [ -f "$_dst/bot.py" ] && ! cmp -s "$_dst/bot.py" "$DIR/bot.py" 2>/dev/null; then
+        mkdir -p "$_dst/backups" 2>/dev/null
+        cp -f "$_dst/bot.py" "$_dst/backups/bot_$STAMP.py" 2>/dev/null \
+            && echo "💾 $_dst backup: backups/bot_$STAMP.py"
+    fi
+    if cp -f "$DIR/bot.py" "$_dst/bot.py" 2>/dev/null; then
+        MIRRORED="$MIRRORED $_dst"
+    else
+        MIRROR_SKIP="$MIRROR_SKIP $_dst"
+        return 0
+    fi
+    # helper scripts bhi (restart.sh wahan se bhi chale)
+    for _f in snake_lib.sh start.sh stop.sh restart.sh status.sh setconfig.sh; do
+        [ -f "$DIR/$_f" ] && cp -f "$DIR/$_f" "$_dst/$_f" 2>/dev/null
+    done
+    chmod +x "$_dst"/*.sh 2>/dev/null
+    # 🔐 config SIRF tab copy karo jab wahan koi config na ho (token kabhi overwrite nahi)
+    if [ -f "$CFG" ] && [ ! -f "$_dst/snake_config.json" ]; then
+        cp -f "$CFG" "$_dst/snake_config.json" 2>/dev/null \
+            && echo "🔐 config copy → $_dst"
+    fi
+    mkdir -p "$_dst/backups" "$_dst/logs" 2>/dev/null
+    return 0
+}
+
+# 3 jagah: $HOME/snake (agar hai), DBF, aur $DIR ke alawa koi aur chalu bot folder
+[ -d "$HOME_SNAKE" ] && _mirror_to "$HOME_SNAKE"     # user ka bot folder (agar hai)
+[ -d "$EXT" ] && _mirror_to "$EXT"                   # /storage/emulated/0/DBF
+# chalta hua bot kisi aur folder se ho to wahan bhi
+for _p in $(BOT_PIDS); do
+    _cwd="$(readlink -f "/proc/$_p/cwd" 2>/dev/null)"
+    [ -n "$_cwd" ] && [ -f "$_cwd/bot.py" ] && _mirror_to "$_cwd"
+done
+[ -n "$MIRRORED" ] && echo "🔁 bot.py mirror:$MIRRORED"
+[ -n "$MIRROR_SKIP" ] && echo "⚠️ mirror skip (likh nahi paya):$MIRROR_SKIP"
+
 # ══════════════ 3) SCRIPTS REFRESH ══════════════
 # v2.13.0: phone pe purani/tuti scripts hi "screen already exists" + duplicate
 # sessions ka karan thi. Ab har update pe saari scripts overwrite hoti hain.
@@ -354,8 +412,44 @@ if fetch_file "setconfig.sh" "$DIR/setconfig.sh.new" 2>/dev/null; then
     fi
 fi
 
+# ── 3.5) scripts refresh ke BAAD mirror dobara (latest scripts sab jagah) ──
+for _dst in $MIRRORED; do
+    [ -d "$_dst" ] || continue
+    for _f in snake_lib.sh start.sh stop.sh restart.sh status.sh setconfig.sh; do
+        [ -f "$DIR/$_f" ] && cp -f "$DIR/$_f" "$_dst/$_f" 2>/dev/null
+    done
+    chmod +x "$_dst"/*.sh 2>/dev/null
+done
+
 # ══════════════ 4) RESTART — purane SAARE sessions saaf, fresh start ══════
-cd "$DIR" || exit 1
+#  Kahan se start karein?  priority:
+#    1) ~/snake        (user ka bot folder)
+#    2) jahan bot abhi chal raha tha
+#    3) /storage/emulated/0/DBF
+#    4) $DIR (jahan update.sh hai)
+RUN_DIR=""
+# 1) jahan bot abhi chal raha hai — data/ wahi rahega (users/license safe)
+for _p in $(BOT_PIDS); do
+    _cwd="$(readlink -f "/proc/$_p/cwd" 2>/dev/null)"
+    [ -n "$_cwd" ] && [ -f "$_cwd/bot.py" ] && { RUN_DIR="$_cwd"; break; }
+done
+# 2) ~/snake — asli bot folder lage (data / config / backups me se kuch ho)
+if [ -z "$RUN_DIR" ] && [ -f "$HOME_SNAKE/bot.py" ]; then
+    if [ -d "$HOME_SNAKE/data" ] || [ -f "$HOME_SNAKE/snake_config.json" ] \
+       || [ -d "$HOME_SNAKE/backups" ] || [ -f "$HOME_SNAKE/.last_log" ]; then
+        RUN_DIR="$HOME_SNAKE"
+    fi
+fi
+# 3) DBF   4) $DIR
+[ -z "$RUN_DIR" ] && [ -f "$EXT/bot.py" ] && RUN_DIR="$EXT"
+[ -z "$RUN_DIR" ] && RUN_DIR="$DIR"
+# scripts wahan ho hi (mirror se aati hain) — warna $DIR se copy
+for _f in snake_lib.sh start.sh stop.sh restart.sh status.sh; do
+    [ -f "$RUN_DIR/$_f" ] || cp -f "$DIR/$_f" "$RUN_DIR/$_f" 2>/dev/null
+done
+mkdir -p "$RUN_DIR/backups" "$RUN_DIR/logs" 2>/dev/null
+echo "🚀 start folder: $RUN_DIR"
+cd "$RUN_DIR" || exit 1
 START_OK=0
 if [ -f ./snake_lib.sh ] && grep -q "SNAKE_LIB_V" ./snake_lib.sh 2>/dev/null; then
     . ./snake_lib.sh                      # v5 lib → snake_kill_all + snake_start
@@ -390,14 +484,16 @@ if [ "$START_OK" != "1" ]; then              # fallback (lib na mile)
         for p in $LEFT; do kill -9 "$p" 2>/dev/null; done
         sleep 2
     fi
-    rm -f "$DIR/.snake.lock" 2>/dev/null
-    RLOG="$LOGDIR/bot_$STAMP.log"
+    rm -f "$RUN_DIR/.snake.lock" "$DIR/.snake.lock" 2>/dev/null
+    mkdir -p "$RUN_DIR/logs" 2>/dev/null
+    RLOG="$RUN_DIR/logs/bot_$STAMP.log"
+    [ -d "$LOGDIR" ] && RLOG="$LOGDIR/bot_$STAMP.log"
     if command -v screen >/dev/null 2>&1; then
-        screen -dmS snake bash -c "cd '$DIR' && exec '$PY' bot.py >> '$RLOG' 2>&1"
+        screen -dmS snake bash -c "cd '$RUN_DIR' && exec '$PY' bot.py >> '$RLOG' 2>&1"
     else
-        ( cd "$DIR" && nohup "$PY" bot.py >>"$RLOG" 2>&1 & )
+        ( cd "$RUN_DIR" && nohup "$PY" bot.py >>"$RLOG" 2>&1 & )
     fi
-    echo "$RLOG" > "$DIR/.last_log"
+    echo "$RLOG" > "$RUN_DIR/.last_log"
     sleep 7
     [ -n "$(BOT_PIDS)" ] && START_OK=1
 fi
@@ -412,6 +508,8 @@ if [ -n "$PIDS" ]; then
     command -v screen >/dev/null 2>&1 && screen -ls 2>/dev/null | grep -q snake \
         && echo "🖥 screen: snake  →  dekhne ke liye: screen -r snake"
     echo "→ Telegram: /ping  →  $VER (build ${BUILD:-?})"
+    echo "📂 bot.py: $RUN_DIR/bot.py"
+    [ -n "$MIRRORED" ] && echo "📂 mirror:$MIRRORED"
     if [ -f "$CFG" ]; then
         if grep -q '"bot_token": ""' "$CFG" 2>/dev/null; then
             echo "⚠️ token khaali hai — chalao: ./setconfig.sh --token <TOKEN> && ./restart.sh"
@@ -421,7 +519,7 @@ if [ -n "$PIDS" ]; then
     fi
 else
     echo "❌ bot start hote hi band ho gaya — log:"
-    _lastlog="$(cat "$DIR/.last_log" 2>/dev/null || echo "$LOGDIR/bot_$STAMP.log")"
+    _lastlog="$(cat "$RUN_DIR/.last_log" 2>/dev/null || cat "$DIR/.last_log" 2>/dev/null || echo "$RUN_DIR/logs/bot_$STAMP.log")"
     tail -n 25 "$_lastlog" 2>/dev/null || echo "   (log khaali)"
     echo ""
     echo "   wapas purana version: cp backups/bot_$STAMP.py bot.py && ./restart.sh"

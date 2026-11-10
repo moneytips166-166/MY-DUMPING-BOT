@@ -4122,6 +4122,61 @@ def test_v2250_button_colors():
 
 
 
+def test_v2250_updater_mirror():
+    """updater v9 — bot.py sab bot folders me (snake / DBF / chalta hua folder)."""
+    group("updater v9 mirror")
+    import subprocess as _sp
+    import tempfile
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    up = open(os.path.join(root, "vps", "termux_update.sh"), encoding="utf-8").read()
+    m = re.search(r"^UPDATER_V=(\d+)", up, re.M)
+    ok(bool(m) and int(m.group(1)) >= 9, "UPDATER_V >= 9")
+    for bit in ("HOME_SNAKE", "_mirror_to", "MIRRORED", "RUN_DIR",
+                "naya folder nahi banate", "start folder", "3.5) scripts refresh"):
+        contains(up, bit)
+    contains(up, '"$HOME/snake"')
+    contains(up, "/proc/$_p/cwd")
+    ok(up.index("2.5)") < up.index("3) SCRIPTS REFRESH"), "mirror order")
+    ok(up.index("3) SCRIPTS REFRESH") < up.index("3.5) scripts refresh"), "3.5 order")
+
+    # ── asli shell test: _same_dir + _mirror_to extract karke chalao ──
+    start = up.index("_same_dir() {")
+    end = up.index("# 3 jagah:")
+    funcs = up[start:end]
+    tmp = tempfile.mkdtemp(prefix="upd_mirror_")
+    try:
+        src = os.path.join(tmp, "src")
+        dst = os.path.join(tmp, "snake")
+        os.makedirs(src)
+        os.makedirs(dst)
+        open(os.path.join(src, "bot.py"), "w").write("VERSION = 'v-new'\n")
+        open(os.path.join(src, "snake_config.json"), "w").write('{"bot_token": "111:AAA"}\n')
+        open(os.path.join(src, "snake_lib.sh"), "w").write("SNAKE_LIB_V=9\n")
+        open(os.path.join(dst, "bot.py"), "w").write("VERSION = 'v-old'\n")
+        open(os.path.join(dst, "snake_config.json"), "w").write('{"bot_token": "222:BBB"}\n')
+        sh = funcs + '\nDIR="%s"; CFG="%s/snake_config.json"; STAMP="test"\n' % (src, src)
+        sh += 'MIRRORED=""; MIRROR_SKIP=""; _mirror_to "%s"; echo "M=$MIRRORED"\n' % dst
+        r = _sp.run(["bash", "-c", sh], capture_output=True, text=True, timeout=60)
+        eq(r.returncode, 0, "mirror bash exit")
+        eq(open(os.path.join(dst, "bot.py")).read().strip(), "VERSION = 'v-new'",
+           "bot.py mirror")
+        eq(open(os.path.join(dst, "snake_config.json")).read().strip(),
+           '{"bot_token": "222:BBB"}', "user ka token overwrite NAHI hona chahiye")
+        ok(os.path.exists(os.path.join(dst, "snake_lib.sh")), "scripts mirror")
+        ok(os.path.exists(os.path.join(dst, "backups")), "backup folder")
+        bk = [f for f in os.listdir(os.path.join(dst, "backups")) if f.startswith("bot_")]
+        eq(len(bk), 1, "purana bot.py backup")
+        ok("v-old" in open(os.path.join(dst, "backups", bk[0])).read(), "backup content")
+        ghost = os.path.join(tmp, "ghost")
+        sh2 = funcs + '\nDIR="%s"; CFG=""; STAMP="t"; MIRRORED=""; MIRROR_SKIP=""\n' % src
+        sh2 += '_mirror_to "%s"; echo done\n' % ghost
+        _sp.run(["bash", "-c", sh2], capture_output=True, text=True, timeout=60)
+        ok(not os.path.exists(ghost), "naya folder ban gaya (nahi banana chahiye)")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -4166,7 +4221,8 @@ def main():
                test_v2230_wiring,
                test_v2240_tamper, test_v2240_waf_send_live,
                test_v2240_scan_tamper_live, test_v2240_waf_probe_live,
-               test_v2240_wiring, test_v2250_button_colors):
+               test_v2240_wiring, test_v2250_button_colors,
+               test_v2250_updater_mirror):
         try:
             fn()
         except Exception as exc:

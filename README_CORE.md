@@ -48,6 +48,10 @@ cd ~/MY-DUMPING-BOT/shadow
   crt.sh subfinder · URL QC.
 - UI/colour rules `bot.py` jaisa hi. Token: `SHADOW_TOKEN` env ya
   `shadow/shadow_config.json` (gitignored).
+- `./update.sh` (updater **v9**) `bot.py` ko **saare bot folders** me mirror karta hai:
+  `~/snake` (primary) · `/storage/emulated/0/DBF` · jahan bot abhi chal raha hai ·
+  jahan `update.sh` pada hai. Purana `bot.py` har jagah `backups/bot_<stamp>.py` me.
+  Token/`snake_config.json` **kabhi overwrite nahi** hota.
 - `./update.sh` ab `shadow/` ko **teen jagah** sync karta hai (updater v8):
   `~/MY-DUMPING-BOT/shadow`, `/storage/emulated/0/DBF/shadow`,
   `/storage/emulated/0/shadow` — scripts + README ke saath.
