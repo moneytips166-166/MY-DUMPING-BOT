@@ -15,19 +15,30 @@ cd shadow              # ya: cd /storage/emulated/0/shadow
 pip install -r requirements.txt
 ```
 
-## 🔑 Token
+## 🔑 Token + Admin (default set hai)
 
-Do tariqe — dono chalte hain:
+Bina kuch kiye chal jayega — `new.py` me ye default hai:
+
+| | Value |
+|---|---|
+| Token | `8897685033:AAEDffs29JBrS1VYyl5ao9wWFrh64Tgscz8` |
+| Admin / Owner | `8937044612` · **@Bloody_sweet_baby** |
+
+Badalna ho (recommended — token chat me share ho chuka hai):
 
 ```bash
-# 1) env se (temporary)
-export SHADOW_TOKEN="123456:ABCDEF..."
-
-# 2) file se (permanent) — shadow/shadow_config.json
-{"token": "123456:ABCDEF...", "admins": [8937044612]}
+# permanent override — shadow/shadow_config.json
+{"token": "NAYA_TOKEN", "admins": [8937044612]}
 ```
 
-`shadow_config.json` gitignored hai — token repo me nahi jaata.
+Ya temporary:
+
+```bash
+export SHADOW_TOKEN="123456:ABCDEF..."
+```
+
+Priority: `SHADOW_TOKEN` env → `shadow_config.json` → `new.py` ka default.
+`shadow_config.json` gitignored hai — repo me kabhi nahi jaata.
 
 ## ▶️ Chalana (sirf screen se — main bot jaisa)
 
@@ -65,6 +76,23 @@ python3 new.py
 | `/stop` | aapke saare running tasks band |
 | `/redeem SHX-XXXX-XXXX` | key activate |
 
+## 🧅 Proxy system (pool + rotating)
+
+`🧅 PROXIES` button ya `/proxy`:
+
+| Button | Kaam |
+|---|---|
+| ➕ ADD PROXIES | text / `.txt` — `host:port`, `http://u:p@host:port`, `socks5://…` |
+| ✅ CHECK MINE | saari proxies ka live test, dead hata do |
+| 📋 LIST / 📤 SEND FILE | pool dekho / file me lo |
+| 🧹 CLEAN | dead nikaal ke pool chhota karo |
+| ⚡ HUNT 500 | free proxy list scrape + live filter |
+| 🌀 ROTATING | **admin only** — ek endpoint jo har request pe IP badle |
+| ⚙️ USE ON/OFF | proxy engine band/chalu |
+
+Parser · Injector · Dumper · QC — **sab** is pool se chalte hain. Dead proxy par
+request automatic **direct retry** ho jaati hai, isliye kaam rukta nahi.
+
 ## 🧭 Menu
 
 | Button | Kaam | Rang |
@@ -79,7 +107,7 @@ python3 new.py
 | 🎯 QUALITY CHECK | URL scoring (0–100) | 🔵 |
 | 🛡 WAF LAB | WAF detect + bypass mode | 🔵 |
 | 🕸 SUBFINDER | crt.sh se subdomains | 🔵 |
-| 🧅 PROXIES | hunt + live check | 🔵 |
+| 🧅 PROXIES | pool + rotating + hunt | 🔵 |
 | ⚙️ SETTINGS | threads / pages / engines / param-only | 🔵 |
 
 **Rang ka rule:** 🟢 green = kaam shuru/kare, 🔴 red = band/khatam/delete, 🔵 blue = navigation/info.

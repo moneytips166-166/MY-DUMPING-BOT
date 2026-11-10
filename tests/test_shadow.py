@@ -244,6 +244,84 @@ def main():
     chk(m.only_params(["http://x/a", "http://x/b?q=1"]) == ["http://x/b?q=1"],
         "only_params fail")
 
+    # ── defaults (token / admin) ────────────────────────────────────────────
+    chk(bool(m.DEFAULT_TOKEN) and ":" in m.DEFAULT_TOKEN, "DEFAULT_TOKEN missing")
+    chk(m.DEFAULT_ADMINS == [8937044612], "DEFAULT_ADMINS galat")
+    chk(8937044612 in m.ADMINS, "admin default apply nahi hua")
+    chk(m.OWNER_USERNAME.startswith("@"), "OWNER_USERNAME missing")
+
+    # ── proxy engine ────────────────────────────────────────────────────────
+    chk(m.norm_proxy("1.2.3.4:8080") == "http://1.2.3.4:8080", "norm_proxy host:port")
+    chk(m.norm_proxy("http://u:p@h:1") == "http://u:p@h:1", "norm_proxy passthrough")
+    chk(m.norm_proxy("garbage") is None, "norm_proxy garbage")
+    chk(m.norm_proxy("") is None, "norm_proxy empty")
+
+    px, bad = m.proxy_add_lines(uid, ["1.1.1.1:8080", "2.2.2.2:3128",
+                                      "http://a:b@3.3.3.3:80", "badline", ""])
+    chk(len(px) == 3, "proxy_add_lines valid count = %d" % len(px))
+    chk(bad == 1, "proxy_add_lines invalid count")
+    chk(len(m.proxies_of(uid)) == 3, "proxies_of count")
+    px2, _ = m.proxy_add_lines(uid, ["1.1.1.1:8080"])       # duplicate
+    chk(len(m.proxies_of(uid)) == 3, "duplicate proxy add hui")
+
+    m.sset("proxy_on", 1)
+    info = m.proxy_setup(uid)
+    chk(info["on"] is True and info["pool"] == 3, "proxy_setup pool")
+    picks = {m.proxy_pick() for _ in range(6)}
+    chk(len(picks) == 3, "proxy_pick round-robin nahi")
+    chk("🧅" in m.px_line(info), "px_line khali")
+    chk(m.px_line({"pool": 0, "rot": False}) == "", "px_line zero par text aaya")
+
+    m.sset("rotproxy", "http://9.9.9.9:1")
+    chk(m.proxy_setup(uid)["rot"] is True, "rotating proxy pick nahi")
+    chk(m.proxy_pick() == "http://9.9.9.9:1", "rot proxy return galat")
+    m.sset("rotproxy", "")
+
+    m.sset("proxy_on", 0)
+    chk(m.proxy_setup(uid)["pool"] == 0 and m.proxy_pick() is None, "proxy off fail")
+    m.sset("proxy_on", 1)
+    m.proxy_setup(uid)
+
+    n = len(sent)
+    m.on_cb(Call("proxy"))
+    chk(len(sent) > n and "PROXY MANAGER" in sent[-1][2], "proxy screen nahi khula")
+    m.on_cb(Call("proxy:list"))
+    chk("MY PROXIES" in sent[-1][2], "proxy:list fail")
+    m.on_cb(Call("proxy:toggle"))
+    chk(m.sget("proxy_on") in (0, "0", False), "proxy:toggle OFF fail")
+    m.on_cb(Call("proxy:toggle"))
+    chk(str(m.sget("proxy_on")) in ("1", "True"), "proxy:toggle ON fail")
+    m.cmd_proxy(MsgObj("/proxy"))
+    chk("PROXY MANAGER" in sent[-1][2], "/proxy command fail")
+
+    # dead proxy par request direct retry honi chahiye
+    import asyncio as _aio
+    import aiohttp as _ah
+    from aiohttp import web as _web
+
+    async def _srv():
+        app = _web.Application()
+        app.add_routes([_web.get("/", lambda r: _web.Response(text="ok-proxy"))])
+        run_ = _web.AppRunner(app, access_log=None)
+        await run_.setup()
+        site = _web.TCPSite(run_, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        url = "http://127.0.0.1:%d/" % port
+        try:
+            async with _ah.ClientSession() as sess:
+                m.PROXY.update({"pool": ["http://127.0.0.1:9"], "rot": "", "on": True})
+                r1 = await m.fetch(sess, url, 4)
+                m.proxy_stop()
+                r2 = await m.fetch(sess, url, 4)
+                return r1, r2
+        finally:
+            await run_.cleanup()
+
+    r1, r2 = _aio.run(_srv())
+    chk(r1["status"] == 200 and r1["body"] == "ok-proxy", "dead proxy fallback fail")
+    chk(r2["status"] == 200, "direct fetch fail")
+
     # ── commands ─────────────────────────────────────────────────────────────
     m.cmd_start(MsgObj("/start"))
     chk(str(uid) in m.jload("users", {}), "/start ne user save nahi kiya")
