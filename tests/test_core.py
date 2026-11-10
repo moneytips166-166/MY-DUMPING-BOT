@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.27.0", "VERSION")
+    eq(core.VERSION, "v2.28.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.27.0"')
+    contains(btxt, 'VERSION = "v2.28.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.27.0", "shim se version")
+    eq(core.VERSION, "v2.28.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1805,7 +1805,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.27.0", "version")
+    eq(core.VERSION, "v2.28.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -3330,7 +3330,7 @@ def test_v2220_url_truth():
 
 
 def test_v2220_parser_param_filter():
-    """v2.22.0 — parser paramless URLs ko relax me nahi rakhta."""
+    """v2.22.0 + v2.28.0 — param ON/OFF setting HATA; ab hamesha normal."""
     group("v2.22.0 parser param")
     import asyncio as _aio
     old_fetch = core.fetch_engine
@@ -3344,8 +3344,15 @@ def test_v2220_parser_param_filter():
     core.fetch_engine = fake_fetch
     core.gj_enabled = lambda: False
     try:
-        # dork khud ?id= maang raha hai → paramless URLs bilkul nahi
-        core.SETTINGS["parse_param_filter"] = "auto"
+        # ── ON/OFF setting gayi ──
+        eq(core.PARSE_PARAM_MODES, ("auto",), "sirf ek normal mode")
+        core.SETTINGS["parse_param_filter"] = "1"
+        eq(core.parse_param_mode(), "auto", "ON/OFF setting ignore hoti hai")
+        core.SETTINGS["parse_param_filter"] = "0"
+        eq(core.parse_param_mode(), "auto", "OFF setting bhi ignore")
+        ok("NORMAL" in core.parse_param_label(), "label normal")
+
+        # ── dork khud ?id= maang raha hai → paramless URL nahi (sach) ──
         res = _aio.run(core.parse_deep(["inurl:item.php?id=1"] * 3, max_urls=100,
                                        use_proxy=False, strict=True, mode="fast",
                                        budget=2))
@@ -3353,31 +3360,31 @@ def test_v2220_parser_param_filter():
         eq(st["unique"], 0, "param-required dork se paramless URL nahi")
         ok(st["no_param"] > 0, "no-param counted (%s)" % st["no_param"])
         ok(st["relaxed_blocked"] > 0, "relax band (%s)" % st["relaxed_blocked"])
-        eq(st["param_filter"], "auto", "filter mode reported")
+        eq(st["param_filter"], "auto", "mode reported")
 
-        # filter ONLY PARAMS → plain dork par bhi paramless drop
+        # ── purani "ONLY PARAMS" setting ab kuch nahi karti ──
         core.SETTINGS["parse_param_filter"] = "1"
         res2 = _aio.run(core.parse_deep(["inurl:test"] * 2, max_urls=100,
                                         use_proxy=False, strict=True, mode="fast",
                                         budget=2))
         st2 = res2["stats"]
-        eq(st2["unique"], 0, "ONLY PARAMS me paramless nahi")
-        ok(st2["no_param"] > 0, "ONLY PARAMS count (%s)" % st2["no_param"])
+        eq(st2["unique"], 4, "plain dork ke URLs rakhe gaye (koi filter nahi)")
+        eq(st2["param_unique"], 0, "param_unique 0")
 
-        # param wale URLs pass + counted
+        # ── param wale URLs pass + counted ──
         async def good_fetch(session, engine, dork, proxy=None, timeout=15.0,
                              page=0, rot=None, miss=None):
             return ["https://ex.com/item.php?id=%d" % i for i in range(4)]
 
         core.fetch_engine = good_fetch
-        core.SETTINGS["parse_param_filter"] = "1"
         res3 = _aio.run(core.parse_deep(["inurl:item.php?id="] * 2, max_urls=100,
                                         use_proxy=False, strict=True, mode="fast",
                                         budget=4))
         st3 = res3["stats"]
         ok(st3["unique"] > 0, "param URL pass (%d)" % st3["unique"])
         ok(st3["param_urls"] > 0, "param_urls counted (%d)" % st3["param_urls"])
-        eq(st3["no_param"], 0, "filter ne param URL nahi giraya")
+        ok(st3["param_unique"] > 0, "param_unique counted")
+        eq(st3["no_param"], 0, "param URL nahi gira")
     finally:
         core.fetch_engine = old_fetch
         core.gj_enabled = old_gj
@@ -3492,16 +3499,150 @@ def test_v2220_dump_guard():
     ok("No parameter" in txt or "🚫" in txt, "no-parameter count dikha")
 
 
+def test_v2280_param_target():
+    """v2.28.0 — limit = param URLs target; kam pade to fresh dorks se top-up."""
+    group("v2.28.0 param target")
+    import asyncio as _aio
+
+    # param URL filter
+    eq(core.parse_param_list(["https://a.com/x?id=1", "https://a.com/plain",
+                              "https://b.com/y?cat=2&p=3"]),
+       ["https://a.com/x?id=1", "https://b.com/y?cat=2&p=3"], "param list")
+
+    # ── parse_deep: param goal par rukta hai ──
+    old_fetch, old_gj = core.fetch_engine, core.gj_enabled
+    old_settings = dict(core.SETTINGS)
+
+    async def five_param(session, engine, dork, proxy=None, timeout=15.0,
+                         page=0, rot=None, miss=None):
+        return ["https://ex.com/p.php?id=%d" % i for i in range(5)]
+
+    core.fetch_engine = five_param
+    core.gj_enabled = lambda: False
+    st = {}
+    try:
+        res = _aio.run(core.parse_deep(["inurl:p.php?id="] * 2, max_urls=500,
+                                       use_proxy=False, strict=True, mode="fast",
+                                       budget=5, param_goal=3))
+        st = res["stats"]
+        ok(st["param_unique"] >= 3, "param goal hit (%s)" % st["param_unique"])
+        eq(st["goal_hit"], 1, "goal_hit set")
+        eq(st["param_goal"], 3, "goal reported")
+    finally:
+        core.fetch_engine, core.gj_enabled = old_fetch, old_gj
+        core.SETTINGS.clear()
+        core.SETTINGS.update(old_settings)
+
+    # ── report file ──
+    rep = "\n".join(core.parse_report_lines(
+        {"param_goal": 10000, "scanned": 2000, "engines": 3, "mode": "fast",
+         "errors": 0, "cc": 0, "wb": 0},
+        ["https://a.com/x?id=1"] * 50 + ["https://a.com/plain"] * 10,
+        ["https://a.com/x?id=1"] * 60, ["https://a.com/x?id=1"] * 50,
+        ["d%d" % i for i in range(2000)], 500, 2, 123.4))
+    contains(rep, "PARSER REPORT")
+    contains(rep, "Param URLs")
+    contains(rep, "10,000")
+    contains(rep, "Auto-generated")
+    contains(rep, "param_urls_*.txt")
+
+    # ── ASLI handler: 2 param URLs mile → top-up se 5 tak ──
+    calls = {"deep": 0, "expand": [], "files": []}
+    urls_first = ["https://s.com/a.php?id=1", "https://s.com/b.php?id=2",
+                  "https://s.com/plain"]
+    urls_after = ["https://s.com/c.php?id=3", "https://s.com/d.php?id=4",
+                  "https://s.com/e.php?id=5"]
+
+    def _stats(u):
+        pu = sum(1 for x in u if core.url_has_param(x))
+        return {"scanned": 2, "total": 2, "raw": len(u), "unique": len(u),
+                "errors": 0, "filtered": 0, "engine_hits": {}, "junk": 0,
+                "mismatch": 0, "cc": 0, "api": 0, "gj": 0, "relaxed": 0,
+                "mode": "fast", "engines": 3, "aborted": 0, "wb": 0,
+                "time_up": 0, "dead": [], "engines_used": 3,
+                "param_unique": pu, "param_goal": 5, "param_urls": pu,
+                "no_param": len(u) - pu, "remaining_dorks": [], "stop": 0,
+                "saturated": 0, "skipped": 0}
+
+    async def fake_deep(dorks, **kw):
+        calls["deep"] += 1
+        if calls["deep"] == 1:
+            return {"urls": list(urls_first), "raw_urls": list(urls_first),
+                    "stats": _stats(urls_first)}
+        return {"urls": list(urls_after), "raw_urls": list(urls_after),
+                "stats": _stats(urls_after)}
+
+    async def fake_send(update, path, caption=""):
+        calls["files"].append(caption)
+        return True
+
+    async def fake_pool(*a, **k):
+        return []
+
+    def fake_expand(dorks, n=500, fresh=True):
+        calls["expand"].append((len(list(dorks)), int(n), fresh))
+        return ["fresh dork %d site:s.com" % i for i in range(int(n))][:int(n)]
+
+    real = (core.parse_deep, core.dump_text, core.send_file,
+            core.expand_dorks, core.ensure_proxy_pool)
+    core.parse_deep = fake_deep
+    core.dump_text = lambda items, tag="dump", header="": ("/tmp/%s.txt" % tag,
+                                                           len(list(items)))
+    core.send_file = fake_send
+    core.expand_dorks = fake_expand
+    core.ensure_proxy_pool = fake_pool
+    try:
+        core.SETTINGS["parse_url_limit"] = 5          # param target = 5
+        ctx = FakeContext({"parse_dorks": ["inurl:a.php?id= site:s.com"] * 2})
+        upd = FakeUpdate(uid=ADMIN, text="")
+        _aio.run(core.input_deep_max(upd, ctx, ""))
+        ok(calls["deep"] >= 2, "top-up round chala (%d parse calls)" % calls["deep"])
+        ok(bool(calls["expand"]), "expand_dorks call hua")
+        ok(calls["expand"][0][2] is True, "fresh=True")
+        ok(calls["expand"][0][1] >= 30, "gap ke hisaab se dorks (%d)" % calls["expand"][0][1])
+        card = "\n".join(upd.texts())
+        contains(card, "Param URLs")
+        contains(card, "Auto top-up")
+        # 4 files: urls / raw / param_urls / report
+        ok(len(calls["files"]) >= 4, "4 files deliver (%s)" % calls["files"])
+        ok(any("param URLs" in f for f in calls["files"]), "param urls file")
+        ok(any("report" in f for f in calls["files"]), "report file")
+        ok(any("URLs" in f for f in calls["files"]), "urls file")
+        ok(any("raw" in f for f in calls["files"]), "raw file")
+    finally:
+        (core.parse_deep, core.dump_text, core.send_file,
+         core.expand_dorks, core.ensure_proxy_pool) = real
+        core.SETTINGS.pop("parse_url_limit", None)
+
+    # ── source: top-up backend maujood ──
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    for bit in ("PARSE_TOPUP_ROUNDS", "def parse_param_list",
+                "def parse_report_lines", "AUTO TOP-UP", "param_goal=pgoal",
+                "expand_dorks(used_dorks", "param_urls"):
+        contains(src, bit)
+    # card me param urls + files
+    for bit in ("param_urls_*.txt", "report_*.txt", "Param URLs"):
+        contains(src, bit)
+
+
 def test_v2220_wiring():
     """v2.22.0 — naye buttons routed + settings surface."""
     group("v2.22.0 wiring")
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
-    for bit in ('if rest == "param":', 'if rest == "discover":',
+    for bit in ('if rest == "discover":',
                 "def url_has_param", "def dork_requires_param",
                 "async def discover_params", "baseline_ok=base_ok",
-                "/batch paramonly", "ifs = \"1\"" if False else "inj_discover"):
+                "inj_discover"):
         contains(src, bit)
+    # v2.28.0 — param ON/OFF setting aur uska UI poora gaya
+    for gone in ('if rest == "param":', "async def cb_parse_param",
+                 "def cb_parse_param", "/batch paramonly",
+                 'sget("parse_param_filter"'):
+        ok(gone not in src, "purana param setting code bacha: " + gone)
+    contains(src, "def parse_param_mode")
+    contains(src, "PARAM TARGET")
     ok("invent: bool = False" in src, "invent default off")
     ok('params = (url_reverse(raw).get("params") or [])[:2] or ["id"]' not in src,
        "hardcoded 'id' fallback hata")
@@ -3511,9 +3652,9 @@ def test_v2220_wiring():
     old_settings = dict(core.SETTINGS)
     try:
         ctx = FakeContext({})
-        upd = FakeUpdate(uid=ADMIN, data="pr:param")
+        upd = FakeUpdate(uid=ADMIN, data="pr:limit")
         asyncio.run(core._on_callback_inner(upd, ctx))
-        ok(bool(upd.texts()), "pr:param jawab deta hai")
+        ok(bool(upd.texts()), "pr:limit jawab deta hai")
         upd2 = FakeUpdate(uid=ADMIN, data="inj:discover")
         asyncio.run(core._on_callback_inner(upd2, FakeContext({})))
         ok(bool(upd2.texts()), "inj:discover jawab deta hai")
@@ -3522,9 +3663,9 @@ def test_v2220_wiring():
         core.SETTINGS.update(old_settings)
         core.jsave("settings", core.SETTINGS)
 
-    # batch card me paramonly line
+    # batch card: paramonly line gayi, discover bachi
     t = core.batch_card()
-    contains(t, "paramonly")
+    ok("paramonly" not in t, "batch me paramonly hata")
     contains(t, "discover")
 
 def test_v2230_parse_forms():
@@ -4417,7 +4558,8 @@ def main():
                test_v2240_wiring, test_v2250_button_colors,
                test_v2250_updater_mirror,
                test_v2260_shadow_removed,
-               test_v2270_proxy_formats):
+               test_v2270_proxy_formats,
+               test_v2280_param_target):
         try:
             fn()
         except Exception as exc:

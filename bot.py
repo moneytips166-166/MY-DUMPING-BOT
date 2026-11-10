@@ -71,8 +71,8 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.27.0"
-BUILD = "proxy-formats"       # feature flags — /ping me dikhte hain
+VERSION = "v2.28.0"
+BUILD = "param-target"       # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
@@ -6124,20 +6124,22 @@ def dork_requires_param(dork: str) -> bool:
     return False
 
 
-PARSE_PARAM_MODES = ("auto", "1", "0")
+PARSE_PARAM_MODES = ("auto",)
 
 
 def parse_param_mode() -> str:
-    """auto (default) | '1' sirf param wale URLs | '0' saare URLs."""
-    v = str(sget("parse_param_filter", "auto") or "auto").strip().lower()
-    return v if v in PARSE_PARAM_MODES else "auto"
+    """v2.28.0 — param ON/OFF setting hata di.
+
+    Ab hamesha NORMAL: saare URLs rakhe jate hain (param wale alag count hote
+    hain). Sirf ek hi sach bacha hai — agar dork khud `?id=` maang raha hai to
+    paramless URL match nahi hota (fake result nahi).
+    Purani setting `parse_param_filter` ab ignore hoti hai.
+    """
+    return "auto"
 
 
 def parse_param_label(mode: str = "") -> str:
-    m = mode or parse_param_mode()
-    return {"auto": "AUTO (dork ke hisaab se)",
-            "1": "ONLY URLs WITH PARAMS",
-            "0": "ALL URLs"}.get(m, "AUTO")
+    return "NORMAL — all URLs (param wale alag)"
 
 
 def inj_discover_on() -> bool:
@@ -6854,7 +6856,11 @@ async def parse(dorks: list, max_urls: int = 200, pages: int = 1, engines: list 
 
 # ── DEEP SCAN — sab dorks, poore stats (competitor jaisa card) ───────────────
 def parse_url_limit(ndorks: int = 0) -> int:
-    """URL limit — 0 (default) = JITNA MILE UTNA. Admin se fix bhi kar sakta hai."""
+    """Param URL target — 0 (default) = JITNA MILE UTNA.
+
+    v2.28.0: ye "kitne param URLs chahiye" hai. Target kam pada to parser
+    khud naye fresh dorks bana ke top-up karta hai.
+    """
     try:
         v = int(sget("parse_url_limit", 0) or 0)
     except Exception:
@@ -6875,7 +6881,7 @@ def parse_budget() -> float:
 async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                      use_proxy=None, strict: bool = True,
                      progress=None, mode: str = None, budget: float = 0,
-                     uid=None) -> dict:
+                     uid=None, param_goal: int = 0) -> dict:
     """Har dork scan karo, junk hatao, aur poore stats do:
 
     scanned / raw / unique / errors / filtered / engines
@@ -6883,6 +6889,11 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
     dorks = [str(d).strip() for d in (dorks or []) if str(d).strip()]
     max_urls = max(10, min(500000, int(max_urls or 5000)))
     pages = max(1, min(10, int(pages or 1)))
+    #  v2.28.0 — param URLs ka target (0 = purana behaviour, koi target nahi)
+    try:
+        param_goal = max(0, min(200000, int(param_goal or 0)))
+    except Exception:
+        param_goal = 0
     if use_proxy is None:                       # auto
         use_proxy = proxy_available()
     mode = mode if mode in ENGINE_SETS else engines_mode()
@@ -6910,8 +6921,8 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
           "aborted": 0, "wb": 0, "empty_streak": 0, "time_up": 0, "stop": 0,
           "engines_used": len(eng_list), "dead": [], "proxy": rot.stats(),
           "rounds": 0, "per_dork": 0, "px_mode": "auto",
-          "param_urls": 0, "no_param": 0, "param_filter": "auto",
-          "relaxed_blocked": 0}
+          "param_urls": 0, "param_unique": 0, "param_goal": param_goal,
+          "no_param": 0, "param_filter": "auto", "relaxed_blocked": 0}
     #  v2.22.0 — URL truth: paramless URLs ka hisaab + (optional) filter
     _pf = parse_param_mode()
     st["param_filter"] = _pf
@@ -7028,7 +7039,8 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
             _yield_target = max(1.0, min(50.0, float(sget("yield_target", 5) or 5)))
         except Exception:
             _yield_target = 5.0
-        _goal = min(max_urls, int(len(dorks) * _yield_target))
+        _goal = min(max_urls, max(int(len(dorks) * _yield_target),
+                                  (param_goal * 2) if param_goal else 0))
         try:
             _max_req = int(sget("parse_sources", 0) or 0)
         except Exception:
@@ -7223,7 +7235,12 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                     async with _lock:
                         st["time_up"] = 1
                     return
-                if len(out) >= _goal:                     # target bhar gaya
+                if param_goal:                            # param URLs ka target
+                    if st.get("param_unique", 0) >= param_goal:
+                        async with _lock:
+                            st["goal_hit"] = 1
+                        return
+                elif len(out) >= _goal:                   # target bhar gaya
                     async with _lock:
                         st["goal_hit"] = 1
                     return
@@ -7274,7 +7291,8 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                     _fresh = 0
                     for u in got:
                         kk = u.split("#")[0]
-                        if url_has_param(kk):
+                        _has_p = url_has_param(kk)
+                        if _has_p:
                             st["param_urls"] += 1
                         if kk in seen:
                             st["junk"] += 1
@@ -7283,6 +7301,8 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
                         seen.add(kk)
                         out.append(kk)
                         _fresh += 1
+                        if _has_p:
+                            st["param_unique"] += 1
                         if len(out) >= max_urls:
                             break
                     # diminishing returns — SERP se jitna mil sakta tha mil gaya
@@ -7331,6 +7351,7 @@ async def parse_deep(dorks: list, max_urls: int = 5000, pages: int = 1,
         st["engine_tries"] = dict(_tries)
 
     st["unique"] = len(out)
+    st["param_unique"] = sum(1 for u in out if url_has_param(u))
     st["filtered"] = max(st["filtered"], st["raw"] - st["unique"])
     st["proxy"] = rot.stats()
     st["px_mode"] = _px_mode0
@@ -8847,8 +8868,6 @@ async def _route_tool_cb(update, context, data: str):
             return await cb_parse_cfg(update, context, rest[4:])
         if rest == "limit":
             return await cb_parse_limit(update, context)
-        if rest == "param":
-            return await cb_parse_param(update, context)
         if rest == "rest":
             rest_d = context.user_data.get("parse_rest") or []
             if not rest_d:
@@ -11920,12 +11939,10 @@ async def tool_parse(update, context):
         [InlineKeyboardButton("📥 USE LAST %d DORKS" % len(last), callback_data="pr:last")],
         [InlineKeyboardButton("✍️ MANUAL DORK", callback_data="pr:manual")],
         [InlineKeyboardButton("🌊 DEEP CRAWL (last URLs)", callback_data="pr:crawl")],
-        [InlineKeyboardButton("🎯 URL LIMIT: %s"
+        [InlineKeyboardButton("🎯 PARAM TARGET: %s"
                               % ("ALL" if not int(sget("parse_url_limit", 0) or 0)
                                  else fmt(int(sget("parse_url_limit", 0)))),
                               callback_data="pr:limit")],
-        [InlineKeyboardButton("🔗 PARAM URLs: %s" % parse_param_label(),
-                              callback_data="pr:param")],
         [InlineKeyboardButton("🎛 %s" % ENGINE_LABEL[mode].split(" ", 1)[-1],
                               callback_data="pr:eng")],
         [InlineKeyboardButton("🔬 ENGINE DOCTOR (kaun block hai + fix)",
@@ -11941,10 +11958,10 @@ async def tool_parse(update, context):
            + ("\n" + KV("Proxy", ("✅ %d alive" % len(pool)) if pool else "⚪ none — direct mode", "🧅")
               if is_admin(update.effective_user.id) else "")
            + "\n" + KV("Dorks ready", "<code>%s</code>" % fmt(len(last)), "🎯")
-           + "\n" + KV("URL limit", ("<b>ALL</b> — as many as found"
-                                      if not int(sget("parse_url_limit", 0) or 0)
-                                      else "<code>%s</code>" % fmt(int(sget("parse_url_limit", 0)))), "🌐")
-           + "\n" + KV("Param filter", "<b>%s</b>" % parse_param_label(), "🔗")
+           + "\n" + KV("Param target", ("<b>ALL</b> — jitna mile"
+                                         if not int(sget("parse_url_limit", 0) or 0)
+                                         else "<code>%s</code> param URLs" % fmt(int(sget("parse_url_limit", 0)))), "🔗")
+           + "\n" + KV("Auto top-up", "✅ ON — target kam pada to naye dorks khud banenge", "🧠")
            + "\n" + KV("Pages / Threads", "<code>%d</code> · <code>%d</code> parallel"
                        % (int(sget("parse_pages", 3) or 3),
                           int(sget("parse_threads", 12) or 12)), "⚙️")
@@ -11977,7 +11994,7 @@ async def cb_parse_engine(update, context):
 
 
 async def launch_deep(update, context, dorks, note: str = ""):
-    """Bina kuch poochhe — poore dorks + auto URL limit se scan shuru."""
+    """Bina kuch poochhe — poore dorks + param target se scan shuru."""
     dorks = _uniq([str(d).strip() for d in (dorks or []) if str(d).strip()])
     if not dorks:
         await reply_msg(update).reply_text("❌ No dorks found. Run DORKER.")
@@ -12008,23 +12025,9 @@ async def cb_parse_last(update, context):
     return await launch_deep(update, context, dorks)
 
 
-async def cb_parse_param(update, context):
-    """🔗 URL param filter cycle — AUTO → ONLY PARAMS → ALL → AUTO."""
-    order = ["auto", "1", "0"]
-    cur = parse_param_mode()
-    nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "auto"
-    sset("parse_param_filter", nxt)
-    try:
-        await update.callback_query.answer(
-            "🔗 " + parse_param_label(nxt), show_alert=False)
-    except Exception:
-        pass
-    return await tool_parse(update, context)
-
-
 async def cb_parse_limit(update, context):
-    """🎯 URL limit cycle — SAB → 5k → 20k → 50k → 1L → SAB."""
-    order = [0, 5000, 20000, 50000, 100000]
+    """🎯 PARAM TARGET cycle — SAB → 5k → 10k → 20k → 50k → 1L → SAB."""
+    order = [0, 5000, 10000, 20000, 50000, 100000]
     try:
         cur = int(sget("parse_url_limit", 0) or 0)
     except Exception:
@@ -12032,7 +12035,9 @@ async def cb_parse_limit(update, context):
     nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else 0
     sset("parse_url_limit", nxt)
     try:
-        await update.callback_query.answer("URL limit: %s" % ("ALL (as many as found)" if not nxt else fmt(nxt)))
+        await update.callback_query.answer(
+            "Param target: %s" % ("ALL (jitna mile)" if not nxt
+                                   else "%s param URLs" % fmt(nxt)))
     except Exception:
         pass
     return await tool_parse(update, context)
@@ -12078,7 +12083,7 @@ async def cb_parse_cfg(update, context, key: str = ""):
          InlineKeyboardButton("📄 PAGES: %d" % pages, callback_data="pr:set:pages")],
         [InlineKeyboardButton("🧵 THREADS: %d" % threads, callback_data="pr:set:threads")],
         [InlineKeyboardButton("⏱ TIMEOUT: %ss" % to, callback_data="pr:set:timeout")],
-        [InlineKeyboardButton("🎯 URL LIMIT: %s" % ("ALL" if not limit else fmt(limit)),
+        [InlineKeyboardButton("🎯 PARAM TARGET: %s" % ("ALL" if not limit else fmt(limit)),
                               callback_data="pr:limit")],
         [InlineKeyboardButton("🎛 ENGINES: %s" % ENGINE_LABEL[mode].split(" ", 1)[-1],
                               callback_data="pr:eng")],
@@ -12090,7 +12095,8 @@ async def cb_parse_cfg(update, context, key: str = ""):
            + "\n" + KV("Pages", "<code>%d</code> — har dork ke kitne result pages" % pages, "📄")
            + "\n" + KV("Threads", "<code>%d</code> — ek saath kitne dorks" % threads, "🧵")
            + "\n" + KV("Timeout", "<code>%ss</code> per engine request" % to, "⏱")
-           + "\n" + KV("URL limit", "<b>ALL</b>" if not limit else "<code>%s</code>" % fmt(limit), "🎯")
+           + "\n" + KV("Param target", "<b>ALL</b> — jitna mile" if not limit
+                       else "<code>%s</code> param URLs" % fmt(limit), "🎯")
            + "\n" + KV("Engines", "<b>%s</b>" % ENGINE_LABEL[mode], "🎛")
            + "\n\n" + B("Kya badalna chahiye?") + "\n"
            + P("Zyada threads = zyada speed, par phone/net pe block bhi zyada. "
@@ -12113,6 +12119,57 @@ async def cb_parse_manual(update, context):
     await_set(context, "parse_dorks")
 
 
+PARSE_TOPUP_ROUNDS = 6         # auto top-up: max naye dork rounds (phone-safe)
+
+
+def parse_param_list(urls) -> list:
+    """Sirf woh URLs jinme query param hai (?id= / ?cat= …)."""
+    return _uniq([str(u) for u in (urls or []) if url_has_param(str(u))])
+
+
+def parse_report_lines(st, urls, raw_urls, param_urls, dorks_used, gen_dorks,
+                       rounds, took) -> list:
+    """📄 report file — poora hisaab, plain text."""
+    st = st or {}
+    L = ["PYTHON SNAKE — PARSER REPORT",
+         "=" * 44,
+         "Version    : %s (%s)" % (VERSION, BUILD),
+         "Date       : %s" % datetime.now().strftime("%d %b %Y %H:%M:%S"),
+         "Time taken : %s" % fmt_eta(took),
+         "",
+         "DORKS",
+         "  Given          : %s" % fmt(max(0, len(dorks_used) - int(gen_dorks or 0))),
+         "  Auto-generated : %s (same targets se fresh)" % fmt(gen_dorks),
+         "  Top-up rounds  : %d / %d" % (int(rounds or 0), PARSE_TOPUP_ROUNDS),
+         "  Scanned        : %s" % fmt(st.get("scanned", 0)),
+         "",
+         "URLS",
+         "  Raw hits        : %s" % fmt(len(raw_urls or [])),
+         "  Unique URLs     : %s" % fmt(len(urls or [])),
+         "  Param URLs      : %s" % fmt(len(param_urls or [])),
+         "  Param target    : %s" % (fmt(st.get("param_goal", 0))
+                                    if st.get("param_goal") else "ALL"),
+         "  Target reached  : %s" % ("YES" if st.get("param_goal")
+                                    and len(param_urls or []) >= int(st["param_goal"])
+                                    else ("NO" if st.get("param_goal") else "n/a")),
+         "  No-param (kept) : %s" % fmt(max(0, len(urls or []) - len(param_urls or []))),
+         "",
+         "ENGINES",
+         "  Mode            : %s" % ENGINE_LABEL.get(st.get("mode", ""), st.get("mode", "?")),
+         "  Engines tested  : %s" % fmt(st.get("engines", 0)),
+         "  Engine errors   : %s" % fmt(st.get("errors", 0)),
+         "  Common Crawl    : %s" % fmt(st.get("cc", 0)),
+         "  Wayback         : %s" % fmt(st.get("wb", 0)),
+         "",
+         "FILES",
+         "  urls_*.txt        — all unique URLs",
+         "  raw_*.txt         — raw hits (before dedupe)",
+         "  param_urls_*.txt  — injector-ready param URLs",
+         "  report_*.txt      — ye file",
+         "=" * 44]
+    return L
+
+
 async def cb_parse_deep(update, context):
     q = update.callback_query
     dorks = context.user_data.get("last_dorks") or []
@@ -12130,7 +12187,7 @@ async def cb_parse_deep(update, context):
 
 
 async def input_deep_max(update, context, text: str, task_id: str = ""):
-    """text khaali = auto (jitna mile utna). Number diya to wahi limit."""
+    """text khaali = auto. Number diya to wahi PARAM URL target (v2.28.0)."""
     import re as _re
     pf = _take_pending(context, "deep_max", "parse_max")
     if pf:
@@ -12140,12 +12197,23 @@ async def input_deep_max(update, context, text: str, task_id: str = ""):
         await reply_msg(update).reply_text("❌ No dorks found. Run DORKER.")
         return
     _num = _re.sub(r"[^0-9]", "", text or "")
+    try:
+        _set_limit = int(sget("parse_url_limit", 0) or 0)
+    except Exception:
+        _set_limit = 0
     if _num:
         mx = max(50, min(200000, int(_num)))
-        _auto = False
-    else:                                    # koi sawaal nahi — auto max
+    elif _set_limit > 0:
+        mx = _set_limit
+    else:                                    # koi target nahi — auto max
         mx = parse_url_limit(len(dorks))
-        _auto = True
+    #  v2.28.0 — "limit" ab PARAM URLs ka target hai (user: 10k param URLs chahiye)
+    pgoal = mx if (_num or _set_limit > 0) else 0
+    _auto = not pgoal
+    total_cap = (min(200000, max(mx * 3, mx + 2000, len(dorks) * 5))
+                 if pgoal else mx)
+    context.user_data["parse_param_goal"] = pgoal
+    context.user_data["parse_total_cap"] = total_cap
     budget = parse_budget()
     _uid = update.effective_user.id
     if is_admin(_uid) and str(sget("parse_auto_proxy", 1) or 1).lower() in ("1", "true", "on", "yes"):
@@ -12155,12 +12223,17 @@ async def input_deep_max(update, context, text: str, task_id: str = ""):
     _tok = stop_mark(_uid)
     #  v2.21.0: parser bhi task — restart ke baad bachi hui dorks se resume
     tid = task_id or task_new("parse", _uid, dorks,
-                              {"max": mx, "mode": user_mode(context)},
+                              {"max": total_cap, "pgoal": pgoal,
+                               "mode": user_mode(context)},
                               title="Parser — %d dorks" % len(dorks))
     msg = await reply_msg(update).reply_text(
         (H("DEEP SCAN", "starting") + "\n\n"
          + KV("Dorks", "<code>%s</code>" % fmt(len(dorks)), "🎯") + "\n"
-         + KV("URL limit", "<b>%s</b>" % ("ALL (whatever we get)" if _auto else fmt(mx)), "🌐") + "\n"
+         + KV("Param target", "<b>%s</b>"
+              % ("ALL (whatever we get)" if _auto else "%s param URLs" % fmt(pgoal)), "🔗") + "\n"
+         + KV("URL cap", "<code>%s</code>" % fmt(total_cap), "🌐") + "\n"
+         + (KV("Auto top-up", "✅ ON — target kam pada to naye dorks khud banenge", "🧠") + "\n"
+            if pgoal else "")
          + KV("Time budget", "<code>%.0f min</code>" % (budget / 60), "⏱") + "\n"
          + KV("Coverage", "<b>every dork gets a real request</b> — phir har dork "
               "ko extra sources (engines × pages)", "🎯") + "\n"
@@ -12197,51 +12270,133 @@ async def input_deep_max(update, context, text: str, task_id: str = ""):
         except Exception:
             pass
 
-    res = await parse_deep(dorks, max_urls=mx, pages=int(sget("parse_pages", 3) or 3),
+    res = await parse_deep(dorks, max_urls=total_cap,
+                           pages=int(sget("parse_pages", 3) or 3),
                            use_proxy=None, progress=prog,
-                           mode=user_mode(context), budget=budget, uid=_uid)
+                           mode=user_mode(context), budget=budget, uid=_uid,
+                           param_goal=pgoal)
+    # ── 🧠 AUTO TOP-UP (v2.28.0) ──────────────────────────────────────────
+    #  param URLs target se kam mile → unhi dorks se NAYE fresh dorks banao
+    #  (same site/inurl/keyword shape) aur parse karo — jab tak target na
+    #  bhare, budget na khatam ho, ya 2 round me kuch naya na mile.
+    urls = list(res.get("urls") or [])
+    raw_all = list(res.get("raw_urls") or [])
+    st = res["stats"]
+    used_dorks = list(dorks)
+    gen_dorks, rounds, no_progress = 0, 0, 0
+    if pgoal and not stop_requested(_uid):
+        while (len(parse_param_list(urls)) < pgoal
+               and rounds < PARSE_TOPUP_ROUNDS
+               and not st.get("stop")
+               and (time.time() - t0) < max(60.0, budget - 30)):
+            have = len(parse_param_list(urls))
+            gap = pgoal - have
+            need = max(30, min(20000, gap))
+            _have_set = set(used_dorks)
+            fresh = [d for d in expand_dorks(used_dorks, n=need, fresh=True)
+                     if d not in _have_set][:need]
+            if not fresh:
+                logger.info("top-up: naye dork nahi bane — ruk gaye")
+                break
+            rounds += 1
+            gen_dorks += len(fresh)
+            used_dorks += fresh
+            try:
+                await msg.edit_text(
+                    (H("AUTO TOP-UP — ROUND %d" % rounds, "naye dorks, same targets") + "\n\n"
+                     + KV("Param URLs", "<code>%s</code> / %s" % (fmt(have), fmt(pgoal)), "🔗") + "\n"
+                     + KV("Naye dorks", "<code>%s</code> — same site/keyword shape" % fmt(len(fresh)), "🧠") + "\n"
+                     + KV("Round", "<code>%d</code> / %d" % (rounds, PARSE_TOPUP_ROUNDS), "🔁")),
+                    parse_mode=ParseMode.HTML, reply_markup=kb_stop(_uid, _tok))
+            except Exception:
+                pass
+            _remain = max(60.0, budget - (time.time() - t0))
+            res2 = await parse_deep(fresh, max_urls=max(500, total_cap - len(urls)),
+                                    pages=int(sget("parse_pages", 3) or 3),
+                                    use_proxy=None, progress=prog,
+                                    mode=user_mode(context), budget=_remain,
+                                    uid=_uid, param_goal=pgoal)
+            _before = len(parse_param_list(urls))
+            urls = _uniq(urls + list(res2.get("urls") or []))
+            raw_all = raw_all + list(res2.get("raw_urls") or [])
+            st2 = res2.get("stats") or {}
+            for _k in ("scanned", "raw", "filtered", "no_param", "errors",
+                       "attempts", "junk", "cc", "wb", "gj", "aborted", "time_up"):
+                st[_k] = int(st.get(_k, 0) or 0) + int(st2.get(_k, 0) or 0)
+            st["unique"] = len(urls)
+            st["param_unique"] = len(parse_param_list(urls))
+            st["param_urls"] = st["param_unique"]
+            st["total"] = len(used_dorks)
+            st["engines"] = max(int(st.get("engines", 0) or 0), int(st2.get("engines", 0) or 0))
+            if len(parse_param_list(urls)) <= _before:
+                no_progress += 1
+            else:
+                no_progress = 0
+            logger.info("top-up round %d: %d naye dorks • param URLs %d/%d",
+                        rounds, len(fresh), st["param_unique"], pgoal)
+            if no_progress >= 2:
+                logger.info("top-up: 2 round me kuch naya nahi — ruk gaye")
+                break
     took = time.time() - t0
-    _rest_t = res["stats"].get("remaining_dorks") or []
-    task_update(tid, done=max(0, len(dorks) - len(_rest_t)))
+    st["param_goal"] = pgoal
+    st["param_unique"] = len(parse_param_list(urls))
+    st["urls_generated_dorks"] = gen_dorks
+    st["topup_rounds"] = rounds
+    st["unique"] = len(urls)
+    _rest_t = st.get("remaining_dorks") or []
+    task_update(tid, done=max(0, len(used_dorks) - len(_rest_t)))
     task_finish(tid, "done" if not _rest_t else "queued",
                 "" if not _rest_t else "%d dorks bachi — /tasks se resume" % len(_rest_t))
     if _rest_t and (res["stats"].get("stop") or res["stats"].get("time_up")):
         #  jo dorks bache unhe task payload me rakh do (resume ke liye)
         task_set_remaining(tid, _rest_t)
-    st = res["stats"]
-    urls = res["urls"]
     context.user_data["last_urls"] = urls
     _rest = st.get("remaining_dorks") or []          # koi dork chhoota → CONTINUE
     context.user_data["parse_rest"] = _rest
     #  v2.18.0: parser UI sirf Raw + Unique dikhata hai — engine health backend me
     _skip = int(st.get("skipped", 0) or 0)
-    _uniq = int(st.get("unique", 0) or 0)
-    _ratio = _uniq / max(1, st.get("total", 1))
+    _uniq_cnt = int(st.get("unique", 0) or 0)
+    _ratio = _uniq_cnt / max(1, st.get("total", 1))
     _tgt = float(st.get("yield_target", 5) or 5)
+    _param_urls = parse_param_list(urls)
+    _pgoal = int(st.get("param_goal", 0) or 0)
+    _hit = bool(_pgoal) and len(_param_urls) >= _pgoal
     _head = ("Dorks scanned : <code>%d / %d</code>\n" % (st["scanned"], st["total"])
              + (("Not attempted : <code>%s</code>  <i>(engines blocked — CONTINUE dabao)</i>\n"
                  % fmt(_skip)) if _skip else "")
              + "🏆 Yield       : <b>%.1fx</b>  ·  target <code>%gx</code>\n"
                % (_ratio, _tgt)
-             + (("✅ <b>Target reached</b>\n") if st.get("goal_hit")
-                else ("🟡 <b>SERPs saturated</b> — engines se jitne naye URLs mil sakte "
-                      "the mil gaye\n") if st.get("saturated")
-                else ("⚠️ Target se kam — budget badhao ya CONTINUE dabao\n"))
+             + (("✅ <b>Param target reached</b> — %s / %s\n"
+                 % (fmt(len(_param_urls)), fmt(_pgoal))) if _hit
+                else ("🟡 <b>Target se kam</b> — auto top-up rounds khatam / budget "
+                      "khatam. Dobara CONTINUE dabao ya budget badhao.\n") if _pgoal
+                else (("✅ <b>Target reached</b>\n") if st.get("goal_hit")
+                      else ("🟡 <b>SERPs saturated</b> — engines se jitne naye URLs mil "
+                            "sakte the mil gaye\n") if st.get("saturated")
+                      else ("⚠️ Target se kam — budget badhao ya CONTINUE dabao\n")))
              + (("⛔ <b>Stopped</b> — %s dorks baaki\n" % fmt(_skip))
                 if (st.get("stop") or st.get("aborted")) else ""))
     card = (H("DEEP PARSER — COMPLETE", "%.1fs" % took) + "\n\n" + _head + "\n"
-            + "📥 Raw URLs    : <code>%s</code>\n" % fmt(st["raw"])
-            + "🌐 Unique URLs : <code>%s</code>\n" % fmt(st["unique"])
-            + "🔗 With params : <code>%s</code>\n" % fmt(st.get("param_urls", 0))
-            + (("🚫 No-param    : <code>%s</code>%s\n"
-                % (fmt(st.get("no_param", 0)),
-                   " <i>(filter OFF — injector inhe skip karega)</i>"
-                   if parse_param_mode() != "1" else " <i>(drop)</i>"))
-               if st.get("no_param") else "")
+            + "📥 Raw URLs    : <code>%s</code>\n" % fmt(len(raw_all))
+            + "🌐 URLs        : <code>%s</code>\n" % fmt(st["unique"])
+            + "🔗 Param URLs  : <code>%s</code>%s\n"
+              % (fmt(len(_param_urls)),
+                 (" / <code>%s</code> %s" % (fmt(_pgoal), "✅" if _hit else "⏳")
+                  if _pgoal else "")
+                 + ("" if _pgoal else ""))
+            + (("🚫 No-param    : <code>%s</code> <i>(rakhe gaye — injector skip karega)</i>\n"
+                % fmt(max(0, st["unique"] - len(_param_urls))))
+               if st["unique"] > len(_param_urls) else "")
+            + (("🧠 Auto top-up  : <code>%d</code> round · <code>%s</code> naye dorks\n"
+                % (int(st.get("topup_rounds", 0) or 0),
+                   fmt(st.get("urls_generated_dorks", 0))))
+               if int(st.get("topup_rounds", 0) or 0) else "")
             + "⏱ Time        : <code>%s</code>\n\n" % fmt_eta(took)
             + "📦 <b>Files</b>\n"
-            + "• <code>deep_*.txt</code> — unique URLs\n"
-            + "• <code>raw_*.txt</code> — raw hits (before dedupe)")
+            + "• <code>urls_*.txt</code> — all unique URLs\n"
+            + "• <code>raw_*.txt</code> — raw hits (before dedupe)\n"
+            + "• <code>param_urls_*.txt</code> — injector-ready param URLs\n"
+            + "• <code>report_*.txt</code> — poora hisaab")
     try:
         await msg.delete()
     except Exception:
@@ -12258,20 +12413,33 @@ async def input_deep_max(update, context, text: str, task_id: str = ""):
         await update.effective_message.reply_text(
             ch, parse_mode=ParseMode.HTML,
             reply_markup=_kb_next if _i == len(_chunks) - 1 else None)
-    _raw = res.get("raw_urls") or []
+    _raw = raw_all
+    _param_urls = parse_param_list(urls)
     if urls:
-        path, cnt = dump_text(urls, "deep", "PYTHON SNAKE — unique URLs (deep scan)")
-        await send_file(update, path, "🌐 %d unique URLs" % cnt)
+        path, cnt = dump_text(urls, "urls", "PYTHON SNAKE — all unique URLs (deep scan)")
+        await send_file(update, path, "🌐 %d URLs" % cnt)
+    if _raw:
+        rpath, rcnt = dump_text(_raw, "raw", "PYTHON SNAKE — raw URLs (before dedupe)")
+        await send_file(update, rpath, "🧾 %d raw URLs" % rcnt)
+    if _param_urls:
+        ppath, pcnt = dump_text(_param_urls, "param_urls",
+                                "PYTHON SNAKE — param URLs (injector ready)")
+        await send_file(update, ppath, "🔗 %d param URLs" % pcnt)
+    try:
+        _rep = parse_report_lines(st, urls, _raw, _param_urls, used_dorks,
+                                  gen_dorks, rounds, took)
+        _rp, _ = dump_text(_rep, "report", "")
+        await send_file(update, _rp, "📄 report")
+    except Exception as exc:
+        logger.info("report file skip: %s", str(exc)[:80])
+    if urls:
         try:
             js = dump_json({"stats": {k: (v if not isinstance(v, dict) else dict(v))
                                       for k, v in st.items()}, "urls": urls[:5000]}, "deepstats")
             await send_file(update, js, "📊 stats")
         except Exception:
             pass
-    if _raw:
-        rpath, rcnt = dump_text(_raw, "raw", "PYTHON SNAKE — raw URLs (before dedupe)")
-        await send_file(update, rpath, "🧾 %d raw URLs" % rcnt)
-    else:
+    if not urls:
         await update.effective_message.reply_text(
             (H("0 URLs", ("stopped after %d dorks" % st["scanned"])
                if st.get("aborted") else "why?") + "\n\n"
@@ -17568,7 +17736,8 @@ BATCH_KEYS = {
     "want":    ("want_alive", 0, 100000, "Target alive (0 = saare)", 0, "🎯"),
     "conc":    ("concurrency", 50, 1000, "Parallel check", 400, "⚡"),
     "timeout": ("check_timeout", 3, 30, "Proxy check timeout (s)", 6, "⏱"),
-    "limit":   ("parse_url_limit", 0, 200000, "URL limit (0 = ALL)", 0, "🌐"),
+    "limit":   ("parse_url_limit", 0, 200000,
+                "Param URL target (0 = ALL)", 0, "🎯"),
     "budget":  ("parse_budget", 60, 7200, "Scan time budget (min→sec)", 1800, "⏳"),
     "injtargets": ("inj_targets", 6, 300, "Injector tests per URL", 36, "🔍"),
     "injconc": ("inj_conc", 5, 200, "Injector parallel requests", 30, "⚡"),
@@ -17617,7 +17786,6 @@ def batch_card() -> str:
         else:
             shown = fmt(val)
         rows.append(KV(label, "<code>%s</code>" % shown, emoji))
-    rows.append(KV("Parser: param filter", "<code>%s</code>" % parse_param_label(), "🔗"))
     return (H("BATCH SETTINGS", "admin") + "\n\n" + "\n".join(rows) + "\n\n"
             "<b>How to set:</b>\n"
             "<code>/batch proxy 4000</code>\n"
@@ -17634,8 +17802,6 @@ def batch_card() -> str:
             "<code>/batch dumpconc 12</code> · <code>/batch dumptime 10</code>\n"
             "<code>/batch dumptables 15</code> · <code>/batch dumprows 50</code>\n"
             "<code>/batch dumpblind 1</code> · <code>/batch dumpreq 800</code>\n"
-            "<code>/batch paramonly 1</code> — parser: sirf param wale URLs " 
-            "(0 = all, auto = dork ke hisaab se)\n"
             "<code>/batch discover 1</code> — injector: paramless URLs ke asli params\n"
             "<code>/batch postforms 2</code> · <code>/batch postfields 3</code>\n"
             "<code>/batch poststored 1</code> — POST scan: stored XSS check\n"
@@ -17665,19 +17831,6 @@ async def cmd_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
             % ("ON — users without a key can scan, files locked"
                if on else "OFF — everything normal", batch_card()),
             parse_mode=ParseMode.HTML)
-        return
-    if key == "paramonly":
-        v = str(val).strip().lower()
-        mode = {"1": "1", "on": "1", "only": "1", "0": "0", "all": "0",
-                "auto": "auto", "-1": "auto"}.get(v)
-        if mode is None:
-            await update.effective_message.reply_text(
-                "❌ <code>/batch paramonly auto|1|0</code>", parse_mode=ParseMode.HTML)
-            return
-        sset("parse_param_filter", mode)
-        await update.effective_message.reply_text(
-            "🔗 <b>Parser param filter = %s</b>\n\n%s"
-            % (parse_param_label(mode), batch_card()), parse_mode=ParseMode.HTML)
         return
     if key not in BATCH_KEYS:
         await update.effective_message.reply_text(

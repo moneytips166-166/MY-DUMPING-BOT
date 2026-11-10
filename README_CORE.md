@@ -1,6 +1,60 @@
-# 🐍 PYTHON SNAKE CORE — v2.27.0
+# 🐍 PYTHON SNAKE CORE — v2.28.0
 
 **Sirf kaam ka bot.** Koi faaltu cheez nahi, koi mockup nahi — sab real.
+
+---
+
+## 🎯 v2.28.0 — PARSER: PARAM TARGET + AUTO TOP-UP
+
+### ❌ Param ON/OFF hata diya
+
+Pehla `🔗 PARAM URLs: AUTO / ONLY / ALL` button aur `/batch paramonly` — dono
+gaye. Ab **hamesha normal**: saare URLs rakhe jate hain, param wale alag
+count hote hain. (Ek sach bacha hai — dork khud `?id=` maange to paramless URL
+match nahi hota, warna fake result aata.)
+
+### 🎯 Limit = param URLs ka target
+
+Parser me `🎯 PARAM TARGET` (pehle "URL limit"): `ALL → 5k → 10k → 20k → 50k →
+1L`. Jo target set karo, utne **param URLs** (`?id=…`, `?cat=…`) laane ki
+koshish hoti hai. Total URL cap khud badh jata hai (target × 3).
+
+```
+2000 dorks + target 10,000 param URLs
+→ pehle saare 2000 dorks scan
+→ param URLs kam pade to AUTO TOP-UP
+```
+
+### 🧠 Auto top-up (backend)
+
+Target se kam param URLs mile to parser **khud**:
+
+1. Tere dorks se **naye fresh dorks** banata hai — **same targets**
+   (`site:`, `inurl:`, `filetype:`, keywords wahi rehte hain, sirf naye combo)
+2. Jitne param URLs bache hain (gap) utne dorks banata hai
+3. Unhe parse karta hai, phir gap dobara check
+4. Max **6 rounds**, time budget ke andar — 2 round me kuch naya na mile to ruk jata hai
+
+Card me dikhta hai: `🧠 Auto top-up : 2 round · 8,000 naye dorks`
+
+### 📦 4 files har scan me
+
+| File | Kya |
+|---|---|
+| `urls_*.txt` | saare unique URLs |
+| `raw_*.txt` | raw hits (dedupe se pehle) |
+| `param_urls_*.txt` | sirf param wale URLs (injector ready) |
+| `report_*.txt` | poora hisaab — dorks, rounds, target, engines |
+
+### 📊 Card
+
+```
+📥 Raw URLs    : 21,400
+🌐 URLs        : 10,600
+🔗 Param URLs  : 10,000 / 10,000 ✅
+🚫 No-param    : 600 (rakhe gaye — injector skip karega)
+🧠 Auto top-up : 1 round · 6,000 naye dorks
+```
 
 ---
 
@@ -115,7 +169,7 @@ Settings batch key `btncolor` — `/admin` → batch se on/off.
 
 ### ✅ Tests
 
-`tests/run.sh` → core **1577/1577** · screens **53** · repro ✅
+`tests/run.sh` → core **1617/1617** · screens **53** · repro ✅
 
 ---
 
