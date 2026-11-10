@@ -71,10 +71,76 @@ BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
 ADMIN_IDS = [8999053405]
 ADMIN_USERNAME = "@Bloody_sweet_baby"
 BRAND = "PYTHON SNAKE"
-VERSION = "v2.24.0"
-BUILD = "waf-lab"       # feature flags — /ping me dikhte hain
+VERSION = "v2.25.0"
+BUILD = "color-ui"      # feature flags — /ping me dikhte hain
 BUILD_TS = "%s"                  # file load hone ka time (deploy check ke liye)
 KEY_RE = re.compile(r"^SNK-[A-Z0-9]{4}-[A-Z0-9]{4}$")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎨 v2.25.0 — COLORED BUTTONS (Telegram Bot API 9.4, 9 Feb 2026)
+#  InlineKeyboardButton.style = "primary" (blue) | "success" (green) | "danger" (red)
+#  Purane clients par colour ignore ho jata hai — button normal dikhta hai (safe).
+#  python-telegram-bot 21.x me `style` kwarg nahi hai, isliye api_kwargs se bhejte hain.
+# ═══════════════════════════════════════════════════════════════════════════════
+_PTB_BUTTON = InlineKeyboardButton
+BTN_STYLES = ("primary", "success", "danger")
+BTN_STYLE_MAP = {"blue": "primary", "green": "success", "red": "danger",
+                 "p": "primary", "s": "success", "d": "danger"}
+
+# danger = jo cheez todti/rok deti hai, success = jo kaam shuru karti hai,
+# primary = sab navigation / menu / info.
+_DANGER_HINTS = ("stop", "cancel", "delete", "del:", ":del", "clear", "reset", "wipe",
+                 "remove", "rm:", "ban", "unban", "revoke", "rev:", "logout", "kill",
+                 "disable", "discard", "erase", "no:", ":no", "abort")
+_SUCCESS_HINTS = (":go", "go:", "run", "start", "resume", "confirm", "save", "apply",
+                  "send", "export", "download", ":dl", "scan", "add", ":new", "redeem",
+                  "yes", ":on", "enable", "test", "build", "gen", "discover", "relast",
+                  "session_set", "post_go", "header_go", "deep", "manual", "zip", "old")
+_NEUTRAL_HINTS = ("back", "home", "help", "info", "list", "view", "next", "prev",
+                  "menu", "page", "tab", ":cat", "stat")
+
+
+def btn_style(callback_data=None, label=None) -> str:
+    """Callback/text se button ka rang — red / green / blue."""
+    if not btn_color_on():
+        return ""
+    d = str(callback_data or "").lower()
+    lab = str(label or "")
+    blob = d + " " + lab.lower()
+    for w in _DANGER_HINTS:
+        if w in blob:
+            return "danger"
+    if any(e in lab for e in ("⛔", "🗑", "🚫", "❌", "🧨", "⛔️")):
+        return "danger"
+    for w in _SUCCESS_HINTS:
+        if w in blob:
+            return "success"
+    if any(e in lab for e in ("🚀", "▶️", "✅", "💾", "📥", "➕", "🆕", "♻️")):
+        return "success"
+    return "primary"
+
+
+def btn_color_on() -> bool:
+    try:
+        return str(sget("btncolor", 1) or 0).lower() in ("1", "true", "on", "yes")
+    except Exception:
+        return True
+
+
+def IBtn(text, *args, style=None, **kw):
+    """InlineKeyboardButton + colour. style None → khud infer hota hai."""
+    st = style if style else btn_style(kw.get("callback_data"), text)
+    st = BTN_STYLE_MAP.get(str(st).lower(), st and str(st).lower())
+    if st in BTN_STYLES:
+        ak = dict(kw.get("api_kwargs") or {})
+        ak["style"] = st
+        kw["api_kwargs"] = ak
+    return _PTB_BUTTON(text, *args, **kw)
+
+
+# purane saare call sites (346) isi se colour le lete hain
+InlineKeyboardButton = IBtn
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_NAME = "snake_config.json"
@@ -7870,7 +7936,7 @@ def kb_main(uid=0) -> InlineKeyboardMarkup:
     #  proxy engine sirf /admin me, aur 3 naye buttons (tasks/expand/support).
     _act = len(tasks_active(uid))
     rows = [
-        [InlineKeyboardButton(emo_btn("kw") + " HQ KEYWORDS", callback_data="m:kw")],
+        [InlineKeyboardButton("🧠 HQ KEYWORDS", callback_data="m:kw")],
         [InlineKeyboardButton(emo_btn("dork") + " DORKER", callback_data="m:dork"),
          InlineKeyboardButton(emo_btn("parse") + " PARSER", callback_data="m:parse")],
         [InlineKeyboardButton(emo_btn("rev") + " URL REVERSE", callback_data="m:rev"),
@@ -17373,6 +17439,7 @@ BATCH_KEYS = {
     "headerconc": ("header_conc", 1, 24, "Header scan: parallel pages", 8, "🧾"),
     "wafretry": ("wafretry", 0, 6, "WAF: tamper retries per probe", 2, "🛡"),
     "wafgap": ("waf_gap_ms", 0, 3000, "WAF: gap after block (ms)", 400, "⏳"),
+    "btncolor": ("btncolor", 0, 1, "Colored buttons (0/1)", 1, "🎨"),
     "discover": ("inj_discover", 0, 1, "Injector: param discovery (0/1)", 0, "🔎"),
     "discovercap": ("inj_discover_cap", 10, 5000, "Discovery: max URLs per scan", 300, "🧭"),
     "discovernames": ("inj_discover_names", 2, 40, "Discovery: param names per URL", 12, "📛"),

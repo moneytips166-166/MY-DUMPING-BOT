@@ -54,7 +54,7 @@ async def call(coro):
 # ══════════════════════════════════════════════════════════════════════════════
 def test_meta():
     group("meta")
-    eq(core.VERSION, "v2.24.0", "VERSION")
+    eq(core.VERSION, "v2.25.0", "VERSION")
     eq(core.ADMIN_IDS, [8999053405], "ADMIN_IDS")
     ok("SNAKE" in core.BRAND.upper(), "brand")
     ok(core.DORK_MAX >= 100000, "DORK_MAX")
@@ -469,10 +469,10 @@ def test_single_file():
     contains(stxt, "bot.py")
     with open(bot, encoding="utf-8") as f:
         btxt = f.read()
-    contains(btxt, 'VERSION = "v2.24.0"')
+    contains(btxt, 'VERSION = "v2.25.0"')
     # shim jo module load karta hai = bot.py hi
     eq(core.__file__.endswith("snake_core.py"), True, "module = shim")
-    eq(core.VERSION, "v2.24.0", "shim se version")
+    eq(core.VERSION, "v2.25.0", "shim se version")
 
 
 def test_diagnostics():
@@ -1805,7 +1805,7 @@ def test_no_dead_buttons():
 def test_build_stamp():
     """/ping me build + guard flags dikhte hain (deploy verify ke liye)."""
     group("build-stamp")
-    eq(core.VERSION, "v2.24.0", "version")
+    eq(core.VERSION, "v2.25.0", "version")
     ok(getattr(core, "BUILD", ""), "BUILD set")
     ok(getattr(core, "BUILD_TS", ""), "BUILD_TS set")
     ctx = FakeContext({})
@@ -4063,6 +4063,59 @@ def test_v2240_wiring():
 
 
 
+def test_v2250_button_colors():
+    """v2.25.0 — Bot API 9.4 colored buttons (primary/success/danger) + 🧠."""
+    group("v2.25.0 button colours")
+    eq(core.BTN_STYLES, ("primary", "success", "danger"), "style values")
+    eq(core.btn_style("m:kw", "HQ KEYWORDS"), "primary", "menu = blue")
+    eq(core.btn_style("inj:go", "SEND"), "success", "run = green")
+    eq(core.btn_style("tk:stopall", "STOP ALL"), "danger", "stop = red")
+    eq(core.btn_style("sp:1:x", "⛔ STOP"), "danger", "stop button red")
+    eq(core.btn_style("m:home", "⬅️ BACK"), "primary", "back = blue")
+    eq(core.btn_style("a:reset", "Reset"), "danger", "reset red")
+    eq(core.btn_style("inj:session_clear", "CLEAR"), "danger", "clear red")
+    eq(core.btn_style("df:zip", "ZIP"), "success", "zip green")
+    eq(core.btn_style("", "🚀 START"), "success", "emoji se green")
+
+    d = core.kb_main(ADMIN).to_dict()["inline_keyboard"]
+    first = d[0][0]
+    eq(first["style"], "primary", "home button blue")
+    contains(first["text"], "🧠")
+    ok(all(b.get("style") in core.BTN_STYLES for row in d for b in row),
+       "har main button par style")
+
+    stop = core.kb_stop(1, "tok").to_dict()["inline_keyboard"][0][0]
+    eq(stop["style"], "danger", "STOP red serialized")
+    back = core.kb_back("m:home").to_dict()["inline_keyboard"][0][0]
+    eq(back["style"], "primary", "BACK blue serialized")
+
+    # off switch
+    old = core.SETTINGS.get("btncolor")
+    try:
+        core.sset("btncolor", 0)
+        eq(core.btn_style("tk:stopall", "STOP"), "", "off = koi style nahi")
+        eq(core.kb_back("m:home").to_dict()["inline_keyboard"][0][0].get("style"), None,
+           "off = serialized me style nahi")
+        core.sset("btncolor", 1)
+        eq(core.btn_style("tk:stopall", "STOP"), "danger", "wapas ON")
+    finally:
+        if old is None:
+            core.SETTINGS.pop("btncolor", None)
+            core.jsave("settings", core.SETTINGS)
+        else:
+            core.sset("btncolor", old)
+    ok("btncolor" in core.BATCH_KEYS, "batch key btncolor")
+    eq(core.BATCH_KEYS["btncolor"][4], 1, "default on")
+
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+    contains(src, "api_kwargs")
+    contains(src, 'InlineKeyboardButton = IBtn')
+    ok('emo_btn("kw") + " HQ KEYWORDS"' not in src, "purana 🔑 HQ KEYWORDS hata")
+    contains(src, "🧠 HQ KEYWORDS")
+
+
+
 def main():
     for fn in (test_meta, test_theme_helpers, test_await_helpers, test_detect_kind,
                test_kind_check_numeric, test_pro_engine, test_universal,
@@ -4107,7 +4160,7 @@ def main():
                test_v2230_wiring,
                test_v2240_tamper, test_v2240_waf_send_live,
                test_v2240_scan_tamper_live, test_v2240_waf_probe_live,
-               test_v2240_wiring):
+               test_v2240_wiring, test_v2250_button_colors):
         try:
             fn()
         except Exception as exc:

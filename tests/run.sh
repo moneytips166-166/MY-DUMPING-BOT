@@ -9,5 +9,6 @@ fi
 rc=0
 echo "━━━ core   ━━━"; .venv/bin/python tests/test_core.py   || rc=1
 echo "━━━ screens━━━"; .venv/bin/python tests/test_screens.py || rc=1
+echo "━━━ shadow ━━━"; .venv/bin/python tests/test_shadow.py || rc=1
 echo "━━━ flow   ━━━"; .venv/bin/python tests/repro_flows.py >/dev/null && echo "✅ repro OK" || rc=1
 exit $rc

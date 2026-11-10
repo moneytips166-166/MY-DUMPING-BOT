@@ -30,3 +30,9 @@ update.sh.new
 setconfig.sh.new
 logs/
 backups/
+
+# 🐍 SHADOW X (shadow/new.py) — runtime data + token
+shadow/data/
+shadow/dumps/
+shadow/shadow_config.json
+shadow/*.log
